@@ -346,6 +346,7 @@ pub(crate) fn week_of(s: &mut Session, c: &Company, now: &DutyRef) -> Vec<hub_ga
                 bus,
                 off: off.clone(),
                 begun,
+                now: driving,
                 swap,
             });
         }
@@ -492,7 +493,7 @@ mod tests {
         assert_eq!(week.len(), 7, "{week:?}");
         assert_eq!((week[0].day.as_str(), week[0].date.as_str(), week[0].duty.as_str(), week[0].from.as_str(), week[0].line.as_str()), ("Mon", "2024-03-04", "1", "06:00", "5"));
         // (the duty driven now is not to be swapped; tomorrow's is)
-        assert!(week[0].swap.is_none());
+        assert!(week[0].swap.is_none() && week[0].now && !week[1].now);
         assert_eq!(week[1].swap, Some(hub_game::bridge::RosterDuty { date: tomorrow.clone(), line: "Linie5".into(), tour: "1".into(), duty: 0 }));
         // a day without a duty: a row of its own
         assert!(week[2].duty.is_empty() && week[2].swap.is_none() && week[2].off.is_empty());

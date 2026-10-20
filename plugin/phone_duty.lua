@@ -7,11 +7,15 @@
 -- swap, leave), each asked again before it goes; the strip's note and walk-around.
 -- Its modes: a driver still to sign on, and the walk-around at sign-off.
 --
--- What it reads of the assignment, each optional: `ibis` (or `ibis_codes`) as a list of
--- { trip, line, route, dest, text } - the codes to type, by the duty's trip from 1; `crew.week`
--- as a list of { day, date, duty, from, to, line, today } - the driver's week; `crew.can` as
+-- What it reads of the assignment, each optional: `ibis_codes` as a list of
+-- { trip, dep, line, route, dest, text } - the codes to type, found by the trip's departure
+-- (seconds of the day), else by the duty's trip from 1; `crew.week` as a list of
+-- { day, date, duty, from, to, line, now, swap } - the driver's week (`now`: the duty driven;
+-- `swap`: what a swap of it sends back, nil: not to be swapped); `crew.can` as
 -- { sick, swap, leave } - the requests Omsi-Hub takes. A request goes back as a reply
--- (`data/replies.jsonl`) { kind = "crew", what = "sick" | "swap" | "leave", duty, date }.
+-- (`data/replies.jsonl`, bridge::Reply) { kind = "crew", what = "sick", days = 1 },
+-- { what = "swap", duty = <the day's swap>, with = 0 } (whoever will) or
+-- { what = "leave", from = date, ["until"] = date, reason = "personal" }.
 
 local messages = require("messages")
 local signon = require("signon")
@@ -44,21 +48,28 @@ end
 
 -- --- the IBIS ---------------------------------------------------------------------------------
 
--- the codes to type for trip `k`: { line, route, dest, text } (nil: Omsi-Hub gave none)
-local function codes(a, k)
+-- the codes to type for trip `k` (`trip` its entry of duty.trips()): { line, route, dest,
+-- text } (nil: Omsi-Hub gave none). By the departure first: Omsi-Hub counts only the trips
+-- with passengers, and a duty in parts begins its count again.
+local function codes(a, k, trip)
   if not (a and k) then return nil end
-  local list = type(a.ibis_codes) == "table" and a.ibis_codes or (type(a.ibis) == "table" and a.ibis) or nil
+  local list = type(a.ibis_codes) == "table" and a.ibis_codes or nil
   if not list then return nil end
+  local dep = trip and tonumber(trip.departure)
+  -- (a departure of 0: not known)
+  local function at(c) return tonumber(c.dep) and c.dep > 0 and c.dep or nil end
   for _, c in ipairs(list) do
-    if type(c) == "table" and tonumber(c.trip) == k then return c end
+    if type(c) == "table" and dep and at(c) and math.abs(at(c) - dep) <= 60 then return c end
   end
-  local c = list[k]
-  return type(c) == "table" and c.trip == nil and c or nil
+  for _, c in ipairs(list) do
+    if type(c) == "table" and tonumber(c.trip) == k and not (dep and at(c)) then return c end
+  end
+  return nil
 end
 
 local function ibis(ctx, out)
   local th, tr = ctx.theme, ctx.tr
-  local c = codes(ctx.assignment, ctx.k)
+  local c = codes(ctx.assignment, ctx.k, ctx.trip)
   local auto = ctx.has("duty.set_auto_ibis") and ctx.hooks.ibis_auto ~= nil
   if not c and not auto then return end
   out[#out + 1] = { type = "divider" }
@@ -179,23 +190,28 @@ local function day_label(r)
   return tostring(r.day or "") .. (dd and (" " .. tonumber(dd)) or "")
 end
 
--- today's duty and date: the roster's day marked today, else the day of the assignment's duty
+-- today's duty and date: the roster's duty driven now, else the week's first day (the duty's)
 local function today(ctx)
   local duty = ctx.assignment and ctx.assignment.duty or ""
-  for _, r in ipairs(week(ctx)) do
-    if r.today == true then return r.duty or duty, r.date or "", day_label(r) end
+  local w = week(ctx)
+  for _, r in ipairs(w) do
+    if r.now == true then return r.duty or duty, r.date or "", day_label(r) end
   end
-  for _, r in ipairs(week(ctx)) do
-    if (r.duty or "") ~= "" and r.duty == duty then return duty, r.date or "", day_label(r) end
-  end
+  if w[1] then return duty, w[1].date or "", day_label(w[1]) end
   return duty, "", ""
 end
 
--- the days a request can be for: those of the week with a duty
-local function duty_days(ctx)
+-- the days a request can be for: a swap those Omsi-Hub says can be swapped, leave those with
+-- a duty after today (the company takes no leave for today)
+local function duty_days(ctx, what)
   local out = {}
+  local _, now = today(ctx)
   for i, r in ipairs(week(ctx)) do
-    if (r.duty or "") ~= "" then out[#out + 1] = i end
+    if what == "swap" then
+      if type(r.swap) == "table" then out[#out + 1] = i end
+    elseif (r.duty or "") ~= "" and tostring(r.date or "") > now then
+      out[#out + 1] = i
+    end
   end
   return out
 end
@@ -208,7 +224,7 @@ local function roster(ctx, out)
   out[#out + 1] = P.label(th, tr("This week"))
   local rows = {}
   for _, r in ipairs(w) do
-    local ink = r.today == true and th.ink or th.dim
+    local ink = r.now == true and th.ink or th.dim
     local off = (r.duty or "") == ""
     rows[#rows + 1] = {
       { text = day_label(r), color = ink },
@@ -236,7 +252,7 @@ local function confirm(ctx, out)
     local ask = p.what == "swap" and tr("Swap which day?") or tr("Leave on which day?")
     out[#out + 1] = P.text(th, ask, "ink", 13, "bold")
     local row = nil
-    for n, i in ipairs(duty_days(ctx)) do
+    for n, i in ipairs(duty_days(ctx, p.what)) do
       if (n - 1) % 4 == 0 then
         row = { type = "row", gap = 6, children = {} }
         out[#out + 1] = row
@@ -266,7 +282,8 @@ local function requests(ctx, out)
   if type(can) ~= "table" then return end
   local row = { type = "row", gap = 6, children = {} }
   for _, w in ipairs(WHAT) do
-    if can[w] == true then
+    -- (a swap or leave only with a day it can be for)
+    if can[w] == true and (w == "sick" or #duty_days(ctx, w) > 0) then
       row.children[#row.children + 1] = { type = "button", id = "duty_" .. w, text = tr(LABEL[w]), icon = ICON[w], color = th.neutral, grow = true }
     end
   end
@@ -327,9 +344,18 @@ function M.slim(ctx)
   return nil
 end
 
--- a request sent: as a reply to Omsi-Hub, said on a card
+-- a request sent: as a reply to Omsi-Hub (bridge::Reply: `duty` only ever the week's swap
+-- table, or the whole line is refused), said on a card
 local function send(ctx, p)
-  messages.reply("crew", 0, p.what, { what = p.what, duty = p.duty or "", date = p.date or "" })
+  local extra = { what = p.what }
+  if p.what == "sick" then
+    extra.days = 1
+  elseif p.what == "swap" then
+    extra.duty, extra.with = p.swap, 0
+  else
+    extra.from, extra["until"], extra.reason = p.date, p.date, "personal"
+  end
+  messages.reply("crew", 0, p.what, extra)
   local text = ctx.tr(LABEL[p.what]) .. ((p.day or "") ~= "" and (" · " .. p.day) or "")
   asked[#asked + 1] = text
   if ctx.hooks.say then ctx.hooks.say(ctx.tr("Sent to the company"), text, ICON[p.what], 6) end
@@ -339,7 +365,7 @@ function M.click(ctx, id)
   if id:sub(1, 5) ~= "duty_" then return false end
   local w = id:sub(6)
   if LABEL[w] then
-    if w == "sick" or #duty_days(ctx) == 0 then
+    if w == "sick" then
       local duty, date, day = today(ctx)
       pending = { what = w, duty = duty, date = date, day = day }
     else
@@ -347,7 +373,7 @@ function M.click(ctx, id)
     end
   elseif w:match("^day_%d+$") and pending and pending.what ~= "end" then
     local r = week(ctx)[tonumber(w:sub(5))]
-    if r then pending = { what = pending.what, duty = r.duty or "", date = r.date or "", day = day_label(r) } end
+    if r then pending = { what = pending.what, duty = r.duty or "", date = r.date or "", day = day_label(r), swap = r.swap } end
   elseif w == "yes" and pending then
     local p = pending
     pending = nil

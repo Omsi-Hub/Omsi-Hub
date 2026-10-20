@@ -98,7 +98,7 @@ local function damage(ctx, out)
   out[#out + 1] = line(ctx.theme, "warning", ctx.tr("Collisions") .. " " .. math.floor(n), m and m > 0 and ctx.tr("repair %{m} min", { m = math.ceil(m) }) or nil)
 end
 
--- the bus's open defects (the company's: `crew.defects`, each { part, text, since })
+-- the bus's open defects (the company's: `crew.defects`, each { part, label, text, since })
 local function defects(ctx, out)
   local c = crew(ctx)
   local list = c and type(c.defects) == "table" and c.defects or {}
@@ -113,7 +113,7 @@ local function defects(ctx, out)
   for k = 1, math.min(#list, DEFECTS) do
     local x = list[k]
     if type(x) == "table" then
-      local what = tostring(names[x.part] or x.part or "")
+      local what = tostring((x.label or "") ~= "" and x.label or names[x.part] or x.part or "")
       local text = (x.text or "") ~= "" and (what ~= "" and (what .. ": " .. tostring(x.text)) or tostring(x.text)) or what
       out[#out + 1] = line(th, "construction", cut(text, 200), (x.since or "") ~= "" and cut(x.since, 20) or nil)
     end

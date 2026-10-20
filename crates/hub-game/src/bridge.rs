@@ -326,8 +326,8 @@ pub struct CrewDefect {
 /// A day of the driver's week: the weekday in the player's language and the date, the duty
 /// (its number in its tour, from 1; "": no duty that day), its sign-on and sign-off ("05:40"),
 /// its line as the displays show it, tour and bus; why the driver is off that day, in words
-/// ("": he works, or it is a day of rest); whether it has begun; and what a swap request of it
-/// sends back (None: it cannot be swapped any more).
+/// ("": he works, or it is a day of rest); whether it has begun and whether it is the duty
+/// being driven now; and what a swap request of it sends back (None: it cannot be swapped).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct WeekDuty {
@@ -341,6 +341,7 @@ pub struct WeekDuty {
     pub bus: String,
     pub off: String,
     pub begun: bool,
+    pub now: bool,
     pub swap: Option<RosterDuty>,
 }
 
@@ -451,9 +452,10 @@ pub struct Report {
     /// What happened to the company on the map (`"live"`): its own `LiveEvent` (a trip of one
     /// of its buses, a breakdown), booked into the company's live file as it is.
     pub event: Option<serde_json::Value>,
-    /// What a duty ended (`"duty_end"`) came to: the trips done on time (of `trips` done), the
-    /// trips' average score (0 to 100), the passengers carried, the distance driven (km) and the
-    /// fares taken (in the company's currency). None: the plugin did not say.
+    /// What a duty ended (`"duty_end"`) came to: the share of the stops served on time (in %,
+    /// as the live dashboard counts it), the trips' average score (0 to 100), the passengers
+    /// carried, the distance driven (km) and the game's ticket money taken. None: the plugin
+    /// did not say.
     #[serde(default)]
     pub on_time: Option<f64>,
     #[serde(default)]
@@ -1118,8 +1120,8 @@ mod tests {
         assert_eq!((r.what.as_str(), r.with, r.duty.map(|d| d.tour)), ("swap", 0, Some("4".to_string())));
         let r: Reply = serde_json::from_str("{\"kind\":\"crew\",\"what\":\"sick\",\"days\":2}").unwrap();
         assert_eq!((r.days, r.duty), (2, None));
-        let end: Report = serde_json::from_str("{\"kind\":\"duty_end\",\"trips\":6,\"on_time\":5,\"score\":87.5,\"passengers\":214,\"km\":61.2,\"fares\":321.4}").unwrap();
-        assert_eq!((end.trips, end.on_time, end.score, end.passengers, end.km, end.fares), (6, Some(5.0), Some(87.5), Some(214.0), Some(61.2), Some(321.4)));
+        let end: Report = serde_json::from_str("{\"kind\":\"duty_end\",\"trips\":6,\"on_time\":83,\"score\":87.5,\"passengers\":214,\"km\":61.2,\"fares\":321.4}").unwrap();
+        assert_eq!((end.trips, end.on_time, end.score, end.passengers, end.km, end.fares), (6, Some(83.0), Some(87.5), Some(214.0), Some(61.2), Some(321.4)));
         let bare: Report = serde_json::from_str("{\"kind\":\"duty_end\"}").unwrap();
         assert_eq!((bare.on_time, bare.fares), (None, None));
     }

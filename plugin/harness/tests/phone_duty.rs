@@ -4,7 +4,7 @@
 mod common;
 
 use common::*;
-use hub_game::bridge::{self, Assignment, Crew, StripRow};
+use hub_game::bridge::{self, Assignment, Crew, CrewCan, RosterDuty, StripRow, TripIbis, WeekDuty};
 use hub_plugin_harness::{GameState, Harness};
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
@@ -38,14 +38,24 @@ fn crew() -> Crew {
     }
 }
 
-/// The driver's week: today D-12, a day off, D-14 on Wednesday.
-const WEEK: &str = r#"
-a.crew.week = {
-  { day = "Mon", date = "2026-10-20", duty = "D-12", from = "07:50", to = "09:20", line = "10", today = true },
-  { day = "Tue", date = "2026-10-21", duty = "", from = "", to = "", line = "" },
-  { day = "Wed", date = "2026-10-22", duty = "D-14", from = "15:00", to = "22:10", line = "307" },
+/// The driver's week as Omsi-Hub writes it (`launch::week_of`): today duty 12 (driven now), a
+/// day off, duty 14 on Wednesday (to be swapped).
+fn week() -> Vec<WeekDuty> {
+    let day = |day: &str, date: &str, duty: &str, from: &str, to: &str, line: &str| WeekDuty {
+        day: day.into(),
+        date: date.into(),
+        duty: duty.into(),
+        from: from.into(),
+        to: to.into(),
+        line: line.into(),
+        ..WeekDuty::default()
+    };
+    vec![
+        WeekDuty { now: true, begun: true, ..day("Mon", "2026-10-20", "12", "07:50", "09:20", "10") },
+        day("Tue", "2026-10-21", "", "", "", ""),
+        WeekDuty { swap: Some(RosterDuty { date: "2026-10-22".into(), line: "Linie307".into(), tour: "3".into(), duty: 13 }), ..day("Wed", "2026-10-22", "14", "15:00", "22:10", "307") },
+    ]
 }
-"#;
 
 /// The lines the plugin wrote to `file` of its data folder, as JSON.
 fn lines(dir: &Path, file: &str) -> Vec<Value> {
@@ -64,9 +74,10 @@ fn menu(h: &Harness) -> Vec<(String, String)> {
 
 #[test]
 fn the_duty_tab_shows_the_strip_the_trips_and_the_ibis_codes() {
-    let a = Assignment { crew: Some(crew()), ..assignment() };
-    let codes = r#"a.ibis = { { trip = 1, line = "30701", route = "02", dest = "1234", text = "Hbf" }, { trip = 2, line = "30702", route = "01", dest = "1001" } }"#;
-    let (_, mut h) = start_with("duty-tab", a, codes, docked_game(), "", 3);
+    // (the codes as Omsi-Hub writes them: found by the trip's departure)
+    let code = |trip: u32, dep: f64, line: &str, route: &str, dest: &str| TripIbis { trip, dep, line: line.into(), route: route.into(), dest: dest.into(), ..TripIbis::default() };
+    let a = Assignment { crew: Some(crew()), ibis_codes: vec![code(1, 28_800.0, "30701", "02", "1234"), code(2, 30_000.0, "30702", "01", "1001")], ..assignment() };
+    let (_, mut h) = start_with("duty-tab", a, "", docked_game(), "", 3);
     choose_tab(&h, 3);
     // the strip in the phone's look: what is under way, the next break counting down from the
     // sign-on, the duty's end, today's change - and no strip of its own
@@ -127,35 +138,60 @@ fn the_ibis_switch_is_there_only_where_the_game_types_the_ibis() {
 
 #[test]
 fn the_week_s_roster_is_shown_and_a_sick_call_goes_back_to_the_company() {
-    let a = Assignment { crew: Some(crew()), ..assignment() };
-    let more = format!("{WEEK}\na.crew.can = {{ sick = true, swap = true, leave = false }}");
-    let (dir, h) = start_with("roster", a, &more, docked_game(), "", 3);
+    let crew = Crew { week: week(), can: CrewCan { sick: true, swap: true, leave: false }, ..crew() };
+    let (dir, h) = start_with("roster", Assignment { crew: Some(crew), ..assignment() }, "", docked_game(), "", 3);
     choose_tab(&h, 3);
     assert!(shows(&h, PHONE, "THIS WEEK"), "{}", phone(&h));
-    assert!(has_element(&h, PHONE, |e| e["type"] == "table" && e["rows"][2][1]["text"] == "D-14" && e["rows"][1][1]["text"] == "Day off"), "{}", phone(&h));
+    assert!(has_element(&h, PHONE, |e| e["type"] == "table" && e["rows"][2][1]["text"] == "14" && e["rows"][1][1]["text"] == "Day off"), "{}", phone(&h));
     // only what the company takes
     assert!(has_element(&h, PHONE, |e| e["id"] == "duty_sick") && has_element(&h, PHONE, |e| e["id"] == "duty_swap"));
     assert!(!has_element(&h, PHONE, |e| e["id"] == "duty_leave"));
-    // a sick call: asked again, then sent
+    // a sick call: asked again, then sent - as Omsi-Hub reads it (bridge::Reply)
     click(&h, "duty_sick");
-    assert!(shows(&h, PHONE, "Call in sick for duty D-12?"), "{}", phone(&h));
+    assert!(shows(&h, PHONE, "Call in sick for duty 12?"), "{}", phone(&h));
     assert!(lines(&dir, "replies.jsonl").is_empty(), "not before it is confirmed");
     click(&h, "duty_yes");
     let replies = lines(&dir, "replies.jsonl");
     assert_eq!(replies.len(), 1);
-    assert_eq!((replies[0]["kind"].as_str(), replies[0]["what"].as_str(), replies[0]["duty"].as_str(), replies[0]["date"].as_str()), (Some("crew"), Some("sick"), Some("D-12"), Some("2026-10-20")));
-    assert!(replies[0]["uid"].as_str().is_some_and(|u| !u.is_empty()));
+    let r: bridge::Reply = serde_json::from_value(replies[0].clone()).expect("a reply Omsi-Hub reads");
+    assert_eq!((r.kind.as_str(), r.what.as_str(), r.days, r.duty), ("crew", "sick", 1, None));
+    assert!(!r.uid.is_empty());
     assert!(toasted(&h, "Sent to the company"));
     assert!(shows(&h, PHONE, "✓ Sick call"));
-    // a swap: the day chosen (only days with a duty), then cancelled - nothing sent
+    // a swap: the day chosen (only those Omsi-Hub says can be swapped), then cancelled - nothing sent
     click(&h, "duty_swap");
     assert!(has_element(&h, PHONE, |e| e["id"] == "duty_day_3" && e["text"] == "Wed 22"), "{}", phone(&h));
+    assert!(!has_element(&h, PHONE, |e| e["id"] == "duty_day_1"), "the duty driven now");
     assert!(!has_element(&h, PHONE, |e| e["id"] == "duty_day_2"), "a day off");
     click(&h, "duty_day_3");
-    assert!(shows(&h, PHONE, "Ask to swap duty D-14 on Wed 22?"), "{}", phone(&h));
+    assert!(shows(&h, PHONE, "Ask to swap duty 14 on Wed 22?"), "{}", phone(&h));
     click(&h, "duty_no");
     assert!(!has_element(&h, PHONE, |e| e["id"] == "duty_yes"));
     assert_eq!(lines(&dir, "replies.jsonl").len(), 1);
+    // and again, sent: the day's duty as Omsi-Hub named it, to whoever will
+    click(&h, "duty_swap");
+    click(&h, "duty_day_3");
+    click(&h, "duty_yes");
+    let r: bridge::Reply = serde_json::from_value(lines(&dir, "replies.jsonl")[1].clone()).unwrap();
+    assert_eq!((r.what.as_str(), r.with), ("swap", 0));
+    assert_eq!(r.duty, Some(RosterDuty { date: "2026-10-22".into(), line: "Linie307".into(), tour: "3".into(), duty: 13 }));
+    no_ui_errors(&h);
+}
+
+#[test]
+fn leave_is_asked_for_a_day_after_today() {
+    let crew = Crew { week: week(), can: CrewCan { sick: true, swap: false, leave: true }, ..crew() };
+    let (dir, h) = start_with("leave", Assignment { crew: Some(crew), ..assignment() }, "", docked_game(), "", 3);
+    choose_tab(&h, 3);
+    assert!(!has_element(&h, PHONE, |e| e["id"] == "duty_swap"));
+    click(&h, "duty_leave");
+    assert!(shows(&h, PHONE, "Leave on which day?"), "{}", phone(&h));
+    assert!(!has_element(&h, PHONE, |e| e["id"] == "duty_day_1"), "not today");
+    click(&h, "duty_day_3");
+    assert!(shows(&h, PHONE, "Ask for leave on Wed 22 (duty 14)?"), "{}", phone(&h));
+    click(&h, "duty_yes");
+    let r: bridge::Reply = serde_json::from_value(lines(&dir, "replies.jsonl")[0].clone()).unwrap();
+    assert_eq!((r.what.as_str(), r.from.as_str(), r.until.as_str(), r.reason.as_str()), ("leave", "2026-10-22", "2026-10-22", "personal"));
     no_ui_errors(&h);
 }
 

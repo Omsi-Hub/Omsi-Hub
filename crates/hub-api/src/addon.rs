@@ -73,8 +73,9 @@ pub struct Kept {
 }
 
 /// What a duty came to, as the plugin reported its end (`duty_end`): the assignment and duty,
-/// when (Unix seconds), the trips done and on time, their average score, the passengers, the
-/// km driven and the fares taken. A total the plugin did not say is None.
+/// when (Unix seconds), the trips done, the share of their stops served on time (%), their
+/// average score, the passengers, the km driven and the fares taken. A total the plugin did not
+/// say is None.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct DutyEnd {
@@ -512,7 +513,7 @@ pub fn book_reports(data: &Path, reports: &[Report], assigned: Option<&Assigned>
                 let e = DutyEnd::of(r, a);
                 let n = |x: Option<f64>| x.map_or("-".to_string(), |v| format!("{v:.1}"));
                 hub_core::log_line(&format!(
-                    "plugin: duty_end line {} tour {}: {} trips, {} on time, score {}, {} passengers, {} km, fares {}",
+                    "plugin: duty_end line {} tour {}: {} trips, {} % on time, score {}, {} passengers, {} km, fares {}",
                     e.line,
                     e.tour,
                     e.trips,
@@ -924,14 +925,17 @@ mod tests {
         // the duty ended, with what it came to: kept as the last duty's
         std::io::Write::write_all(
             &mut f,
-            b"{\"kind\":\"duty_end\",\"issued\":5,\"line\":\"9\",\"tour\":\"2\",\"trips\":6,\"on_time\":5,\"score\":88.5,\"passengers\":140,\"km\":52.3,\"fares\":231.5}
+            b"{\"kind\":\"duty_end\",\"issued\":5,\"line\":\"9\",\"tour\":\"2\",\"trips\":6,\"on_time\":83,\"score\":88.5,\"passengers\":140,\"km\":52.3,\"fares\":231.5}
 ",
         )
         .unwrap();
         let b = book_from(&data, &plugin);
         let e = load(&data).ended.unwrap();
         assert_eq!(b.ended.as_ref(), Some(&e));
-        assert_eq!((e.driver.as_str(), e.company_id.as_str(), e.trips, e.on_time, e.score, e.passengers, e.km, e.fares), ("Luc", "c1", 6, Some(5.0), Some(88.5), Some(140.0), Some(52.3), Some(231.5)));
+        assert_eq!(
+            (e.driver.as_str(), e.company_id.as_str(), e.trips, e.on_time, e.score, e.passengers, e.km, e.fares),
+            ("Luc", "c1", 6, Some(83.0), Some(88.5), Some(140.0), Some(52.3), Some(231.5))
+        );
         // (an older plugin's end says no totals)
         std::io::Write::write_all(
             &mut f,

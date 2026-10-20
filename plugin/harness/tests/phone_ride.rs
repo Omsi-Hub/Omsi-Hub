@@ -4,7 +4,7 @@
 mod common;
 
 use common::*;
-use hub_game::bridge::{self, Assignment, Crew, Fare};
+use hub_game::bridge::{Assignment, Crew, CrewDefect, Fare};
 use hub_plugin_harness::{GameState, Harness, Stop};
 use serde_json::{json, Value};
 
@@ -153,6 +153,7 @@ fn the_bus_tab_shows_the_fuel_the_takings_the_damage_the_defects_and_the_notes()
         checks: vec![("doors".into(), "Doors".into())],
         text_max: 140,
         low_fuel: 0.2,
+        defects: vec![CrewDefect { part: "doors".into(), label: "Doors".into(), text: "Door 2 sticks".into(), since: "2026-10-19".into(), held: false }],
         ..Crew::default()
     };
     let a = Assignment { crew: Some(crew), fare: Some(Fare { per_boarding: 1.2, symbol: "€".into(), after: false, places: 2 }), ..assignment() };
@@ -162,14 +163,7 @@ fn the_bus_tab_shows_the_fuel_the_takings_the_damage_the_defects_and_the_notes()
     g.damage = Some((2, 30.0, 45.0));
     g.passengers = 9;
     g.standing = 2;
-    // (the bus's open defects: the app's `crew.defects`, which this Omsi-Hub does not write yet)
-    let dir = installed("bus");
-    bridge::write_assignment(&dir, &a).unwrap();
-    let file = dir.join("assignment.lua");
-    let lua = std::fs::read_to_string(&file).unwrap().replacen("return ", "local a = ", 1);
-    std::fs::write(&file, lua + "a.crew.defects = { { part = \"doors\", text = \"Door 2 sticks\", since = \"2026-10-19\" } }\nreturn a\n").unwrap();
-    let mut h = Harness::load(&dir, g).unwrap();
-    run(&mut h, 2);
+    let (dir, mut h) = start("bus", Some(a), g, 2);
     choose_tab(&h, 5);
     assert!(shows(&h, PHONE, "100 %"), "{}", phone(&h));
     assert!(!shows(&h, PHONE, "Return to the depot"));
