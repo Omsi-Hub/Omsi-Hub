@@ -230,7 +230,9 @@ fn start(s: &mut Session, args: &Value, p: &dyn crate::Platform) -> Result<Value
     core::log_to_file(&format!("company duty launcher: {} {} duty {} on {} with {}", st.line, st.tour, sheet.duty.duty + 1, st.date, st.bus));
     // (the add-on's plugin told of the company's duty: `addon.rs`)
     let crew = crew_of(s, &c, &sheet);
-    super::plugin::assign_duty(&d, Some((&c.name, &format!("{} {} {}", st.line, st.tour, sheet.duty.duty + 1), plugin_parts(&c, &sheet))), Some(crew), Some(&c.id));
+    // (the IBIS codes of its trips, as its duty card prints them: the phone's Duty tab)
+    let parts = super::plugin::Parts { ibis: super::dutycard::ibis_codes(s, &c, &sheet.duty), ..plugin_parts(&c, &sheet) };
+    super::plugin::assign_duty(&d, Some((&c.name, &format!("{} {} {}", st.line, st.tour, sheet.duty.duty + 1), parts)), Some(crew), Some(&c.id));
     let launched = core::launch(&d, p)?;
     core::log_to_file(&format!("game {}: {}", launched.pid, launched.command));
     let t = tr("Starting your company's duty…");
@@ -240,9 +242,11 @@ fn start(s: &mut Session, args: &Value, p: &dyn crate::Platform) -> Result<Value
 
 /// The driver's side of the duty for the game's plugin (`bridge::Crew`, `lua/duty_strip.lua`): its
 /// pieces as the sheet has them, what changed on it today (`crew::changes`), the bus's handover
-/// notes of today, and the forms' choices - its words in the launcher's language.
+/// notes of today and its open defects, the forms' choices, and for the phone his week, the
+/// colleagues a swap may be asked of and the requests taken back - its words in the launcher's
+/// language.
 pub fn crew_of(s: &mut Session, c: &Company, sheet: &Sheet) -> hub_game::bridge::Crew {
-    use hub_game::bridge::{Crew, StripRow};
+    use hub_game::bridge::{Colleague, Crew, CrewCan, CrewDefect, StripRow};
     let rows = sheet
         .rows
         .iter()
@@ -269,6 +273,21 @@ pub fn crew_of(s: &mut Session, c: &Company, sheet: &Sheet) -> hub_game::bridge:
         .collect();
     let bus = sheet.bus.as_ref();
     let notes = bus.map(|b| co::crew::notes_for(c, b.id).iter().map(|n| trf(co::crew::NOTE_LEFT, &[("bus", &b.number), ("note", &note_words(n))])).collect()).unwrap_or_default();
+    let defects = bus
+        .map(|b| {
+            co::crew::defects_of(c, b.id)
+                .into_iter()
+                .filter(|d| d.open(c))
+                .map(|d| CrewDefect { part: d.kind.key().to_string(), label: tr(d.kind.label()), text: d.text.clone(), since: d.date.clone(), held: d.held })
+                .collect()
+        })
+        .unwrap_or_default();
+    let week = week_of(s, c, &sheet.duty);
+    // (the colleagues the phone may ask, as `remote::crew_summary` lists them)
+    let colleagues: Vec<Colleague> =
+        c.staff.iter().filter(|e| co::staff::drives(e) && e.employed_on(&c.date) && e.notice_until.is_none()).map(|e| Colleague { id: e.id, name: e.name.clone() }).collect();
+    // (the requests as the phone sends them: `messages::take_reply` carries them out)
+    let can = CrewCan { sick: true, swap: !colleagues.is_empty() && week.iter().any(|w| w.swap.is_some()), leave: true };
     Crew {
         strip: None,
         rows,
@@ -280,7 +299,58 @@ pub fn crew_of(s: &mut Session, c: &Company, sheet: &Sheet) -> hub_game::bridge:
         checks: co::crew::DefectKind::ALL.iter().map(|k| (k.key().to_string(), tr(k.label()))).collect(),
         text_max: co::crew::TEXT_MAX as u32,
         low_fuel: 0.15,
+        defects,
+        week,
+        colleagues,
+        can,
     }
+}
+
+/// The player's week from the day of duty `now` on, as the plans of its days have them (a day
+/// not read yet left out): a row per duty, a day without one a row of its own saying why he is
+/// off. A duty not begun and not `now` itself can be asked to be swapped.
+pub(crate) fn week_of(s: &mut Session, c: &Company, now: &DutyRef) -> Vec<hub_game::bridge::WeekDuty> {
+    use hub_core::company::plan::{BusOf, Who};
+    use hub_game::bridge::{RosterDuty, WeekDuty};
+    week_work(s);
+    let same = |a: &str, b: &str| a.trim().eq_ignore_ascii_case(b.trim());
+    let mut out = Vec::new();
+    for n in 0..7 {
+        let date = co::dates::add(&now.date, n);
+        let Some(Ok(p)) = plan_of(s, &date) else { continue };
+        let day = tr(super::words::WEEKDAYS[(co::plan::weekday_of(&date) as usize).min(6)]);
+        let off = co::crew::player_off(c, &date).map(|x| tr(x.label())).unwrap_or_default();
+        let duties = p.duties_of(Who::Player);
+        if duties.is_empty() {
+            out.push(WeekDuty { day, date, off, ..WeekDuty::default() });
+            continue;
+        }
+        for (ti, k) in duties {
+            let t = &p.tours[ti];
+            let d = &t.duties[k];
+            let begun = p.date == c.date && d.from <= c.clock.minute as i32;
+            let driving = date == now.date && same(&t.tour.line, &now.line) && same(&t.tour.tour, &now.tour) && k == now.duty;
+            let bus = match t.bus {
+                Some(BusOf::Own(id)) => c.vehicle(id).map(|v| v.number.clone()).unwrap_or_default(),
+                _ => String::new(),
+            };
+            let swap = (!begun && !driving && !t.by_player && off.is_empty()).then(|| RosterDuty { date: date.clone(), line: t.tour.line.clone(), tour: t.tour.tour.clone(), duty: k as u32 });
+            out.push(WeekDuty {
+                day: day.clone(),
+                date: date.clone(),
+                duty: (k + 1).to_string(),
+                from: co::clock::hhmm(d.from as i64),
+                to: co::clock::hhmm(d.to as i64),
+                line: t.tour.number.clone(),
+                tour: t.tour.tour.clone(),
+                bus,
+                off: off.clone(),
+                begun,
+                swap,
+            });
+        }
+    }
+    out
 }
 
 /// A note's words in the launcher's language (its template translated, the typed text as it is).
@@ -347,7 +417,7 @@ pub(crate) fn plugin_parts(c: &Company, sheet: &Sheet) -> super::plugin::Parts {
         early: co::econ_uk::ON_TIME_EARLY,
         late: co::econ_uk::ON_TIME_LATE,
     });
-    super::plugin::Parts { sheet: rows, controls, fare, contract }
+    super::plugin::Parts { sheet: rows, controls, fare, contract, ibis: Vec::new() }
 }
 
 /// What the duty launcher does.
@@ -383,4 +453,54 @@ pub fn act(s: &mut Session, what: &str, args: &Value, p: &dyn crate::Platform) -
         "launch_start" => start(s, args, p),
         _ => return None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hub_core::company::plan::{set_driver, weekday_of, Who};
+    use hub_core::{LineInfo, StopInfo, TourInfo, TripInfo};
+
+    #[test]
+    fn the_driver_s_week_says_his_duties_and_which_he_may_swap() {
+        super::super::words::set_language("en");
+        let trip = |dep: f64| TripInfo {
+            name: "5 A-B".into(),
+            index: 1,
+            line: "5".into(),
+            from: "A".into(),
+            terminus: "B".into(),
+            departure: dep,
+            arrival: dep + 1800.0,
+            stops: ["A", "M", "N", "B"].iter().enumerate().map(|(j, n)| StopInfo { name: n.to_string(), id: j as i64, arr: dep + j as f64 * 600.0, dep: dep + j as f64 * 600.0 }).collect(),
+            km: 9.0,
+        };
+        let tour = TourInfo { number: "1".into(), ai_group: String::new(), first: 0.0, last: 0.0, days: "daily".into(), runs: true, next_run: None, trips: vec![trip(21_600.0)] };
+        let l = LineInfo { name: "Linie5".into(), user_allowed: true, termini: vec!["A".into(), "B".into()], tours: vec![tour] };
+        let mut c = co::found(&co::Founding { name: "Week".into(), date: "2024-03-04".into(), ..Default::default() }, "Luc");
+        c.lines.push(co::model::CompanyLine { name: "Linie5".into(), number: "5".into(), numbers: vec!["5".into()], added: c.date.clone(), service_from: Some(0), ..Default::default() });
+        // the player on tour 1 today (Monday) and tomorrow
+        let today = c.date.clone();
+        let tomorrow = co::dates::add(&today, 1);
+        for d in [&today, &tomorrow] {
+            set_driver(&mut c, weekday_of(d), "Linie5", "1", 0, Some(Who::Player));
+        }
+        let mut s = Session { company: Some(c.clone()), ..Session::default() };
+        super::super::test_week(&mut s, vec![l]);
+        let now = DutyRef { date: today.clone(), line: "Linie5".into(), tour: "1".into(), duty: 0 };
+        let week = week_of(&mut s, &c, &now);
+        assert_eq!(week.len(), 7, "{week:?}");
+        assert_eq!((week[0].day.as_str(), week[0].date.as_str(), week[0].duty.as_str(), week[0].from.as_str(), week[0].line.as_str()), ("Mon", "2024-03-04", "1", "06:00", "5"));
+        // (the duty driven now is not to be swapped; tomorrow's is)
+        assert!(week[0].swap.is_none());
+        assert_eq!(week[1].swap, Some(hub_game::bridge::RosterDuty { date: tomorrow.clone(), line: "Linie5".into(), tour: "1".into(), duty: 0 }));
+        // a day without a duty: a row of its own
+        assert!(week[2].duty.is_empty() && week[2].swap.is_none() && week[2].off.is_empty());
+        // ill tomorrow: no duty of his that day, and why
+        co::crew::call_in_sick(&mut c, Who::Player, 2).unwrap();
+        s.company = Some(c.clone());
+        s.plan_gen += 1;
+        let week = week_of(&mut s, &c, &now);
+        assert_eq!((week[1].duty.as_str(), week[1].off.as_str()), ("", "Ill"));
+    }
 }

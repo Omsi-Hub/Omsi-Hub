@@ -37,6 +37,9 @@ pub const BRIEF_FILE: &str = "ontime.json";
 const FRESH: f64 = 30.0;
 /// The brief is worked out at most this often.
 const EVERY: Duration = Duration::from_secs(3);
+/// The same brief is written again (with its new `at`) this often: the plugin takes a brief
+/// older than a minute for one of a launcher that stopped (`ontime.lua`'s `STALE`).
+const REWRITE: f64 = 20.0;
 /// Connections are told this many stops (and at the most this many minutes) ahead.
 const CONNECTIONS_AHEAD: usize = 4;
 const CONNECTIONS_MINUTES: f64 = 20.0;
@@ -77,8 +80,10 @@ pub struct Live {
 #[derive(Default)]
 struct State {
     last: Option<Instant>,
-    /// The brief last written, so the same is not written again.
+    /// The brief last written (its time aside) and when (Unix seconds), so the same is not
+    /// written again before `REWRITE`.
     written: String,
+    written_at: f64,
     /// The day's delay model, worked out once a minute of the company's clock and plan.
     model: Option<((String, u32, u64, u64), lt::Model)>,
 }
@@ -106,14 +111,22 @@ pub fn refresh() {
     let brief = with(|s| brief(s, &live, &mut st.model));
     let Some(brief) = brief else { return };
     let text = serde_json::to_string(&brief).unwrap_or_default();
-    // (the time it was written aside, the same brief is not written again)
     let key = text.replace(&format!("\"at\":{}", brief["at"]), "");
-    if key == st.written {
+    let now = now();
+    if !due(&st.written, st.written_at, &key, now) {
         return;
     }
     if write(&dir, &text).is_ok() {
         st.written = key;
+        st.written_at = now;
     }
+}
+
+/// Whether the brief `key` (its time aside) is to be written at `now` (Unix seconds), the brief
+/// `written` having been written at `at`: when it changed, and the same one again every
+/// `REWRITE` seconds so that its `at` stays fresh for the plugin.
+fn due(written: &str, at: f64, key: &str, now: f64) -> bool {
+    key != written || (now - at).abs() >= REWRITE
 }
 
 /// The plugin's `live.json` in `dir`, if it is fresh at `now` (Unix seconds).
@@ -328,6 +341,21 @@ mod tests {
         assert_eq!((calls[0].0, calls[0].1.at), (0, 120.0));
         write(&d, "{}").unwrap();
         assert_eq!(std::fs::read_to_string(d.join(DATA_DIR).join(BRIEF_FILE)).unwrap(), "{}");
+    }
+
+    #[test]
+    fn the_same_brief_is_written_again_before_the_plugin_drops_it() {
+        // a new brief, or another: written
+        assert!(due("", 0.0, "{\"trip\":1}", 1000.0));
+        assert!(due("{\"trip\":1}", 1000.0, "{\"trip\":2}", 1003.0));
+        // the same a few seconds later: not
+        assert!(!due("{\"trip\":1}", 1000.0, "{\"trip\":1}", 1003.0));
+        assert!(!due("{\"trip\":1}", 1000.0, "{\"trip\":1}", 1019.0));
+        // the same after REWRITE: again, well before the plugin's minute (ontime.lua's STALE)
+        assert!(due("{\"trip\":1}", 1000.0, "{\"trip\":1}", 1000.0 + REWRITE));
+        assert!(!due("{\"trip\":1}", 1000.0, "{\"trip\":1}", 1000.0 + REWRITE - 1.0));
+        // (a clock put back: written)
+        assert!(due("{\"trip\":1}", 1000.0, "{\"trip\":1}", 900.0));
     }
 
     /// A company running line 5 every eight minutes (three tours from 06:00, out A-B-C-D in nine

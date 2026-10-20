@@ -68,6 +68,49 @@ pub struct Kept {
     pub log: u64,
     /// The last assignment given: its reports are booked for its driver and company.
     pub assigned: Option<Assigned>,
+    /// What the last duty the plugin ended came to.
+    pub ended: Option<DutyEnd>,
+}
+
+/// What a duty came to, as the plugin reported its end (`duty_end`): the assignment and duty,
+/// when (Unix seconds), the trips done and on time, their average score, the passengers, the
+/// km driven and the fares taken. A total the plugin did not say is None.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DutyEnd {
+    pub issued: u64,
+    pub driver: String,
+    pub company_id: String,
+    pub line: String,
+    pub tour: String,
+    pub at: f64,
+    pub trips: u32,
+    pub on_time: Option<f64>,
+    pub score: Option<f64>,
+    pub passengers: Option<f64>,
+    pub km: Option<f64>,
+    pub fares: Option<f64>,
+}
+
+impl DutyEnd {
+    /// The end of a duty the plugin reported (`r`, a `duty_end`), for the assignment it names
+    /// (`a`).
+    pub fn of(r: &Report, a: Option<&Assigned>) -> DutyEnd {
+        DutyEnd {
+            issued: r.issued,
+            driver: a.map(|a| a.driver.clone()).unwrap_or_default(),
+            company_id: a.map(|a| a.company_id.clone()).unwrap_or_default(),
+            line: r.line.clone(),
+            tour: r.tour.clone(),
+            at: if r.at > 0.0 { r.at } else { now() as f64 },
+            trips: r.trips,
+            on_time: r.on_time,
+            score: r.score,
+            passengers: r.passengers,
+            km: r.km,
+            fares: r.fares,
+        }
+    }
 }
 
 /// The duty the plugin was last given (the old `omsihub-addon.json`'s `assigned`).
@@ -252,6 +295,10 @@ pub fn assignment_for(d: &Duty, company: Option<&CompanyPart>, settings: &Settin
         contract: parts.contract,
         legs: if free.is_some() { Vec::new() } else { legs },
         free_line: free.unwrap_or_default(),
+        // (the phone under the navigator's map unless the player switched it off: `nav_phone`;
+        // the navigator's look is openOMSI's own setting, filled in by `give`)
+        nav: Some(bridge::NavLook { light: false, phone: Some(on("nav_phone", true)) }),
+        ibis_codes: parts.ibis,
         ..Assignment::default()
     }
 }
@@ -297,7 +344,11 @@ pub fn personnel_of(driver: &str, make: bool) -> Option<bridge::Personnel> {
 /// keep what its reports are booked with. The assignment written.
 pub fn give(plugin_dir: &Path, d: &Duty, data: &Path) -> Result<Assignment, String> {
     let company = take_company(d);
-    let a = assignment_for(d, company.as_ref(), &Settings::load(), now());
+    let mut a = assignment_for(d, company.as_ref(), &Settings::load(), now());
+    // (the navigator in its light look: the phone's texts go dark on it)
+    if let Some(nav) = a.nav.as_mut() {
+        nav.light = hub_game::gamesettings::nav_light(&hub_core::paths::home_dir());
+    }
     bridge::write_assignment(plugin_dir, &a).map_err(|e| format!("the plugin's assignment: {e}"))?;
     let mut k = load(data);
     k.assigned = Some(Assigned {
@@ -376,6 +427,8 @@ pub struct Booked {
     /// The drivers whose trips were booked, and the companies something was booked for.
     pub drivers: Vec<String>,
     pub companies: Vec<String>,
+    /// The last duty ended among the reports, with what it came to.
+    pub ended: Option<DutyEnd>,
 }
 
 /// A trip the plugin reported, as the driver's record keeps it, booked for the assignment it
@@ -453,7 +506,24 @@ pub fn book_reports(data: &Path, reports: &[Report], assigned: Option<&Assigned>
     for r in reports {
         let a = assigned.filter(|a| a.issued == r.issued && r.issued != 0);
         match r.kind.as_str() {
-            "duty_start" | "duty_end" => hub_core::log_line(&format!("plugin: {} line {} tour {}", r.kind, r.line, r.tour)),
+            "duty_start" => hub_core::log_line(&format!("plugin: {} line {} tour {}", r.kind, r.line, r.tour)),
+            // (with what the duty came to, where the plugin says it: kept as the last duty's)
+            "duty_end" => {
+                let e = DutyEnd::of(r, a);
+                let n = |x: Option<f64>| x.map_or("-".to_string(), |v| format!("{v:.1}"));
+                hub_core::log_line(&format!(
+                    "plugin: duty_end line {} tour {}: {} trips, {} on time, score {}, {} passengers, {} km, fares {}",
+                    e.line,
+                    e.tour,
+                    e.trips,
+                    n(e.on_time),
+                    n(e.score),
+                    n(e.passengers),
+                    n(e.km),
+                    n(e.fares)
+                ));
+                b.ended = Some(e);
+            }
             _ => {}
         }
         if let Some(t) = trip_run(r, a) {
@@ -497,6 +567,9 @@ pub fn book_from(data: &Path, plugin_dir: &Path) -> Booked {
     let new = reader.read_new(plugin_dir);
     let moved = reader.offset != before;
     let b = book_reports(data, &new, k.assigned.as_ref());
+    if b.ended.is_some() {
+        k.ended = b.ended.clone();
+    }
     if moved || !k.reports.is_empty() {
         let _ = save(data, &k);
     }
@@ -516,6 +589,9 @@ fn book_from_log(data: &Path) -> Booked {
     k.log = text.len() as u64;
     let (_, reports) = bridge::from_log(&new);
     let b = book_reports(data, &reports, k.assigned.as_ref());
+    if b.ended.is_some() {
+        k.ended = b.ended.clone();
+    }
     let _ = save(data, &k);
     b
 }
@@ -545,7 +621,8 @@ fn state() -> Value {
     let plugins = plugins_dir().ok();
     let plugin = plugins.as_deref().map(install::status);
     let hello = plugins.as_deref().and_then(|d| bridge::read_hello(&install::plugin_dir(d)));
-    let assigned = load(&hub_core::data_dir()).assigned;
+    let kept = load(&hub_core::data_dir());
+    let assigned = kept.assigned;
     json!({
         "folder": s.openomsi_folder,
         "game": game,
@@ -555,6 +632,8 @@ fn state() -> Value {
         "hello": hello,
         "checked": hello.is_some(),
         "assigned": assigned,
+        // (what the last duty came to, as the plugin reported its end)
+        "ended": kept.ended,
     })
 }
 
@@ -784,6 +863,12 @@ mod tests {
         assert_eq!((a.issued, a.driver.as_str(), a.line.as_str(), a.tour.as_str(), a.trip), (9, "Luc", "14", "1", 3));
         assert_eq!(a.legs.len(), 2);
         assert_eq!((a.display_font.as_str(), a.ibis, a.board), ("Gelb", Some(false), Some(true)));
+        // the phone under the navigator's map unless switched off (its look: `give`'s)
+        assert_eq!(a.nav, Some(bridge::NavLook { light: false, phone: Some(true) }));
+        let mut off = s.clone();
+        off.other.insert("nav_phone".into(), json!(false));
+        assert_eq!(assignment_for(&d, None, &off, 9).nav.and_then(|n| n.phone), Some(false));
+        assert!(a.ibis_codes.is_empty());
         assert!(a.company.is_empty() && a.crew.is_none() && a.free_line.is_empty());
         // a free drive along a route: the route, no parts, no tour
         let free = Duty { free_line: Some("14_Hbf-Zoo".into()), ..d.clone() };
@@ -795,11 +880,16 @@ mod tests {
             duty: "5 2 1".into(),
             company_id: "stadtbus".into(),
             crew: Some(bridge::Crew { bus: 4, ..Default::default() }),
-            parts: crate::company::plugin::Parts { sheet: vec![bridge::SheetRow { kind: "sign_on".into(), ..Default::default() }], ..Default::default() },
+            parts: crate::company::plugin::Parts {
+                sheet: vec![bridge::SheetRow { kind: "sign_on".into(), ..Default::default() }],
+                ibis: vec![bridge::TripIbis { trip: 1, dep: 21_600.0, line: "005".into(), ..Default::default() }],
+                ..Default::default()
+            },
             ..Default::default()
         };
         let a = assignment_for(&d, Some(&part), &s, 9);
         assert_eq!((a.company.as_str(), a.duty.as_str(), a.sheet.len()), ("Stadtbus", "5 2 1", 1));
+        assert_eq!(a.ibis_codes.iter().map(|x| x.line.as_str()).collect::<Vec<_>>(), ["005"]);
         assert_eq!(a.crew.map(|c| (c.bus, c.strip)), Some((4, Some(true))));
     }
 
@@ -823,6 +913,7 @@ mod tests {
         .unwrap();
         let b = book_from(&data, &plugin);
         assert_eq!((b.reports, b.trips, b.orders, b.live), (4, 1, 1, 1));
+        assert!(b.ended.is_none() && load(&data).ended.is_none());
         assert_eq!((b.drivers.as_slice(), b.companies.as_slice()), (["Luc".to_string()].as_slice(), ["c1".to_string()].as_slice()));
         let trips = hub_core::trips_of(&data, "Luc");
         assert_eq!((trips.len(), trips[0].trip), (1, 2));
@@ -830,6 +921,26 @@ mod tests {
         assert!(std::fs::read_to_string(store::live_file(&data, "c1")).unwrap().contains("breakdown"));
         // (again: nothing new)
         assert_eq!(book_from(&data, &plugin).reports, 0);
+        // the duty ended, with what it came to: kept as the last duty's
+        std::io::Write::write_all(
+            &mut f,
+            b"{\"kind\":\"duty_end\",\"issued\":5,\"line\":\"9\",\"tour\":\"2\",\"trips\":6,\"on_time\":5,\"score\":88.5,\"passengers\":140,\"km\":52.3,\"fares\":231.5}
+",
+        )
+        .unwrap();
+        let b = book_from(&data, &plugin);
+        let e = load(&data).ended.unwrap();
+        assert_eq!(b.ended.as_ref(), Some(&e));
+        assert_eq!((e.driver.as_str(), e.company_id.as_str(), e.trips, e.on_time, e.score, e.passengers, e.km, e.fares), ("Luc", "c1", 6, Some(5.0), Some(88.5), Some(140.0), Some(52.3), Some(231.5)));
+        // (an older plugin's end says no totals)
+        std::io::Write::write_all(
+            &mut f,
+            b"{\"kind\":\"duty_end\",\"issued\":5}
+",
+        )
+        .unwrap();
+        book_from(&data, &plugin);
+        assert_eq!(load(&data).ended.map(|e| (e.trips, e.fares)), Some((0, None)));
         let _ = std::fs::remove_dir_all(&data);
     }
 
@@ -838,7 +949,7 @@ mod tests {
         use hub_game::{compat, detect};
         let mut texts: Vec<&str> = install::TEXTS.to_vec();
         texts.extend(compat::NOTES);
-        for f in compat::FEATURES {
+        for f in compat::FEATURES.iter().chain([&compat::PHONE]) {
             texts.push(f.label);
             if !f.fallback.is_empty() {
                 texts.push(f.fallback);

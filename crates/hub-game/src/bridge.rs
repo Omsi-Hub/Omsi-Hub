@@ -209,6 +209,26 @@ pub struct Assignment {
     /// whether the phone is wanted (None: the dark look, the phone on).
     #[serde(default)]
     pub nav: Option<NavLook>,
+    /// What the driver types into the IBIS for each trip of a company's duty, as the duty card
+    /// prints it (`ttrun::ibis_target`; empty: not known, or a drive of the player's own).
+    #[serde(default)]
+    pub ibis_codes: Vec<TripIbis>,
+}
+
+/// The IBIS codes of a trip of the duty: its place among the duty's trips with passengers
+/// (from 1) and its departure (seconds of the day: what to match the game's trip by), the line
+/// (three digits), the route (the line and the route's two digits), the destination's code and
+/// its text, and the course (Kurs). "" where the depot file does not say.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TripIbis {
+    pub trip: u32,
+    pub dep: f64,
+    pub line: String,
+    pub route: String,
+    pub dest: String,
+    pub text: String,
+    pub kurs: String,
 }
 
 /// How the player has openOMSI's navigator (its `settings.cfg`), for the phone docked under
@@ -275,6 +295,82 @@ pub struct Crew {
     pub text_max: u32,
     /// The fuel or charge left (0 to 1) under which the strip says to refuel at the depot.
     pub low_fuel: f64,
+    /// The bus's defects still open, the latest first (`crew::defects_of`).
+    #[serde(default)]
+    pub defects: Vec<CrewDefect>,
+    /// The driver's week from the duty's day on, as the company's plans have it: a row per
+    /// duty, a day without one a row with no `duty` (and why he is off, where he is).
+    #[serde(default)]
+    pub week: Vec<WeekDuty>,
+    /// The colleagues a swap may be asked of.
+    #[serde(default)]
+    pub colleagues: Vec<Colleague>,
+    /// The driver's requests Omsi-Hub takes back (replies of kind `"crew"`).
+    #[serde(default)]
+    pub can: CrewCan,
+}
+
+/// An open defect of the duty's bus: its check's key (`part`, as `Crew::checks` names them)
+/// and label in the player's language, what was typed, the day it was reported and whether it
+/// took the bus off the road.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CrewDefect {
+    pub part: String,
+    pub label: String,
+    pub text: String,
+    pub since: String,
+    pub held: bool,
+}
+
+/// A day of the driver's week: the weekday in the player's language and the date, the duty
+/// (its number in its tour, from 1; "": no duty that day), its sign-on and sign-off ("05:40"),
+/// its line as the displays show it, tour and bus; why the driver is off that day, in words
+/// ("": he works, or it is a day of rest); whether it has begun; and what a swap request of it
+/// sends back (None: it cannot be swapped any more).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WeekDuty {
+    pub day: String,
+    pub date: String,
+    pub duty: String,
+    pub from: String,
+    pub to: String,
+    pub line: String,
+    pub tour: String,
+    pub bus: String,
+    pub off: String,
+    pub begun: bool,
+    pub swap: Option<RosterDuty>,
+}
+
+/// A duty of the company's plan, exactly: its day, its timetable line and tour, and its number
+/// in the tour (from 0) - as a swap request names it (`remote::Order::Swap`).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RosterDuty {
+    pub date: String,
+    pub line: String,
+    pub tour: String,
+    pub duty: u32,
+}
+
+/// A colleague of the staff, by id and name.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Colleague {
+    pub id: u32,
+    pub name: String,
+}
+
+/// Which of the driver's requests Omsi-Hub takes from the game: a sick call, a duty swap, days
+/// off (the company's own rules decide them, as the phone's).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CrewCan {
+    pub sick: bool,
+    pub swap: bool,
+    pub leave: bool,
 }
 
 /// The plugin's handshake.
@@ -355,6 +451,19 @@ pub struct Report {
     /// What happened to the company on the map (`"live"`): its own `LiveEvent` (a trip of one
     /// of its buses, a breakdown), booked into the company's live file as it is.
     pub event: Option<serde_json::Value>,
+    /// What a duty ended (`"duty_end"`) came to: the trips done on time (of `trips` done), the
+    /// trips' average score (0 to 100), the passengers carried, the distance driven (km) and the
+    /// fares taken (in the company's currency). None: the plugin did not say.
+    #[serde(default)]
+    pub on_time: Option<f64>,
+    #[serde(default)]
+    pub score: Option<f64>,
+    #[serde(default)]
+    pub passengers: Option<f64>,
+    #[serde(default)]
+    pub km: Option<f64>,
+    #[serde(default)]
+    pub fares: Option<f64>,
 }
 
 impl Report {
@@ -447,7 +556,7 @@ pub struct Inbox {
 #[serde(default)]
 pub struct Reply {
     /// `"delivered"`, `"read"`, `"accept"`, `"decline"`, `"reply"` (a canned reply: `key`),
-    /// `"quick"` (a quick button to control: `key`).
+    /// `"quick"` (a quick button to control: `key`), `"crew"` (a request of the driver's: `what`).
     pub kind: String,
     /// The message it is about (none for `"quick"`).
     pub id: u64,
@@ -460,6 +569,24 @@ pub struct Reply {
     pub uid: String,
     pub at: f64,
     pub clock: Option<f64>,
+    /// A request of the driver's (`"crew"`): `"sick"` for `days` days from today (0: one),
+    /// `"leave"` for the days `from` to `until` (`yyyy-mm-dd`) for `reason` (a holiday reason's
+    /// key; "": a personal one), `"swap"` of the week's duty `duty` with colleague `with` (0:
+    /// whoever of them will).
+    #[serde(default)]
+    pub what: String,
+    #[serde(default)]
+    pub days: u32,
+    #[serde(default)]
+    pub from: String,
+    #[serde(default)]
+    pub until: String,
+    #[serde(default)]
+    pub reason: String,
+    #[serde(default)]
+    pub duty: Option<RosterDuty>,
+    #[serde(default)]
+    pub with: u32,
 }
 
 /// How the duty stands now, as the game says (`data/status.json`).
@@ -943,6 +1070,58 @@ mod tests {
         let r: Report = serde_json::from_str("{\"kind\":\"defect\",\"defect\":\"tyres\",\"text\":\"front left\"}").unwrap();
         assert!(r.is_crew() && !r.is_trip());
         assert_eq!((r.defect.as_str(), r.text.as_str(), r.minutes), ("tyres", "front left", None));
+    }
+
+    #[test]
+    fn the_phone_s_fields_reach_the_plugin_and_its_requests_and_totals_come_back() {
+        let crew = Crew {
+            defects: vec![CrewDefect { part: "doors".into(), label: "Doors".into(), text: "rear sticks".into(), since: "2026-10-19".into(), held: false }],
+            week: vec![WeekDuty {
+                day: "Mon".into(),
+                date: "2026-10-20".into(),
+                duty: "2".into(),
+                from: "05:40".into(),
+                to: "13:55".into(),
+                line: "307".into(),
+                swap: Some(RosterDuty { date: "2026-10-20".into(), line: "Linie307".into(), tour: "4".into(), duty: 1 }),
+                ..WeekDuty::default()
+            }],
+            colleagues: vec![Colleague { id: 12, name: "Anna".into() }],
+            can: CrewCan { sick: true, swap: true, leave: false },
+            ..Crew::default()
+        };
+        let a = Assignment {
+            crew: Some(crew),
+            nav: Some(NavLook { light: true, phone: Some(false) }),
+            ibis_codes: vec![TripIbis { trip: 1, dep: 21_600.0, line: "307".into(), route: "30702".into(), dest: "012".into(), text: "Hbf".into(), kurs: "4".into() }],
+            ..Assignment::default()
+        };
+        let lua = a.to_lua();
+        for part in [
+            "[\"part\"] = \"doors\"",
+            "[\"since\"] = \"2026-10-19\"",
+            "[\"from\"] = \"05:40\"",
+            "[\"tour\"] = \"4\"",
+            "[\"leave\"] = false",
+            "[\"light\"] = true",
+            "[\"phone\"] = false",
+            "[\"route\"] = \"30702\"",
+            "[\"dep\"] = 21600.0",
+        ] {
+            assert!(lua.contains(part), "{part} not in {lua}");
+        }
+        // (an older assignment reads, without any of them)
+        let old: Crew = serde_json::from_str("{\"bus\":4}").unwrap();
+        assert!(old.defects.is_empty() && old.week.is_empty() && old.can == CrewCan::default());
+        // a request of the driver's, and what the duty came to
+        let r: Reply = serde_json::from_str("{\"kind\":\"crew\",\"what\":\"swap\",\"duty\":{\"date\":\"2026-10-21\",\"line\":\"Linie307\",\"tour\":\"4\",\"duty\":0},\"uid\":\"a\"}").unwrap();
+        assert_eq!((r.what.as_str(), r.with, r.duty.map(|d| d.tour)), ("swap", 0, Some("4".to_string())));
+        let r: Reply = serde_json::from_str("{\"kind\":\"crew\",\"what\":\"sick\",\"days\":2}").unwrap();
+        assert_eq!((r.days, r.duty), (2, None));
+        let end: Report = serde_json::from_str("{\"kind\":\"duty_end\",\"trips\":6,\"on_time\":5,\"score\":87.5,\"passengers\":214,\"km\":61.2,\"fares\":321.4}").unwrap();
+        assert_eq!((end.trips, end.on_time, end.score, end.passengers, end.km, end.fares), (6, Some(5.0), Some(87.5), Some(214.0), Some(61.2), Some(321.4)));
+        let bare: Report = serde_json::from_str("{\"kind\":\"duty_end\"}").unwrap();
+        assert_eq!((bare.on_time, bare.fares), (None, None));
     }
 
     #[test]

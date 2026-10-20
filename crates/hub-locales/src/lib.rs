@@ -84,6 +84,7 @@ pub const TABLES: &[(&str, &str)] = &[
     ("openomsi-0227.yml", include_str!("../locales/openomsi-0227.yml")),
     ("openomsi-0230.yml", include_str!("../locales/openomsi-0230.yml")),
     ("openomsi-settings.yml", include_str!("../locales/openomsi-settings.yml")),
+    ("phone-app.yml", include_str!("../locales/phone-app.yml")),
     ("phone-bus.yml", include_str!("../locales/phone-bus.yml")),
     ("phone-duty.yml", include_str!("../locales/phone-duty.yml")),
     ("phone-msgs.yml", include_str!("../locales/phone-msgs.yml")),

@@ -14,8 +14,9 @@ use super::words::{filled, tr, trf};
 use super::Session;
 use hub_core::company::clock::{self as ck, Run};
 use hub_core::company::control::Act;
+use hub_core::company::duty_launch::DutyRef;
 use hub_core::company::messages::{self as msg, Action, Answer, Canned, From, Msg, Priority, Quick, To, What};
-use hub_core::company::plan::{BusOf, DayPlan};
+use hub_core::company::plan::{BusOf, DayPlan, Who};
 use hub_core::company::Company;
 use hub_game::bridge::{self, Choice, Inbox, InboxAction, InboxMsg, Reply, Status};
 use serde_json::{json, Value};
@@ -160,6 +161,9 @@ pub fn take_reply(c: &mut Company, r: &Reply, line: &str, tour: &str, driver: &s
     if !c.messages.first_seen(&r.uid) {
         return false;
     }
+    if r.kind == "crew" {
+        return crew_request(c, r);
+    }
     if r.kind == "quick" {
         return match Quick::of(&r.key) {
             Some(q) => {
@@ -174,6 +178,62 @@ pub fn take_reply(c: &mut Company, r: &Reply, line: &str, tour: &str, driver: &s
         Some(a) => msg::answer(c, r.id, a, Some((line, tour))).is_ok(),
         None => false,
     }
+}
+
+/// A request of the driver's from the game (`"crew"`): a sick call, days off, a swap of a duty
+/// of his week - the phone's own orders (`remote::Order`), carried out at once with the
+/// company's rules (`crew::call_in_sick`, `crew::ask_leave`, `crew::ask_swap`), which tell him
+/// the answer. A refusal is told him the same way (`crew::notify`: the game's notices). Whether
+/// it was a request.
+fn crew_request(c: &mut Company, r: &Reply) -> bool {
+    use hub_core::company::crew;
+    use hub_core::company::remote;
+    let refuse = |c: &mut Company, why: &str| crew::notify(c, Some(Who::Player), crew::Priority::Normal, why, &[], Some("phone"));
+    let order = match r.what.as_str() {
+        "sick" => remote::parse(&json!({ "do": "sick", "days": r.days.max(1) })),
+        // (a day off asked from the bus: a personal one unless it says)
+        "leave" => {
+            let reason = if r.reason.is_empty() { "personal" } else { r.reason.as_str() };
+            remote::parse(&json!({ "do": "leave", "from": r.from, "until": r.until, "reason": reason }))
+        }
+        "swap" => {
+            let Some(d) = r.duty.as_ref() else {
+                refuse(c, crew::NO_DUTY);
+                return true;
+            };
+            let mine = DutyRef { date: d.date.clone(), line: d.line.clone(), tour: d.tour.clone(), duty: d.duty as usize };
+            let Some(p) = remote::plan_on(c, &d.date) else {
+                refuse(c, crew::NO_DUTY);
+                return true;
+            };
+            let with = if r.with > 0 { Some(r.with) } else { willing(c, &p, &mine) };
+            let Some(with) = with else {
+                refuse(c, crew::NO_COLLEAGUE);
+                return true;
+            };
+            if let Err(why) = crew::ask_swap(c, &p, Who::Player, &mine, Who::Staff(with)) {
+                refuse(c, why);
+            }
+            return true;
+        }
+        _ => return false,
+    };
+    match order.map(|o| remote::apply(c, &o)) {
+        Some(Ok(())) => {}
+        Some(Err(why)) => refuse(c, why),
+        None => refuse(c, crew::BAD_DAYS),
+    }
+    true
+}
+
+/// The colleague to ask to swap duty `mine` of plan `p` when the driver asked whoever will: the
+/// first of the colleagues the phone lists who would say yes (`crew::ai_answer`, with the
+/// number the request will get), else the first of them (who says why not). None: nobody to ask.
+fn willing(c: &Company, p: &DayPlan, mine: &DutyRef) -> Option<u32> {
+    use hub_core::company::{crew, staff};
+    let colleagues: Vec<u32> = c.staff.iter().filter(|e| staff::drives(e) && e.employed_on(&c.date) && e.notice_until.is_none()).map(|e| e.id).collect();
+    let no = c.crew.last + 1;
+    colleagues.iter().copied().find(|&id| crew::ai_answer(c, p, no, Who::Player, mine, id).is_ok()).or(colleagues.first().copied())
 }
 
 fn now_unix() -> f64 {
@@ -469,6 +529,35 @@ mod tests {
         assert_eq!(ib.messages.iter().map(|m| m.id).collect::<Vec<_>>(), vec![last.id, id]);
         assert!(ib.messages[0].mine && ib.messages[1].text == msg::DIVERSION && ib.messages[1].state == "read");
         assert_eq!((ib.quick.len(), ib.replies.len()), (7, 4));
+    }
+
+    #[test]
+    fn the_driver_s_requests_from_the_game_go_by_the_company_s_rules() {
+        super::super::words::set_language("en");
+        let mut c = hub_core::company::found(&hub_core::company::Founding { name: "Crew".into(), date: "2024-03-04".into(), ..Default::default() }, "Luc");
+        let mut run = Run::default();
+        let crew = |what: &str, uid: &str| Reply { kind: "crew".into(), what: what.into(), uid: uid.into(), ..Reply::default() };
+        // a sick call: the driver ill until the day after, told so
+        assert!(take_reply(&mut c, &Reply { days: 2, ..crew("sick", "s1") }, "Linie5", "1", "Luc", None, &mut run));
+        assert_eq!(c.crew.sick_until.as_deref(), Some("2024-03-05"));
+        let told = |c: &mut Company| hub_core::company::crew::take_notifications(c).into_iter().map(|n| n.template).collect::<Vec<_>>();
+        assert_eq!(told(&mut c), [hub_core::company::crew::SICK_CALLED]);
+        // (again: refused, and the driver hears why)
+        assert!(take_reply(&mut c, &crew("sick", "s2"), "Linie5", "1", "Luc", None, &mut run));
+        assert_eq!(told(&mut c), [hub_core::company::crew::ILL_ALREADY]);
+        // days off: the planner answers at once; days that are no days are refused
+        assert!(take_reply(&mut c, &Reply { from: "2024-03-11".into(), until: "2024-03-12".into(), ..crew("leave", "l1") }, "Linie5", "1", "Luc", None, &mut run));
+        assert_eq!(c.crew.leave.requests.len(), 1);
+        assert_eq!(c.crew.leave.requests[0].reason, hub_core::company::holidays::Reason::Personal);
+        told(&mut c);
+        assert!(take_reply(&mut c, &Reply { from: "next week".into(), ..crew("leave", "l2") }, "Linie5", "1", "Luc", None, &mut run));
+        assert_eq!(told(&mut c), [hub_core::company::crew::BAD_DAYS]);
+        // a swap without its duty: refused; a request of a newer plugin: not taken
+        assert!(take_reply(&mut c, &crew("swap", "w1"), "Linie5", "1", "Luc", None, &mut run));
+        assert_eq!(told(&mut c), [hub_core::company::crew::NO_DUTY]);
+        assert!(!take_reply(&mut c, &crew("overtime", "o1"), "Linie5", "1", "Luc", None, &mut run));
+        // (each line once)
+        assert!(!take_reply(&mut c, &Reply { days: 2, ..crew("sick", "s1") }, "Linie5", "1", "Luc", None, &mut run));
     }
 
     #[test]

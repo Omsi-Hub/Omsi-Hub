@@ -1,0 +1,24 @@
+_version: 2
+# The phone in openOMSI's navigator on the app's side: its line in the openOMSI features
+# (crates/hub-game/src/compat.rs PHONE) and its switch on the Settings page (ui/js/hub/addon.js).
+"Phone unit in the navigator":
+  nl: "Telefoon in de navigator"
+  de: "Telefon im Navigator"
+  fr: "Téléphone dans le navigateur"
+  ru: "Телефон в навигаторе"
+  uk: "Телефон у навігаторі"
+  pl: "Telefon w nawigatorze"
+"needs openOMSI 0.3.38 or newer":
+  nl: "vraagt openOMSI 0.3.38 of nieuwer"
+  de: "braucht openOMSI 0.3.38 oder neuer"
+  fr: "nécessite openOMSI 0.3.38 ou plus récent"
+  ru: "нужен openOMSI 0.3.38 или новее"
+  uk: "потрібен openOMSI 0.3.38 або новіший"
+  pl: "wymaga openOMSI 0.3.38 lub nowszego"
+"The ride, the stops, your duty, the messages and the bus under the navigator's map (openOMSI 0.3.38 or newer). Off, or in an older openOMSI: the panels on the screen as before.":
+  nl: "De rit, de haltes, je dienst, de berichten en de bus onder de kaart van de navigator (openOMSI 0.3.38 of nieuwer). Uit, of in een oudere openOMSI: de panelen op het scherm zoals voorheen."
+  de: "Die Fahrt, die Haltestellen, dein Dienst, die Nachrichten und der Bus unter der Karte des Navigators (openOMSI 0.3.38 oder neuer). Aus, oder in einem älteren openOMSI: die Felder auf dem Bildschirm wie bisher."
+  fr: "Le trajet, les arrêts, votre service, les messages et le bus sous la carte du navigateur (openOMSI 0.3.38 ou plus récent). Désactivé, ou dans un openOMSI plus ancien : les panneaux à l’écran comme avant."
+  ru: "Рейс, остановки, ваша смена, сообщения и автобус под картой навигатора (openOMSI 0.3.38 или новее). Если выключено или openOMSI старше: панели на экране, как раньше."
+  uk: "Рейс, зупинки, ваша зміна, повідомлення й автобус під картою навігатора (openOMSI 0.3.38 або новіший). Якщо вимкнено або openOMSI старіший: панелі на екрані, як раніше."
+  pl: "Kurs, przystanki, twoja służba, wiadomości i autobus pod mapą nawigatora (openOMSI 0.3.38 lub nowszy). Wyłączone albo w starszym openOMSI: panele na ekranie jak dotąd."
