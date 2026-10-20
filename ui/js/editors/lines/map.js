@@ -15,7 +15,8 @@ import { useStore } from '../../store.js';
 import { IconBtn, tr } from '../kit.js';
 import { dark } from '../../hub/theme.js';
 import { L, le } from './state.js';
-import { drawStopSign, stopSign } from '../../hub/stopsigns.js';
+import { stampStopSign, stopSign } from '../../hub/stopsigns.js';
+import { roadLayer, cityRoads, SETTLE } from '../../hub/roadlayer.js';
 
 /** How near the mouse must come to a stop, a dragged point or a leg (points). */
 const STOP_HIT = 10;
@@ -25,24 +26,16 @@ const DANGER = '#d93a30';
 const LINE = '#ffd23f';
 /** The light dots (a dragged point of a leg). */
 const LIGHT_DOT = '#e8ebf2';
-/** A road at least this many points wide, its casing a hair round it (`mapview.rs`). */
-const ROAD_PX = 1.4;
-const CASING_EDGE_FAR = 0.5;
-const CASING_EDGE_NEAR = 1.5;
-const SURFACE_GROW_NEAR = 1.0;
-/** A road at least a lane wide, and a little more on either side (metres). */
-const LANE_MIN = 3.6;
-const ROAD_MARGIN = 0.3;
 /** The closest the map goes in (metres a point); a wheel notch's step. */
 const MPP_MIN = 0.15;
 const NOTCH = 1.12;
 
 /** The map's colours in either look (`mapview::palette`): the ground, the roads' casing, a
  * road, a main road, a stop's rim. */
+const PAL_DARK = { casing: '#212833', road: '#3c4552', main: '#495261', edge: '#090c18' };
+const PAL_LIGHT = { casing: '#ac9c86', road: '#fcf9f4', main: '#ffffff', edge: '#60564c' };
 function palette() {
-  return dark()
-    ? { casing: '#212833', road: '#3c4552', main: '#495261', edge: '#090c18' }
-    : { casing: '#ac9c86', road: '#fcf9f4', main: '#ffffff', edge: '#604c4c'.replace('604c4c', '60564c') };
+  return dark() ? PAL_DARK : PAL_LIGHT;
 }
 
 /** The accent darkened (`Color::darken`): the casing under the line's legs. */
@@ -52,15 +45,8 @@ function darker(hex, t) {
   return `rgb(${f((n >> 16) & 255)}, ${f((n >> 8) & 255)}, ${f(n & 255)})`;
 }
 
-/** The roads' casing round their surface and how far their surface grows past its metres, in
- * points, at `mpp` metres a point (`mapview::casing_edge`, its zoom bands). */
-function casingEdge(mpp) {
-  const tol = Math.min(24, Math.max(0.05, 2 ** Math.round(Math.log2(Math.max(mpp * 0.5, 1e-6)))));
-  const t = Math.max(0, Math.min(1, Math.log2(4 / (tol * 2)) / 3));
-  return [CASING_EDGE_FAR + (CASING_EDGE_NEAR - CASING_EDGE_FAR) * t, SURFACE_GROW_NEAR * t];
-}
-
-const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+/** The roads' picture (one line editor on the page at a time). */
+const roads = roadLayer();
 
 /** The whole map in view, a little air round it (`MapView::fit_to`). */
 function fit(m, W, H) {
@@ -88,6 +74,8 @@ export function LineMap() {
   const box = useRef();
   const cv = useRef();
   const ptr = useRef({ down: null, moved: 0, at: null });
+  // (a frame asked for, the wheel's last turn, the roads to be drawn once it rests)
+  const frame = useRef({ raf: 0, zoomedAt: 0, settle: 0 });
   const v = L.view;
   const m = L.map;
 
@@ -155,44 +143,25 @@ export function LineMap() {
       g.beginPath();
       for (let i = 0; i < p.length; i += 2) (i ? g.lineTo : g.moveTo).call(g, px(p[i]), py(p[i + 1]));
     };
-    g.lineJoin = 'round';
-    // the roads as the game's city map draws them (`MapView::build`): every casing, then the
-    // surfaces over them - the side streets' first, the main roads' over them, square-ended
-    // on a side street they run into
+    // (the page's colours read once a frame: each read makes the browser work out its styles)
+    const root = getComputedStyle(document.documentElement);
+    const css = (name) => root.getPropertyValue(name).trim();
     const pal = palette();
-    const [edge, grow] = casingEdge(k.mpp);
-    const surface = (r) => Math.max((Math.max(r.w, LANE_MIN) + 2 * ROAD_MARGIN) / k.mpp, ROAD_PX) + 2 * grow;
-    g.lineCap = 'round';
-    g.strokeStyle = pal.casing;
-    for (const r of m.roads) {
-      poly(r.p);
-      g.lineWidth = surface(r) + 2 * edge;
-      g.stroke();
-    }
-    g.fillStyle = pal.main;
-    for (const r of m.roads) {
-      if (!r.main) continue;
-      for (const i of [0, r.p.length - 2]) {
-        g.beginPath();
-        g.arc(px(r.p[i]), py(r.p[i + 1]), surface(r) / 2, 0, Math.PI * 2);
-        g.fill();
-      }
-    }
-    g.strokeStyle = pal.road;
-    for (const r of m.roads) {
-      if (r.main) continue;
-      poly(r.p);
-      g.lineWidth = surface(r);
-      g.stroke();
-    }
-    g.lineCap = 'butt';
-    g.strokeStyle = pal.main;
-    for (const r of m.roads) {
-      if (!r.main) continue;
-      poly(r.p);
-      g.lineWidth = surface(r);
-      g.stroke();
-    }
+    roads.put(g, {
+      roads: m.roads,
+      look: pal,
+      cam: k,
+      W,
+      H,
+      dpr,
+      zoomedAt: frame.current.zoomedAt,
+      later: () => {
+        clearTimeout(frame.current.settle);
+        frame.current.settle = setTimeout(kick, SETTLE + 10);
+      },
+      paint: cityRoads(pal),
+    });
+    g.lineJoin = 'round';
     g.lineCap = 'round';
     const line = v.line;
     const colour = line?.colour || css('--hub-accent');
@@ -246,8 +215,10 @@ export function LineMap() {
     const style = stopSign();
     const sign = (at, d, ring, alpha = 1) => {
       const [x, y] = [px(at[0]), py(at[1])];
+      // (none drawn outside the box)
+      if (x < -d || y < -d || x > W + d || y > H + d) return;
       g.globalAlpha = alpha;
-      drawStopSign(g, style, x, y, d);
+      stampStopSign(g, style, x, y, d);
       g.globalAlpha = 1;
       if (ring) {
         g.beginPath();
@@ -310,11 +281,21 @@ export function LineMap() {
       g.fill();
     }
   };
-  useEffect(draw);
+  /** A frame drawn when the screen draws next: however many moves and answers came meanwhile,
+   * the map is drawn once. */
+  const kick = () => {
+    if (!frame.current.raf) frame.current.raf = requestAnimationFrame(() => ((frame.current.raf = 0), draw()));
+  };
+  useEffect(kick);
   useEffect(() => {
     const ro = new ResizeObserver(() => draw());
     ro.observe(box.current);
-    return () => ro.disconnect();
+    return () => {
+      ro.disconnect();
+      cancelAnimationFrame(frame.current.raf);
+      clearTimeout(frame.current.settle);
+      frame.current.raf = 0;
+    };
   }, []);
 
   /** The picture point of a mouse event (the stage may be drawn smaller than laid out). */
@@ -333,7 +314,8 @@ export function LineMap() {
       c.cx += before[0] - after[0];
       c.cy += before[1] - after[1];
     }
-    draw();
+    frame.current.zoomedAt = performance.now();
+    kick();
   };
   const onDown = (e) => {
     if (e.button !== 0 || !m) return;
@@ -354,14 +336,14 @@ export function LineMap() {
         c.cx = pd.down.cam.cx - (p[0] - pd.down.p[0]) * c.mpp;
         c.cy = pd.down.cam.cy + (p[1] - pd.down.p[1]) * c.mpp;
       }
-      draw();
+      kick();
       return;
     }
     const u = under(p);
     box.current.style.cursor = v.line && (u.stop >= 0 || u.via || u.leg >= 0) ? 'pointer' : 'grab';
     if (u.stop !== L.hover) {
       L.hover = u.stop;
-      draw();
+      kick();
     }
   };
   const onUp = (e) => {
@@ -379,16 +361,16 @@ export function LineMap() {
       const u = under(p);
       if (u.stop >= 0) le('click_stop', { i: u.stop, add: e.shiftKey });
     }
-    draw();
+    kick();
   };
   const first = v.line && v.line.directions[v.dir] && !v.line.directions[v.dir].stops.length;
-  return html`<div class="le-map" ref=${box} onPointerDown=${onDown} onPointerMove=${onMove} onPointerUp=${onUp} onPointerLeave=${() => L.hover >= 0 && ((L.hover = -1), draw())}
+  return html`<div class="le-map" ref=${box} onPointerDown=${onDown} onPointerMove=${onMove} onPointerUp=${onUp} onPointerLeave=${() => L.hover >= 0 && ((L.hover = -1), kick())}
       onWheel=${(e) => (e.preventDefault(), zoom(e.deltaY > 0 ? NOTCH : 1 / NOTCH, at(e)))}>
     <canvas ref=${cv}></canvas>
     ${!m && html`<div class="le-map-state">${tr('Loading...')}</div>`}
     ${m && first && html`<div class="le-map-hint">${tr("Click the line's first stop")}</div>`}
     <div class="le-map-buttons" onPointerDown=${(e) => e.stopPropagation()}>
-      ${[['add', 'Zoom in', () => zoom(1 / 1.5)], ['remove', 'Zoom out', () => zoom(1.5)], ['near_me', 'The whole map', () => ((L.cam = null), draw())]].map(([icon, title, f]) => html`<span class="b"><${IconBtn} icon=${icon} size=${14} title=${title} onClick=${f} /></span>`)}
+      ${[['add', 'Zoom in', () => zoom(1 / 1.5)], ['remove', 'Zoom out', () => zoom(1.5)], ['near_me', 'The whole map', () => ((L.cam = null), kick())]].map(([icon, title, f]) => html`<span class="b"><${IconBtn} icon=${icon} size=${14} title=${title} onClick=${f} /></span>`)}
     </div>
   </div>`;
 }

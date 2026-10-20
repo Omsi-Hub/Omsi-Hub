@@ -74,10 +74,13 @@ function useLive() {
   useEffect(() => {
     let alive = true;
     let timer = 0;
+    // (an answer like the last changes nothing: not the whole page drawn again for it)
+    let last = '';
     const tick = async () => {
       const v = await call('hub_live').catch(() => null);
       if (!alive) return;
-      if (v) set({ live: v });
+      const text = v ? JSON.stringify(v) : '';
+      if (v && text !== last) ((last = text), set({ live: v }));
       // (the game ended without the page hearing it: back to the launcher)
       if (v && v.running === false && S.game?.running) set({ game: { ...S.game, running: false } });
       timer = setTimeout(tick, document.hasFocus() ? 1000 : 3000);
@@ -197,10 +200,30 @@ function useRoads(v) {
  * a pixel, in steps). */
 function Roads({ g, u }) {
   return html`<g>
-    ${(g.roads || []).map((r) => html`<polyline points=${flat(r.p)} fill="none" stroke=${r.main ? 'var(--dash-road-main)' : 'var(--dash-road)'} stroke-width=${Math.max(r.w || 6, u * 2)} stroke-linecap="round" stroke-linejoin="round" />`)}
+    ${roadPaths(g).map((e) => html`<path d=${e.d} fill="none" stroke=${e.main ? 'var(--dash-road-main)' : 'var(--dash-road)'} stroke-width=${Math.max(e.w, u * 2)} stroke-linecap="round" stroke-linejoin="round" />`)}
     ${(g.route || []).map((p) => html`<polyline points=${flat(p)} fill="none" stroke="var(--hub-accent)" stroke-opacity="0.35" stroke-width=${u * 6} stroke-linecap="round" stroke-linejoin="round" />`)}
     ${(g.stops || []).filter((s) => s.at).map((s) => html`<circle cx=${s.at[0]} cy=${-s.at[1]} r=${u * 3.5} fill="var(--hub-panel)" stroke="var(--hub-accent)" stroke-opacity="0.6" stroke-width=${u * 1.5} />`)}
   </g>`;
+}
+
+/** The roads as a few paths, one a kind and width of road (`[{ main, w, d }]`): thousands of
+ * lines of their own made the map slow to draw. Kept a map read. */
+const paths = new WeakMap();
+function roadPaths(g) {
+  let out = paths.get(g);
+  if (out) return out;
+  const by = new Map();
+  for (const r of g.roads || []) {
+    const w = r.w || 6;
+    const key = (r.main ? 'm' : 's') + w;
+    let e = by.get(key);
+    if (!e) by.set(key, (e = { main: !!r.main, w, parts: [] }));
+    if (r.p.length >= 4) e.parts.push('M' + flat(r.p));
+  }
+  // (the side streets first, the main roads over them)
+  out = [...by.values()].sort((a, b) => a.main - b.main).map((e) => ({ main: e.main, w: e.w, d: e.parts.join('') }));
+  paths.set(g, out);
+  return out;
 }
 
 /** `[x, y, x, y …]` (y north) as an SVG polyline's points. */

@@ -126,3 +126,6 @@
 .rt-strip .rt-tpday .hub-icon { right: 4px; }
 /* (RosterFlow's page takes no selection; what is typed here does) */
 .rf-tp.rt input { user-select: text; -webkit-user-select: text; }
+/* the tab back: what it showed last, untouchable while the line editor reads the company anew */
+.rf-tp.rt.rt-again > * { pointer-events: none; }
+.rf-tp.rt.rt-again { cursor: progress; }
