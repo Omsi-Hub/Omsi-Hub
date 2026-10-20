@@ -29,7 +29,7 @@ fn the_phone_is_docked_under_the_map_with_its_status_line_and_five_tabs() {
     for id in ["omsihub_board", "omsihub", "omsihub_strip", "omsihub_ontime"] {
         assert!(!has_panel(&h, id), "{id}");
     }
-    assert!(has_element(&h, PHONE, |e| e["type"] == "stops"), "the next stops on the Ride tab");
+    assert!(has_element(&h, PHONE, |e| e["text"] == "Zoo" && e["size"] == 18), "the stop ahead on the Ride tab: {}", phone(&h));
     no_ui_errors(&h);
     // the handshake says what this openOMSI offers
     let hello = bridge::read_hello(&dir).unwrap();

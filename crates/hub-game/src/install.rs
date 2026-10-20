@@ -46,6 +46,7 @@ pub const FILES: &[(&str, &str)] = &[
     ("phone_duty.lua", include_str!("../../../plugin/phone_duty.lua")),
     ("phone_msgs.lua", include_str!("../../../plugin/phone_msgs.lua")),
     ("phone_bus.lua", include_str!("../../../plugin/phone_bus.lua")),
+    ("phone_summary.lua", include_str!("../../../plugin/phone_summary.lua")),
 ];
 /// The texts the plugin shows (`tr` in `plugin/main.lua`), in English: Omsi-Hub puts their
 /// translations into the assignment (`bridge::Assignment::texts`).
@@ -275,8 +276,31 @@ pub const TEXTS: &[&str] = &[
     "Trip done",
     "Delay",
     "km/h",
+    "arr %{time}",
+    "due now",
+    "then %{stop}",
+    "stop %{i}/%{n}",
+    "At the terminus: %{stop}",
+    "Open",
+    "%{bus} ahead %{m} min",
+    "%{bus} behind %{m} min",
+    "hold %{secs} s",
+    "close behind %{bus}",
+    "At %{stop}: %{what} %{time}",
+    "wait max %{m} min",
+    "Diversion: %{stops} closed, via %{via}",
+    "Diversion: %{stops} closed",
+    // phone_summary.lua (the Ride tab's trip and duty summaries)
+    "Fares %{amount}",
+    "%{n} tickets",
+    "Duty done",
+    "Trips",
+    "Score",
+    "km",
+    "Fares",
     // phone_stops.lua
     "No trip under way",
+    "closed",
     // phone_duty.lua
     "No trips yet: start your duty",
     "No duty: take one in the Omsi-Hub app",
@@ -289,6 +313,13 @@ pub const TEXTS: &[&str] = &[
     "Seated",
     "Standing",
     "The bus tells nothing of itself",
+    "Return to the depot to charge",
+    "Tickets sold",
+    "Fares taken",
+    "repair %{m} min",
+    "Open defects",
+    "Notes for you",
+    "Typing needs F10",
 ];
 
 /// The sounds of the control room's messages (`lua/messages.lua`), made here as small WAV files:

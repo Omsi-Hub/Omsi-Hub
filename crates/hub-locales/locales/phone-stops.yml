@@ -7,3 +7,10 @@ _version: 2
   ru: "Нет текущего рейса"
   uk: "Немає поточного рейсу"
   pl: "Brak kursu w trakcie"
+"closed":
+  nl: "dicht"
+  de: "gesperrt"
+  fr: "fermé"
+  ru: "закрыта"
+  uk: "закрита"
+  pl: "zamknięty"

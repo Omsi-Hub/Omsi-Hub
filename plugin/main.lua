@@ -352,6 +352,8 @@ local trip = require("trip")
 local card = require("card")
 local watch = require("watch")
 card.setup(tr)
+-- (the trips and the duty summed up for the phone and the duty-end report: phone_summary.lua)
+local summary = require("phone_summary")
 -- (the live dashboard in Omsi-Hub's window, on every drive: `dash.lua`)
 local dash = require("dash")
 dash.setup(trip, assignment, has)
@@ -380,7 +382,10 @@ local function trip_ended(run, fields)
   fields = fields or {}
   if run then fields.record = run end
   local saved = trip_report(state.line or (c and c.line_name), state.tour or (c and c.tour), fields.trip or (c and c.n), fields)
-  if run then card.hold(run, saved, standing()) end
+  if run then
+    card.hold(run, saved, standing())
+    summary.add(card.last())
+  end
 end
 
 -- the trip under way, looked at a few times a second: another one began
@@ -433,13 +438,15 @@ nav.setup(tr, assignment, {
 omsi.on("duty", function(line, tour)
   -- (a short-turn takes the same duty again at its next trip: no new duty)
   if messages.turned(line, tour) then return panel() end
-  if state.line then report("duty_end", { line = state.line, tour = state.tour }) end
+  if state.line then report("duty_end", summary.fields({ line = state.line, tour = state.tour })) end
   -- (the company's duty ended: the walk-around before the driver leaves the bus)
   if state.line and not line then strip.sign_off() end
   state.line, state.tour, state.last_trip = line, tour, nil
   if line then report("duty_start", { line = line, tour = tour }) end
   -- (a part that begins with a relief on the way: taken again from its relief stop)
   local from = legs.duty_began(line, tour)
+  -- (the duty's totals begin again, but not for the next part of the same duty)
+  if line then summary.begin(legs.any() and legs.current() > 1) end
   if from and has["duty.start"] then
     local _, l = legs.current()
     omsi.duty.start(line, tour, l.first, from)

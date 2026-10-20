@@ -122,6 +122,14 @@ pub struct GameState {
     /// many of the passengers stand (`omsi.bus.passengers` gives total, seated, standing).
     pub fuel: Option<f64>,
     pub standing: i64,
+    /// The tickets sold and the money taken this session (`omsi.bus.sales`); the bus's damage
+    /// (`omsi.bus.damage`: crashes, the last impact's kJ, the repair's minutes; None: nothing
+    /// to repair); how many stops of the trip under way the bus passed and the names of those
+    /// closed today (`omsi.duty.stops` marks them `passed` and `closed`).
+    pub sales: (i64, f64),
+    pub damage: Option<(i64, f64, f64)>,
+    pub passed: usize,
+    pub closed: Vec<String>,
 }
 
 impl Default for GameState {
@@ -162,6 +170,10 @@ impl Default for GameState {
             ui_errors: Vec::new(),
             fuel: None,
             standing: 0,
+            sales: (0, 0.0),
+            damage: None,
+            passed: 0,
+            closed: Vec::new(),
         }
     }
 }
@@ -202,6 +214,8 @@ pub const FUNCTIONS: &[&str] = &[
     "bus.file",
     "bus.passengers",
     "bus.fuel",
+    "bus.sales",
+    "bus.damage",
     "bus.set_display_font",
     "game.version",
     "game.api",
@@ -490,7 +504,15 @@ fn api(lua: &Lua, state: &Rc<RefCell<GameState>>, plugin_dir: &Path) -> mlua::Re
     f!(duty, "stops", |l, s, _a: ()| {
         let g = s.borrow();
         let k = g.duty.as_ref().map_or(0, |d| d.trip.max(1) as usize - 1);
-        to_lua(l, &g.trips.get(k).map_or(json!([]), |t| stops_json(&t.stops)))
+        let mut stops = g.trips.get(k).map_or(json!([]), |t| stops_json(&t.stops));
+        // (the stops the bus passed, and those closed today)
+        for (i, st) in stops.as_array_mut().into_iter().flatten().enumerate() {
+            st["passed"] = json!(i < g.passed);
+            if g.closed.iter().any(|c| st["name"] == c.as_str()) {
+                st["closed"] = json!(true);
+            }
+        }
+        to_lua(l, &stops)
     });
     f!(duty, "trip_stops", |l, s, n: i64| {
         let g = s.borrow();
@@ -535,6 +557,11 @@ fn api(lua: &Lua, state: &Rc<RefCell<GameState>>, plugin_dir: &Path) -> mlua::Re
         Ok((g.passengers, g.passengers - g.standing, g.standing))
     });
     f!(bus, "fuel", |_l, s, _a: ()| Ok(s.borrow().fuel));
+    f!(bus, "sales", |_l, s, _a: ()| Ok(s.borrow().sales));
+    f!(bus, "damage", |l, s, _a: ()| match s.borrow().damage {
+        Some((crashes, kj, minutes)) => to_lua(l, &json!({ "crashes": crashes, "last_impact_kj": kj, "repair_minutes": minutes })),
+        None => Ok(LuaValue::Nil),
+    });
     f!(bus, "set_display_font", |_l, s, font: String| {
         s.borrow_mut().fonts.push(font);
         Ok(1)
