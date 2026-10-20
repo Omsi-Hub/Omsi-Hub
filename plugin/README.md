@@ -16,6 +16,8 @@ the plugin through plain files (`crates/hub-game/src/bridge.rs`).
   light navigator) and the time colours; `phone_summary` the trip's card and the duty's summary
   on the Ride tab (and the duty's totals in the duty-end report). Without the board the modules
   keep panels of their own.
+- `phone_menu.lua`: the company's duty in openOMSI's pause menu (`omsi.ui.set_menu_item`, after
+  0.3.38): the duty, a message to control and ending the duty, each opening the phone's tab.
 - `harness/`: our own test harness (`hub-plugin-harness`, on mlua). It mocks the official API
   functions the plugin uses, so `cargo test` runs the plugin without openOMSI; a panel openOMSI's
   parser would refuse is refused there too (`check_panel`, in `GameState::ui_errors`). The

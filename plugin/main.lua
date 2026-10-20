@@ -266,11 +266,27 @@ local function panel()
   panel_shown = true
 end
 
+-- whether the game types the IBIS: as Omsi-Hub says, unless the driver chose otherwise on the
+-- phone's Duty tab (kept while Omsi-Hub's own setting stays as it was then)
+local function ibis_auto()
+  local app = not (assignment and assignment.ibis == false)
+  local own = omsi.data.ibis_own
+  if type(own) == "table" and own.app == app then return own.on == true end
+  return app
+end
+
 -- the IBIS: typed by the game as each trip begins, unless Omsi-Hub says the driver types it -
 -- and not before the driver accepted the duty order when signing on
 local function ibis_rule()
   if not has["duty.set_auto_ibis"] then return end
-  omsi.duty.set_auto_ibis(signon.at_work() and not (assignment and assignment.ibis == false))
+  omsi.duty.set_auto_ibis(signon.at_work() and ibis_auto())
+end
+
+-- the driver's choice on the phone: kept, the game told, the trip under way typed at once
+local function set_ibis_auto(on)
+  omsi.data.ibis_own = { on = on, app = not (assignment and assignment.ibis == false) }
+  ibis_rule()
+  if on and duty_now() and has["duty.type_ibis"] then omsi.duty.type_ibis() end
 end
 
 local function say(text, title, icon, seconds)
@@ -304,7 +320,7 @@ local function next_leg(what, line, tour, trip, stop)
     if ok then
       local n = legs.current()
       say(tr("Part %{n} of %{of}: line %{line}, tour %{tour}", { n = n, of = legs.count(), line = line, tour = tour }), tr("Duty"), "route")
-      if has["duty.type_ibis"] and not (assignment and assignment.ibis == false) then omsi.duty.type_ibis() end
+      if has["duty.type_ibis"] and ibis_auto() then omsi.duty.type_ibis() end
     else
       say(tr("The duty could not be started: %{reason}", { reason = why or "" }), nil, "warning", 8)
     end
@@ -425,6 +441,21 @@ end })
 local function boarded()
   return { trip.boarded_on_trip(), trip.boarded_total(), fn("bus.passengers") and omsi.bus.passengers() or nil }
 end
+
+-- the driver ends the duty before its end (the phone's Duty tab, the pause menu): the trip under
+-- way reported as not completed, the duty finished - its end and the walk-around follow
+local function end_duty()
+  local d = duty_now()
+  if not d then return end
+  if not d.trip_done then
+    local c = trip.current()
+    local run = c and c.n == d.trip and trip.finish(false, delay(), watch) or nil
+    trip_ended(run, { trip = d.trip, how = "ended", delay = delay() })
+  end
+  if has["duty.finish"] then omsi.duty.finish() end
+  say(tr("Your duty is done: take the bus back to the depot"), tr("Duty"), "flag")
+end
+
 nav.setup(tr, assignment, {
   duty_children = duty_children,
   parts = function() return company_duty() and parts() or {} end,
@@ -433,7 +464,15 @@ nav.setup(tr, assignment, {
   report = report,
   issued = issued,
   say = say,
+  ibis_auto = ibis_auto,
+  set_ibis_auto = set_ibis_auto,
+  end_duty = end_duty,
 })
+
+-- the duty's lines in the game's pause menu (phone_menu.lua; an openOMSI with them)
+local menu = require("phone_menu")
+menu.setup(tr, assignment, { end_duty = end_duty, say = say })
+omsi.on("menu_item", function(id) menu.pick(id) end)
 
 omsi.on("duty", function(line, tour)
   -- (a short-turn takes the same duty again at its next trip: no new duty)
@@ -567,7 +606,7 @@ local function on_click(p, element)
     -- (the duty's codes go to the IBIS as the order is accepted; the bus's notes are shown)
     strip.signed_on()
     ibis_rule()
-    if has["duty.type_ibis"] and assignment.ibis ~= false then omsi.duty.type_ibis() end
+    if has["duty.type_ibis"] and ibis_auto() then omsi.duty.type_ibis() end
   end) then
     ibis_rule()
     panel()
@@ -662,6 +701,7 @@ omsi.every(1, function()
   if signon.at_work() then ontime.tick(1) end
   if not fn("has_vehicle") or omsi.has_vehicle() then dash.tick(1) end
   dispatch()
+  menu.update()
 end)
 
 omsi.every(2, function()

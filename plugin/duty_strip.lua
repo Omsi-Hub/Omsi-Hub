@@ -88,22 +88,23 @@ end
 
 -- --- what the duty looks like now ---------------------------------------------------------------
 
--- the piece under way at minute `now`: its text and colour
+-- the piece under way at minute `now`: its text, colour and kind ("before", "empty", "trip",
+-- "break", "finished", "duty")
 local function piece(now)
   local rows = crew.rows
   local first, last = rows[1], rows[#rows]
   if first and now < first.from then
-    return tr("Sign on at %{place} at %{time}", { place = first.at, time = hhmm(first.from) }), DIM
+    return tr("Sign on at %{place} at %{time}", { place = first.at, time = hhmm(first.from) }), DIM, "before"
   end
   for _, r in ipairs(rows) do
     if now >= r.from and now < math.max(r.to, r.from + 1) then
-      if r.kind == "trip" and r.empty then return tr("Empty run to %{place} until %{time}", { place = r.to_place, time = hhmm(r.to) }), DIM end
-      if r.kind == "trip" then return tr("Line %{line} to %{place} until %{time}", { line = r.line, place = r.to_place, time = hhmm(r.to) }), GREEN end
-      if r.kind == "break" then return tr("Break at %{place} until %{time}", { place = r.at, time = hhmm(r.to) }), AMBER end
+      if r.kind == "trip" and r.empty then return tr("Empty run to %{place} until %{time}", { place = r.to_place, time = hhmm(r.to) }), DIM, "empty" end
+      if r.kind == "trip" then return tr("Line %{line} to %{place} until %{time}", { line = r.line, place = r.to_place, time = hhmm(r.to) }), GREEN, "trip" end
+      if r.kind == "break" then return tr("Break at %{place} until %{time}", { place = r.at, time = hhmm(r.to) }), AMBER, "break" end
     end
   end
-  if last and now >= last.from then return tr("Duty finished"), GREEN end
-  return tr("On duty"), GREEN
+  if last and now >= last.from then return tr("Duty finished"), GREEN, "finished" end
+  return tr("On duty"), GREEN, "duty"
 end
 
 -- the next break (or the one under way) after minute `now`
@@ -190,6 +191,17 @@ local function line(icon, label, value, color)
   } }
 end
 
+-- the relief told once, a few minutes before it (also while the phone has the strip)
+local function warn(now)
+  local r = next_relief(now)
+  if not r or r.from - now > RELIEF_WARN then return end
+  local key = r.kind .. hhmm(r.from)
+  if not told[key] then
+    told[key] = true
+    notify("swap_horiz", tr("Relief due"), tr("At %{place} at %{time}", { place = r.at, time = hhmm(r.from) }))
+  end
+end
+
 local function note_form(children)
   local function add(x) children[#children + 1] = x end
   add({ type = "divider" })
@@ -237,11 +249,7 @@ function M.rows(now)
   if r then
     local soon = r.from - now <= RELIEF_WARN
     add(line("swap_horiz", tr("Next relief"), r.at .. "  " .. hhmm(r.from) .. " · " .. until_text(r.from, now), soon and AMBER or nil))
-    local key = r.kind .. hhmm(r.from)
-    if soon and not told[key] then
-      told[key] = true
-      notify("swap_horiz", tr("Relief due"), tr("At %{place} at %{time}", { place = r.at, time = hhmm(r.from) }))
-    end
+    warn(now)
   end
   local last = crew.rows[#crew.rows]
   if last then add(line("flag", tr("End of duty"), hhmm(last.from) .. "  " .. (last.at or ""))) end
@@ -257,17 +265,54 @@ function M.rows(now)
     } })
     if fuel.low then add({ type = "text", text = tr("Return to the depot to refuel"), size = 12, color = RED }) end
   end
+  M.tools(children)
+  return children
+end
+
+-- the strip's note and walk-around: the form open, else the two buttons that open them -
+-- added to `children` (a new list without one)
+function M.tools(children)
+  children = children or {}
+  if not crew then return children end
   if open == "note" then
     note_form(children)
   elseif open == "check" then
     check_form(children)
   else
-    add({ type = "row", children = {
+    children[#children + 1] = { type = "row", children = {
       { type = "button", id = "strip_note", text = tr("Leave a note"), icon = "sticky_note_2", grow = true },
       { type = "button", id = "strip_check", text = tr("Defect check"), icon = "build", grow = true },
-    } })
+    } }
   end
   return children
+end
+
+-- what the strip says at minute `now`, for the phone's Duty tab to draw in its own look (nil:
+-- no company's duty, or the strip switched off): the piece under way (`piece`, `kind`), the
+-- next break, relief and the duty's end - each { kind, at, from, to, now } in minutes of the
+-- day, the soonest first -, the minute the countdown to the first runs from (`since`), and
+-- today's changes
+function M.plan(now)
+  if not (crew and enabled) then return nil end
+  local text, _, kind = piece(now)
+  local out = { piece = text, kind = kind, next = {}, changes = crew.changes or {} }
+  local b = next_break(now)
+  if b then out.next[#out.next + 1] = { kind = "break", at = b.at, from = b.from, to = b.to, now = b.from <= now } end
+  local r = next_relief(now)
+  if r then out.next[#out.next + 1] = { kind = "relief", at = r.at, from = r.from, to = r.to } end
+  local last = crew.rows[#crew.rows]
+  if last and last.from >= now then out.next[#out.next + 1] = { kind = "end", at = last.at or "", from = last.from, to = last.from } end
+  -- (a break under way counts down to its end)
+  table.sort(out.next, function(x, y) return (x.now and x.to or x.from) < (y.now and y.to or y.from) end)
+  -- (from the sign-on, the end of the last break or the last relief)
+  local since = crew.rows[1] and crew.rows[1].from or now
+  for _, x in ipairs(crew.rows) do
+    if x.kind == "break" and x.to <= now then since = math.max(since, x.to) end
+    if x.kind == "break" and x.from <= now and now < x.to then since = math.max(since, x.from) end
+    if (x.kind == "sign_on" or x.kind == "sign_off") and x.relief and x.from <= now then since = math.max(since, x.from) end
+  end
+  out.since = math.min(since, now)
+  return out
 end
 
 -- what the driver has open on the strip: nil, "note" or "check" (the walk-around at sign-off
@@ -291,6 +336,8 @@ end
 function M.update(on)
   if not (crew and omsi.ui and omsi.ui.set) then return end
   if not (enabled and on) or docked then
+    -- (the phone draws the strip only on its Duty tab: the relief is told from here)
+    if enabled and on then warn(minute()) end
     if shown then
       layout.remove(PANEL)
       shown = false

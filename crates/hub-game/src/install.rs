@@ -47,6 +47,8 @@ pub const FILES: &[(&str, &str)] = &[
     ("phone_msgs.lua", include_str!("../../../plugin/phone_msgs.lua")),
     ("phone_bus.lua", include_str!("../../../plugin/phone_bus.lua")),
     ("phone_summary.lua", include_str!("../../../plugin/phone_summary.lua")),
+    // (the duty's lines in the pause menu)
+    ("phone_menu.lua", include_str!("../../../plugin/phone_menu.lua")),
 ];
 /// The texts the plugin shows (`tr` in `plugin/main.lua`), in English: Omsi-Hub puts their
 /// translations into the assignment (`bridge::Assignment::texts`).
@@ -304,10 +306,40 @@ pub const TEXTS: &[&str] = &[
     // phone_duty.lua
     "No trips yet: start your duty",
     "No duty: take one in the Omsi-Hub app",
-    // phone_msgs.lua
+    "IBIS",
+    "Route",
+    "Destination",
+    "Type the IBIS for me",
+    "This week",
+    "Day off",
+    "Day",
+    "Time",
+    "Swap which day?",
+    "Leave on which day?",
+    "Cancel",
+    "Send",
+    "End the duty",
+    "End the duty now? The trip under way counts as not completed.",
+    "Call in sick for duty %{duty}? The company finds cover.",
+    "Ask to swap duty %{duty} on %{day}?",
+    "Ask for leave on %{day} (duty %{duty})?",
+    "Sick call",
+    "Ask to swap",
+    "Leave request",
+    "Sent to the company",
+    // phone_msgs.lua (and the layover messages.lua carries out)
     "Messages",
     "Inbox",
     "Message from control",
+    "Can't",
+    "Shorter layover",
+    "Shorter layover: %{m} min less, leave for the %{time} trip as soon as the passengers are on",
+    // phone_menu.lua
+    "Duty %{duty} · trip %{trip}/%{trips}",
+    "Duty %{duty}",
+    "Message to control",
+    "Choose again to end the duty",
+    "Choose “End the duty” in the menu again to end it",
     // phone_bus.lua
     "Bus",
     "Seated",

@@ -7,3 +7,18 @@ _version: 2
   ru: "Сообщение диспетчерской"
   uk: "Повідомлення диспетчерської"
   pl: "Wiadomość od dyspozytorni"
+"Can't":
+  nl: "Lukt niet"
+  de: "Geht nicht"
+  fr: "Impossible"
+  ru: "Не могу"
+  uk: "Не можу"
+  pl: "Nie mogę"
+# The shorter layover an accepted instruction asks for (plugin/messages.lua).
+"Shorter layover: %{m} min less, leave for the %{time} trip as soon as the passengers are on":
+  nl: "Kortere keertijd: %{m} min minder, vertrek voor de rit van %{time} zodra de reizigers binnen zijn"
+  de: "Kürzere Wendezeit: %{m} min weniger, fahr zur Fahrt um %{time} los, sobald die Fahrgäste drin sind"
+  fr: "Battement raccourci : %{m} min de moins, partez pour le trajet de %{time} dès que les voyageurs sont montés"
+  ru: "Короче стоянка: на %{m} мин меньше, отправляйтесь в рейс %{time}, как только пассажиры сядут"
+  uk: "Коротша стоянка: на %{m} хв менше, вирушайте в рейс %{time}, щойно пасажири сядуть"
+  pl: "Krótszy postój: %{m} min mniej, ruszaj na kurs %{time}, gdy tylko pasażerowie wsiądą"
