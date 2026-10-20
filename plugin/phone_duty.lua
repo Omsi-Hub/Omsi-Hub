@@ -111,7 +111,7 @@ local function strip_block(ctx, out)
   if first then
     local label, icon = EVENT[first.kind][1], EVENT[first.kind][2]
     local at = first.now and first.to or first.from
-    local where = (first.at or "") ~= "" and (first.at .. " · ") or ""
+    local where = (first.at or "") ~= "" and (first.at .. " • ") or ""
     out[#out + 1] = { type = "row", gap = 8, children = {
       { type = "icon", name = icon, size = 18, color = th.ink },
       { type = "text", text = P.caps(tr(label)), size = 10.5, weight = "medium", color = th.dim, grow = true, wrap = false },
@@ -156,7 +156,7 @@ local function trip_list(ctx, out)
     local now = d and k == d.trip and not d.trip_done
     local ink = done and th.faint or (now and th.ink or th.dim)
     rows[#rows + 1] = {
-      { text = done and "✓" or (now and "▶" or tostring(k)), color = ink },
+      { text = done and "•" or (now and "›" or tostring(k)), color = ink },
       { text = t.line or "", color = ink },
       { text = P.hhmm(t.departure), color = ink },
       { text = P.terminus(t.line, t.terminus), color = ink },
@@ -294,7 +294,7 @@ local function requests(ctx, out)
   if #buttons == 0 then return end
   out[#out + 1] = { type = "divider" }
   for i = 1, #buttons, 2 do out[#out + 1] = { type = "row", gap = 6, children = { buttons[i], buttons[i + 1] } } end
-  for _, text in ipairs(asked) do out[#out + 1] = P.text(th, "✓ " .. text, "dim", 12) end
+  for _, text in ipairs(asked) do out[#out + 1] = P.text(th, "• " .. text, "dim", 12) end
 end
 
 -- the strip's note and walk-around (its own elements: the clicks go to it) in the phone's look
@@ -366,7 +366,7 @@ local function send(ctx, p)
     extra.from, extra["until"], extra.reason = p.date, p.date, "personal"
   end
   messages.reply("crew", 0, p.what, extra)
-  local text = ctx.tr(LABEL[p.what]) .. ((p.day or "") ~= "" and (" · " .. p.day) or "")
+  local text = ctx.tr(LABEL[p.what]) .. ((p.day or "") ~= "" and (" • " .. p.day) or "")
   asked[#asked + 1] = text
   if ctx.hooks.say then ctx.hooks.say(ctx.tr("Sent to the company"), text, ICON[p.what], 6) end
 end

@@ -58,8 +58,8 @@ local function rail(ctx, list)
   local rows = {}
   for _, s in ipairs(list) do
     local ink = s.state == "done" and th.faint or (s.state == "now" and th.ink or th.dim)
-    local name = s.name .. (s.tag ~= "" and ("  · " .. s.tag) or "")
-    local mark = s.state == "done" and "✓" or (s.state == "now" and "▶" or "")
+    local name = s.name .. (s.tag ~= "" and ("  • " .. s.tag) or "")
+    local mark = s.state == "done" and "•" or (s.state == "now" and "›" or "")
     if ctx.can.box then
       rows[#rows + 1] = { { text = mark, color = ink }, { text = name, color = ink }, { text = s.time, color = ink }, { text = s.expected, color = s.expected_color or ink } }
     else

@@ -92,13 +92,13 @@ _version: 2
   uk: "Надіслано в компанію"
   pl: "Wysłano do firmy"
 # The duty's lines in the pause menu (plugin/phone_menu.lua): 40 characters at most.
-"Duty %{duty} · trip %{trip}/%{trips}":
-  nl: "Dienst %{duty} · rit %{trip}/%{trips}"
-  de: "Dienst %{duty} · Fahrt %{trip}/%{trips}"
-  fr: "Service %{duty} · trajet %{trip}/%{trips}"
-  ru: "Смена %{duty} · рейс %{trip}/%{trips}"
-  uk: "Зміна %{duty} · рейс %{trip}/%{trips}"
-  pl: "Służba %{duty} · kurs %{trip}/%{trips}"
+"Duty %{duty} • trip %{trip}/%{trips}":
+  nl: "Dienst %{duty} • rit %{trip}/%{trips}"
+  de: "Dienst %{duty} • Fahrt %{trip}/%{trips}"
+  fr: "Service %{duty} • trajet %{trip}/%{trips}"
+  ru: "Смена %{duty} • рейс %{trip}/%{trips}"
+  uk: "Зміна %{duty} • рейс %{trip}/%{trips}"
+  pl: "Służba %{duty} • kurs %{trip}/%{trips}"
 "Message to control":
   nl: "Bericht aan de centrale"
   de: "Nachricht an die Leitstelle"

@@ -335,7 +335,7 @@ pub const TEXTS: &[&str] = &[
     "Shorter layover",
     "Shorter layover: %{m} min less, leave for the %{time} trip as soon as the passengers are on",
     // phone_menu.lua
-    "Duty %{duty} · trip %{trip}/%{trips}",
+    "Duty %{duty} • trip %{trip}/%{trips}",
     "Duty %{duty}",
     "Message to control",
     "Choose again to end the duty",

@@ -139,7 +139,7 @@ local function trip_card(ctx, r)
     } },
   }
   if r.fares then
-    out[#out + 1] = P.text(th, tr("Fares %{amount}", { amount = M.money(ctx.assignment, r.fares) }) .. "  ·  " .. tr("%{n} tickets", { n = r.tickets or 0 }), "dim", 12.5, "medium")
+    out[#out + 1] = P.text(th, tr("Fares %{amount}", { amount = M.money(ctx.assignment, r.fares) }) .. "  •  " .. tr("%{n} tickets", { n = r.tickets or 0 }), "dim", 12.5, "medium")
   end
   return out
 end

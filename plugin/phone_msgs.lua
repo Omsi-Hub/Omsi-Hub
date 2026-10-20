@@ -54,7 +54,7 @@ local function inbox(ctx, looked)
     out[#out + 1] = { type = "divider" }
     out[#out + 1] = { type = "row", gap = 6, children = {
       { type = "icon", name = m.icon, size = 16, color = th.ink },
-      { type = "text", text = m.time .. "  ·  " .. m.from, size = 12, color = th.dim, grow = true, wrap = false },
+      { type = "text", text = m.time .. "  •  " .. m.from, size = 12, color = th.dim, grow = true, wrap = false },
       { type = "text", text = m.state, size = 12, color = th.dim, wrap = false },
     } }
     out[#out + 1] = P.text(th, m.text, "ink", 14, m.priority == "urgent" and "bold" or "regular")

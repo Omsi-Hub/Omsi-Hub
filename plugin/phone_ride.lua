@@ -68,10 +68,10 @@ local function next_stop(ctx, served, now)
     } },
     { type = "row", gap = 6, children = {
       { type = "text", text = time, size = 13, weight = "medium", color = color, wrap = false },
-      { type = "text", text = "·  " .. (m > 0 and tr("in %{m} min", { m = m }) or tr("due now")), size = 13, color = th.dim, grow = true, wrap = false },
+      { type = "text", text = "•  " .. (m > 0 and tr("in %{m} min", { m = m }) or tr("due now")), size = 13, color = th.dim, grow = true, wrap = false },
     } },
     { type = "text", size = 12, color = th.dim, wrap = false,
-      text = (after and tr("then %{stop}", { stop = after.name or "" }) or tr("terminus")) .. "  ·  " .. tr("stop %{i}/%{n}", { i = now, n = #served }) },
+      text = (after and tr("then %{stop}", { stop = after.name or "" }) or tr("terminus")) .. "  •  " .. tr("stop %{i}/%{n}", { i = now, n = #served }) },
   }
 end
 
@@ -145,7 +145,7 @@ local function context(ctx)
     elseif a.kind == "close_behind" then
       parts[#parts + 1] = tr("close behind %{bus}", { bus = a.bus or "" })
     end
-    if #parts > 0 then out[#out + 1] = line(ctx, a.kind == "hold" and "timer" or "directions_bus", table.concat(parts, "  ·  ")) end
+    if #parts > 0 then out[#out + 1] = line(ctx, a.kind == "hold" and "timer" or "directions_bus", table.concat(parts, "  •  ")) end
   end
   local k = type(b.connections) == "table" and b.connections[1] or nil
   if type(k) == "table" then
@@ -155,19 +155,19 @@ local function context(ctx)
     -- (one the bus waits for: what Omsi-Hub says of it now, as the on-time card did; the
     -- company's longest wait where the brief says nothing)
     if not k.onward and st.kind == "wait" then
-      text = text .. "  ·  " .. tr("Hold until %{time}", { time = cut(st["until"], 10) })
+      text = text .. "  •  " .. tr("Hold until %{time}", { time = cut(st["until"], 10) })
     elseif not k.onward and st.kind == "too_late" then
-      text = text .. "  ·  " .. tr("Too late to wait for: leave on time")
+      text = text .. "  •  " .. tr("Too late to wait for: leave on time")
     elseif not k.onward and st.kind == "not_needed" then
-      text = text .. "  ·  " .. tr("No wait needed")
+      text = text .. "  •  " .. tr("No wait needed")
     elseif not k.onward then
-      text = text .. "  ·  " .. tr("wait max %{m} min", { m = k.max_hold or 0 })
+      text = text .. "  •  " .. tr("wait max %{m} min", { m = k.max_hold or 0 })
     elseif st.kind == "made" then
-      text = text .. "  ·  " .. tr("%{m} min to change", { m = st.m or 0 })
+      text = text .. "  •  " .. tr("%{m} min to change", { m = st.m or 0 })
     elseif st.kind == "tight" then
-      text = text .. "  ·  " .. tr("Tight: keep the doors short")
+      text = text .. "  •  " .. tr("Tight: keep the doors short")
     else
-      text = text .. "  ·  " .. tr("Missed at this delay")
+      text = text .. "  •  " .. tr("Missed at this delay")
     end
     out[#out + 1] = line(ctx, "commute", text)
   end

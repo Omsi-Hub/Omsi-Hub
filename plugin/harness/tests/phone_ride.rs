@@ -38,7 +38,7 @@ fn the_ride_tab_shows_the_stop_ahead_large_the_three_stats_and_the_trip_s_progre
     // the stop ahead large, when the bus is there and in how long, the one after it
     assert!(has_element(&h, PHONE, |e| e["text"] == "Markt" && e["size"] == 18), "{}", phone(&h));
     assert!(shows(&h, PHONE, "arr 08:05") && shows(&h, PHONE, "in 6 min"));
-    assert!(shows(&h, PHONE, "then Hbf  ·  stop 2/3"));
+    assert!(shows(&h, PHONE, "then Hbf  •  stop 2/3"));
     // passengers, km/h and the delay (42 s: on time, as on the navigator's map)
     assert_eq!(stat(&h, "PASSENGERS")["text"], "12");
     assert_eq!(stat(&h, "KM/H")["text"], "32");
@@ -82,9 +82,9 @@ fn omsi_hub_s_brief_gives_the_ride_tab_the_lines_that_apply() {
     std::fs::create_dir_all(dir.join("data")).unwrap();
     std::fs::write(dir.join("data").join("ontime.json"), brief.to_string()).unwrap();
     run(&mut h, 5);
-    assert!(shows(&h, PHONE, "101 ahead 6 min  ·  hold 40 s"), "{}", phone(&h));
+    assert!(shows(&h, PHONE, "101 ahead 6 min  •  hold 40 s"), "{}", phone(&h));
     // (a connection to wait for: until when, as Omsi-Hub says now)
-    assert!(shows(&h, PHONE, "At Hbf: train to Erfurt 07:44  ·  Hold until 07:46"), "{}", phone(&h));
+    assert!(shows(&h, PHONE, "At Hbf: train to Erfurt 07:44  •  Hold until 07:46"), "{}", phone(&h));
     assert!(shows(&h, PHONE, "Diversion: Markt closed, via Ringstraße"));
     assert!(!has_panel(&h, "omsihub_ontime"), "no on-time card of its own");
     no_ui_errors(&h);
@@ -96,7 +96,7 @@ fn omsi_hub_s_brief_gives_the_ride_tab_the_lines_that_apply() {
         b["at"] = json!(h.state.borrow().now);
         std::fs::write(dir.join("data").join("ontime.json"), b.to_string()).unwrap();
         run(&mut h, 5);
-        assert!(shows(&h, PHONE, &format!("At Hbf: train to Erfurt 07:44 (+6 min)  ·  {says}")), "{says}: {}", phone(&h));
+        assert!(shows(&h, PHONE, &format!("At Hbf: train to Erfurt 07:44 (+6 min)  •  {says}")), "{says}: {}", phone(&h));
         if says != "wait max 2 min" {
             assert!(!shows(&h, PHONE, "wait max"), "{says}");
         }
@@ -141,8 +141,8 @@ fn the_stops_tab_is_a_rail_in_the_navigator_s_look_and_a_table_elsewhere() {
     choose_tab(&h, 2);
     assert!(!has_element(&h, PHONE, |e| e["type"] == "stops"));
     let table = find(&h, PHONE, |e| e["type"] == "table").expect("the table");
-    assert_eq!(table["rows"][0], json!(["▶", "Zoo", "08:00", ""]));
-    assert_eq!(table["rows"][1][1], "Markt  · closed");
+    assert_eq!(table["rows"][0], json!(["›", "Zoo", "08:00", ""]));
+    assert_eq!(table["rows"][1][1], "Markt  • closed");
     no_ui_errors(&h);
     // the navigator's light card (the rail's names are in light ink): a table in dark ink
     let (_, h) = start("stops-light", Some(light(assignment())), g, 2);
@@ -227,7 +227,7 @@ fn after_the_last_trip_the_duty_s_summary_and_its_totals_in_the_duty_end_report(
     }
     h.fire("trip_done", &[json!(1), json!("arrived"), json!(90.0), json!(90.0), json!(100.0)]).unwrap();
     run(&mut h, 1);
-    assert!(shows(&h, PHONE, "Trip done") && shows(&h, PHONE, "Fares 20.00  ·  10 tickets"), "{}", phone(&h));
+    assert!(shows(&h, PHONE, "Trip done") && shows(&h, PHONE, "Fares 20.00  •  10 tickets"), "{}", phone(&h));
     assert!(has_element(&h, PHONE, |e| e["type"] == "badge" && e["text"] == "Excellent"), "the trip's grade");
     // the second and last trip
     {
@@ -330,9 +330,7 @@ fn a_line_that_wraps_does_not_make_the_ride_tab_grow_and_shrink_every_second() {
     choose_tab(&h, 1);
     // the game lays the panel out: one line 22 points, the fourth (two lines) 38.5; 30 points
     // of room left under three
-    let lines_shown = |h: &Harness| {
-        phone(h)["children"].as_array().unwrap().iter().filter(|e| e["type"] == "row" && e["children"][0]["type"] == "icon" && e["children"][0]["size"] == 16).count()
-    };
+    let lines_shown = |h: &Harness| phone(h)["children"].as_array().unwrap().iter().filter(|e| e["type"] == "row" && e["children"][0]["type"] == "icon" && e["children"][0]["size"] == 16).count();
     let mut seen = Vec::new();
     for _ in 0..14 {
         let n = lines_shown(&h);

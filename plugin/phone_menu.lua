@@ -1,5 +1,5 @@
 -- Omsi-Hub's plugin: lines of the company's duty in openOMSI's pause menu (Esc), where the
--- game has them (`omsi.ui.set_menu_item`, after 0.3.38): "Duty D-12 · trip 3/8" opens the
+-- game has them (`omsi.ui.set_menu_item`, after 0.3.38): "Duty D-12 • trip 3/8" opens the
 -- phone's Duty tab, "Message to control" its Messages tab with the quick reports open, "End the
 -- duty" asks on the Duty tab whether to end it. Choosing a line closes the menu and the game
 -- sends `menu_item` with its id (main.lua). The lines go when the duty has ended.
@@ -68,13 +68,13 @@ local function fit(label)
   return label
 end
 
--- the duty in a few words: "Duty D-12 · trip 3/8"
+-- the duty in a few words: "Duty D-12 • trip 3/8"
 local function duty_label()
   local d = duty()
   local name = assignment and assignment.duty or ""
   if d then
     local trips = fn("duty.trips") and omsi.duty.trips() or {}
-    return tr("Duty %{duty} · trip %{trip}/%{trips}", { duty = name, trip = d.trip or 0, trips = #trips })
+    return tr("Duty %{duty} • trip %{trip}/%{trips}", { duty = name, trip = d.trip or 0, trips = #trips })
   end
   return tr("Duty %{duty}", { duty = name })
 end

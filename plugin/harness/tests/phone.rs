@@ -20,8 +20,8 @@ fn the_phone_is_docked_under_the_map_with_its_status_line_and_five_tabs() {
     assert_eq!((parts[0]["type"].as_str(), parts[0]["text"].as_str(), parts[0]["color"].as_str()), (Some("badge"), Some("10"), Some("#FFD23F")));
     assert_eq!(parts[1]["text"], "Hbf");
     assert_eq!(parts[2]["text"], "1/2");
-    // (42 s late is on time, as on the navigator's map)
-    assert_eq!((parts[3]["text"].as_str(), parts[3]["text_color"].as_str()), (Some("on time"), Some("#2FA84F")));
+    // (42 s late is on time, as on the navigator's map: a pill of the time's colour, white text)
+    assert_eq!((parts[3]["text"].as_str(), parts[3]["color"].as_str(), parts[3]["text_color"].as_str()), (Some("on time"), Some("#2FA84F"), Some("#FFFFFF")));
     let (names, selected) = tabs(&h).expect("the tabs");
     assert_eq!(names, ["Ride", "Stops", "Duty", "Inbox", "Bus"]);
     assert_eq!(selected, 1);
@@ -114,7 +114,7 @@ fn a_tab_chosen_shows_its_content() {
     // Duty: the company's panel's elements and the duty's trips, the one under way marked
     choose_tab(&h, 3);
     assert!(shows(&h, PHONE, "Duty D-12"), "{}", phone(&h));
-    assert!(has_element(&h, PHONE, |e| e["type"] == "table" && e["rows"][0][0]["text"] == "▶"));
+    assert!(has_element(&h, PHONE, |e| e["type"] == "table" && e["rows"][0][0]["text"] == "›"));
     // Bus: the fuel, the passengers seated and standing
     choose_tab(&h, 5);
     assert!(has_element(&h, PHONE, |e| e["type"] == "bar" && e["value"] == 1.0), "{}", phone(&h));

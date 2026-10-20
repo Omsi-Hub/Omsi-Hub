@@ -254,11 +254,14 @@ local function status_line(c)
     } }
   end
   local text, color = chip(c)
+  -- (a time is a pill of its colour with white text, as the navigator's own delay pill; the rest
+  -- is dim text on the faint chip)
+  local timed = color == th.late or color == th.on_time or color == th.early
   return { type = "row", gap = 8, children = {
     P.plate(th, c.line, tr),
     { type = "text", text = c.terminus, size = 14, weight = "bold", color = th.ink, grow = true, wrap = false },
     { type = "text", text = string.format("%d/%d", c.k or 0, #c.trips), size = 12, weight = "medium", color = th.dim, wrap = false },
-    { type = "badge", text = text, color = th.chip, text_color = color, weight = "bold" },
+    { type = "badge", text = text, color = timed and color or th.chip, text_color = timed and "#FFFFFF" or color, weight = "bold" },
   } }
 end
 

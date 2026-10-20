@@ -88,7 +88,7 @@ fn the_duty_tab_shows_the_strip_the_trips_and_the_ibis_codes() {
     assert!(shows(&h, PHONE, "End of duty") && shows(&h, PHONE, "Extra duty: D-14 at 15:00"));
     assert!(!has_panel(&h, "omsihub_strip"));
     // the duty's trips, the one under way marked; the IBIS codes of this trip
-    assert!(has_element(&h, PHONE, |e| e["type"] == "table" && e["rows"][0][0]["text"] == "▶"));
+    assert!(has_element(&h, PHONE, |e| e["type"] == "table" && e["rows"][0][0]["text"] == "›"));
     for code in ["30701", "02", "1234"] {
         assert!(has_element(&h, PHONE, |e| e["type"] == "text" && e["text"] == code && e["size"] == 22), "{code}: {}", phone(&h));
     }
@@ -157,7 +157,7 @@ fn the_week_s_roster_is_shown_and_a_sick_call_goes_back_to_the_company() {
     assert_eq!((r.kind.as_str(), r.what.as_str(), r.days, r.duty), ("crew", "sick", 1, None));
     assert!(!r.uid.is_empty());
     assert!(toasted(&h, "Sent to the company"));
-    assert!(shows(&h, PHONE, "✓ Sick call"));
+    assert!(shows(&h, PHONE, "• Sick call"));
     // a swap: the day chosen (only those Omsi-Hub says can be swapped), then cancelled - nothing sent
     click(&h, "duty_swap");
     assert!(has_element(&h, PHONE, |e| e["id"] == "duty_day_3" && e["text"] == "Wed 22"), "{}", phone(&h));
@@ -270,7 +270,7 @@ fn the_pause_menu_has_the_duty_s_lines_and_they_open_the_phone_s_tabs() {
     let (dir, mut h) = start("menu", Some(assignment()), g, 1);
     write_inbox(&dir, json!({ "messages": [], "replies": [], "quick": [{ "key": "traffic", "label": "Delay: traffic", "icon": "traffic" }] }));
     run(&mut h, 3);
-    assert_eq!(menu(&h), [("duty".to_string(), "Duty D-12 · trip 1/2".to_string()), ("control".into(), "Message to control".into()), ("end".into(), "End the duty".into())]);
+    assert_eq!(menu(&h), [("duty".to_string(), "Duty D-12 • trip 1/2".to_string()), ("control".into(), "Message to control".into()), ("end".into(), "End the duty".into())]);
     assert_eq!(h.state.borrow().menu.as_ref().unwrap()[0].2.as_deref(), Some("badge"));
     // the duty: its tab
     assert!(h.pick_menu_item("duty").unwrap());
@@ -303,7 +303,7 @@ fn without_the_phone_the_pause_menu_opens_the_panels_and_asks_twice_to_end() {
     run(&mut h, 3);
     assert!(!has_panel(&h, PHONE));
     h.pick_menu_item("duty").unwrap();
-    assert!(toasted(&h, "Duty D-12 · trip 1/2"));
+    assert!(toasted(&h, "Duty D-12 • trip 1/2"));
     // the inbox's own panel, its quick reports open, with the mouse - given by the game only
     // once its panels show again, in the frame after the menu closed
     h.pick_menu_item("control").unwrap();
@@ -354,12 +354,7 @@ fn in_the_phone_s_inks(h: &Harness, inks: &[&str], light: bool) {
 
 #[test]
 fn the_sign_on_and_the_strip_s_forms_are_drawn_in_the_phone_s_look() {
-    let crew = Crew {
-        templates: vec![("door".into(), "A door sticks".into())],
-        checks: vec![("doors".into(), "Doors".into()), ("mirrors".into(), "Mirrors".into())],
-        text_max: 140,
-        ..crew()
-    };
+    let crew = Crew { templates: vec![("door".into(), "A door sticks".into())], checks: vec![("doors".into(), "Doors".into()), ("mirrors".into(), "Mirrors".into())], text_max: 140, ..crew() };
     let pass = Some(bridge::Personnel { number: "4711".into(), code: "1234".into() });
     let a = light(Assignment { crew: Some(crew.clone()), personnel: pass.clone(), ..assignment() });
     let (_, h) = start_with("light-forms", a, "", docked_game(), "", 3);
