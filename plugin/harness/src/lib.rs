@@ -108,6 +108,20 @@ pub struct GameState {
     pub timetable_buses: Vec<Value>,
     pub others: Vec<Value>,
     pub tile: f64,
+    /// `omsi.ui.version` (2: an openOMSI before the navigator's board, as 0.3.37; 5: 0.3.38),
+    /// the navigator's board `omsi.ui.dock` says (width, room, height, whether it is this
+    /// plugin's; None: no board shown) - `omsi.ui.dock` is there from version 3 on -, and
+    /// whether the duty's trip under way is done (at its terminus).
+    pub ui_version: i64,
+    pub dock: Option<(f64, f64, f64, bool)>,
+    pub trip_done: bool,
+    /// The panels the game refused (`omsi.ui.set` gave false): the panel's id and why, as
+    /// openOMSI's own panel parser says it ([`check_panel`]).
+    pub ui_errors: Vec<String>,
+    /// The fuel in the tank, litres (`omsi.bus.fuel`; None: the bus does not tell), and how
+    /// many of the passengers stand (`omsi.bus.passengers` gives total, seated, standing).
+    pub fuel: Option<f64>,
+    pub standing: i64,
 }
 
 impl Default for GameState {
@@ -142,6 +156,12 @@ impl Default for GameState {
             timetable_buses: Vec::new(),
             others: Vec::new(),
             tile: 300.0,
+            ui_version: 2,
+            dock: None,
+            trip_done: false,
+            ui_errors: Vec::new(),
+            fuel: None,
+            standing: 0,
         }
     }
 }
@@ -181,6 +201,7 @@ pub const FUNCTIONS: &[&str] = &[
     "duty.set_closed_stops",
     "bus.file",
     "bus.passengers",
+    "bus.fuel",
     "bus.set_display_font",
     "game.version",
     "game.api",
@@ -239,7 +260,7 @@ fn from_lua(lua: &Lua, v: LuaValue) -> mlua::Result<Value> {
 }
 
 fn stops_json(stops: &[Stop]) -> Value {
-    Value::Array(stops.iter().enumerate().map(|(k, s)| json!({ "id": s.id, "number": k + 1, "name": s.name, "arr": s.arr, "dep": s.dep, "stops": true })).collect())
+    Value::Array(stops.iter().enumerate().map(|(k, s)| json!({ "id": s.id, "number": k + 1, "name": s.name, "arr": s.arr, "dep": s.dep, "arrival": s.arr, "stops": true })).collect())
 }
 
 impl Harness {
@@ -404,11 +425,24 @@ fn api(lua: &Lua, state: &Rc<RefCell<GameState>>, plugin_dir: &Path) -> mlua::Re
 
     // the plugin's panels
     let ui = lua.create_table()?;
-    ui.set("version", 2)?;
+    let version = state.borrow().ui_version;
+    ui.set("version", version)?;
+    if version >= 3 {
+        f!(ui, "dock", |l, s, _a: ()| match s.borrow().dock {
+            Some(d) => d.into_lua_multi(l),
+            None => Ok(mlua::MultiValue::new()),
+        });
+    }
+    // (a panel the game's parser refuses is not shown: false and why, as the game answers)
     f!(ui, "set", |l, s, a: (String, LuaValue)| {
         let v = from_lua(l, a.1)?;
+        let version = s.borrow().ui_version;
+        if let Err(why) = check_panel(&v, version) {
+            s.borrow_mut().ui_errors.push(format!("{}: {why}", a.0));
+            return (false, why).into_lua_multi(l);
+        }
         s.borrow_mut().panels.insert(a.0, v);
-        Ok(true)
+        true.into_lua_multi(l)
     });
     f!(ui, "toast", |l, s, a: (String, Option<LuaValue>)| {
         let opts = a.1.map(|o| from_lua(l, o)).transpose()?.unwrap_or(Value::Null);
@@ -445,7 +479,7 @@ fn api(lua: &Lua, state: &Rc<RefCell<GameState>>, plugin_dir: &Path) -> mlua::Re
     // the duty
     let duty = lua.create_table()?;
     f!(duty, "get", |l, s, _a: ()| match &s.borrow().duty {
-        Some(d) => to_lua(l, &json!({ "line": d.line, "tour": d.tour, "trip": d.trip, "trips": d.trips, "delay": d.delay })),
+        Some(d) => to_lua(l, &json!({ "line": d.line, "tour": d.tour, "trip": d.trip, "trips": d.trips, "delay": d.delay, "trip_done": s.borrow().trip_done })),
         None => Ok(LuaValue::Nil),
     });
     f!(duty, "trips", |l, s, _a: ()| {
@@ -496,7 +530,11 @@ fn api(lua: &Lua, state: &Rc<RefCell<GameState>>, plugin_dir: &Path) -> mlua::Re
     // the bus
     let bus = lua.create_table()?;
     f!(bus, "file", |_l, s, _a: ()| Ok(s.borrow().bus_file.clone()));
-    f!(bus, "passengers", |_l, s, _a: ()| Ok(s.borrow().passengers));
+    f!(bus, "passengers", |_l, s, _a: ()| {
+        let g = s.borrow();
+        Ok((g.passengers, g.passengers - g.standing, g.standing))
+    });
+    f!(bus, "fuel", |_l, s, _a: ()| Ok(s.borrow().fuel));
     f!(bus, "set_display_font", |_l, s, font: String| {
         s.borrow_mut().fonts.push(font);
         Ok(1)
@@ -547,6 +585,309 @@ fn api(lua: &Lua, state: &Rc<RefCell<GameState>>, plugin_dir: &Path) -> mlua::Re
     Ok(omsi)
 }
 
+// --- openOMSI's panel parser, as far as the plugin can get it wrong ------------------------------
+
+/// The limits of openOMSI's panels (`omsi-plugin/src/ui.rs`).
+const MAX_ELEMENTS: usize = 200;
+const MAX_TEXT: usize = 500;
+const MAX_ID: usize = 64;
+const MAX_DEPTH: usize = 8;
+const MAX_POINTS: usize = 512;
+
+/// Whether openOMSI's `omsi.ui.set` takes the panel `t` (as JSON) in a game whose
+/// `omsi.ui.version` is `version`, and else why not - its own words where they matter. Written
+/// from openOMSI's parser (`parse_panel`, upstream/main and v0.3.37): unknown keys are left
+/// alone and elements of a type the game does not know are skipped (boxes and stop lists below
+/// version 4), but a key of the wrong kind refuses the whole panel.
+pub fn check_panel(t: &Value, version: i64) -> Result<(), String> {
+    let r = Check { t, path: String::new() };
+    if !t.is_object() {
+        return Err("the panel is a table".into());
+    }
+    let mut anchors = vec!["top_left", "top", "top_right", "left", "center", "right", "bottom_left", "bottom", "bottom_right"];
+    if version >= 3 {
+        anchors.push("navigator");
+    }
+    r.one_of("anchor", &anchors)?;
+    for k in ["x", "y", "width", "padding", "gap", "radius"] {
+        r.number(k)?;
+    }
+    for k in ["background", "accent"] {
+        r.color(k)?;
+    }
+    for k in ["visible", "clickable", "draggable", "grab"] {
+        r.boolean(k)?;
+    }
+    let mut count = 0;
+    r.children("children", 0, &mut count, version)
+}
+
+struct Check<'a> {
+    t: &'a Value,
+    path: String,
+}
+
+impl Check<'_> {
+    fn get(&self, key: &str) -> &Value {
+        self.t.get(key).unwrap_or(&Value::Null)
+    }
+
+    fn at(&self, key: &str) -> String {
+        if self.path.is_empty() {
+            key.to_string()
+        } else {
+            format!("{}.{key}", self.path)
+        }
+    }
+
+    fn number(&self, key: &str) -> Result<(), String> {
+        match self.get(key) {
+            Value::Null | Value::Number(_) => Ok(()),
+            _ => Err(format!("{}: a number is expected", self.at(key))),
+        }
+    }
+
+    fn boolean(&self, key: &str) -> Result<(), String> {
+        match self.get(key) {
+            Value::Null | Value::Bool(_) => Ok(()),
+            _ => Err(format!("{}: true or false is expected", self.at(key))),
+        }
+    }
+
+    /// A text (a number is written as a text), at most `MAX_TEXT` characters.
+    fn text(&self, key: &str) -> Result<Option<String>, String> {
+        let s = match self.get(key) {
+            Value::Null => return Ok(None),
+            Value::String(s) => s.clone(),
+            Value::Number(n) => n.to_string(),
+            _ => return Err(format!("{}: a text is expected", self.at(key))),
+        };
+        if s.chars().count() > MAX_TEXT {
+            return Err(format!("{}: longer than {MAX_TEXT} characters", self.at(key)));
+        }
+        Ok(Some(s))
+    }
+
+    fn color(&self, key: &str) -> Result<(), String> {
+        let Some(s) = self.text(key)? else { return Ok(()) };
+        let hex = s.strip_prefix('#').unwrap_or("");
+        if !s.starts_with('#') || !(hex.len() == 6 || hex.len() == 8) || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Err(format!("{}: \"{s}\" is no colour (\"#RRGGBB\" or \"#RRGGBBAA\")", self.at(key)));
+        }
+        Ok(())
+    }
+
+    fn one_of(&self, key: &str, allowed: &[&str]) -> Result<(), String> {
+        match self.text(key)? {
+            Some(s) if !allowed.contains(&s.as_str()) => Err(format!("{}: \"{s}\" is not one of {allowed:?}", self.at(key))),
+            _ => Ok(()),
+        }
+    }
+
+    /// A list (an empty Lua table comes as either).
+    fn list(&self, key: &str) -> Result<Vec<Value>, String> {
+        match self.get(key) {
+            Value::Null => Ok(Vec::new()),
+            Value::Array(a) => Ok(a.clone()),
+            Value::Object(m) if m.is_empty() => Ok(Vec::new()),
+            _ => Err(format!("{}: a list is expected", self.at(key))),
+        }
+    }
+
+    fn texts(&self, key: &str) -> Result<(), String> {
+        for (i, v) in self.list(key)?.iter().enumerate() {
+            if !(v.is_string() || v.is_number()) {
+                return Err(format!("{}[{}]: a text is expected", self.at(key), i + 1));
+            }
+        }
+        Ok(())
+    }
+
+    fn numbers(&self, key: &str) -> Result<(), String> {
+        let l = self.list(key)?;
+        if l.len() > MAX_POINTS {
+            return Err(format!("{}: at most {MAX_POINTS} values", self.at(key)));
+        }
+        match l.iter().position(|v| !v.is_number()) {
+            Some(i) => Err(format!("{}[{}]: a number is expected", self.at(key), i + 1)),
+            None => Ok(()),
+        }
+    }
+
+    /// Each of the list `key`'s tables read with `f`.
+    fn tables(&self, key: &str, most: usize, what: &str, f: impl Fn(&Check) -> Result<(), String>) -> Result<(), String> {
+        let l = self.list(key)?;
+        if l.len() > most {
+            return Err(format!("{}: at most {most} {what}s", self.at(key)));
+        }
+        for (i, t) in l.iter().enumerate() {
+            let c = Check { t, path: format!("{}[{}]", self.at(key), i + 1) };
+            if !t.is_object() {
+                return Err(format!("{}: a {what} is a table", c.path));
+            }
+            f(&c)?;
+        }
+        Ok(())
+    }
+
+    fn children(&self, key: &str, depth: usize, count: &mut usize, version: i64) -> Result<(), String> {
+        let list = match self.get(key) {
+            Value::Null => return Ok(()),
+            Value::Array(a) => a.clone(),
+            Value::Object(m) if m.is_empty() => Vec::new(),
+            _ => return Err(format!("{}: a list of elements is expected", self.at(key))),
+        };
+        if depth >= MAX_DEPTH {
+            return Err(format!("{}: rows go at most {MAX_DEPTH} deep", self.at(key)));
+        }
+        for (i, t) in list.iter().enumerate() {
+            let c = Check { t, path: format!("{}[{}]", self.at(key), i + 1) };
+            if !t.is_object() {
+                return Err(format!("{}: an element is a table", c.path));
+            }
+            *count += 1;
+            if *count > MAX_ELEMENTS {
+                return Err(format!("a panel has at most {MAX_ELEMENTS} elements"));
+            }
+            c.element(depth, count, version)?;
+        }
+        Ok(())
+    }
+
+    fn element(&self, depth: usize, count: &mut usize, version: i64) -> Result<(), String> {
+        let ty = self.text("type")?.ok_or_else(|| format!("{}: no type", self.path))?;
+        let id = self.text("id")?;
+        if let Some(id) = &id {
+            if id.is_empty() || id.chars().count() > MAX_ID {
+                return Err(format!("{}: an id is 1 to {MAX_ID} characters", self.at("id")));
+            }
+        }
+        let needs_id = |what: &str| if id.is_none() { Err(format!("{}: a {what} needs an id", self.path)) } else { Ok(()) };
+        let weights = ["regular", "medium", "bold"];
+        match ty.as_str() {
+            "text" => {
+                self.text("text")?;
+                self.number("size")?;
+                self.one_of("weight", &weights)?;
+                self.one_of("align", &["left", "center", "right"])?;
+                self.boolean("wrap")?;
+            }
+            "icon" => {
+                self.text("name")?;
+                self.number("size")?;
+            }
+            "row" => {
+                self.children("children", depth + 1, count, version)?;
+                self.number("gap")?;
+                self.one_of("align", &["start", "center", "end", "between"])?;
+            }
+            "bar" => {
+                self.number("value")?;
+                self.number("height")?;
+                self.color("background")?;
+                if version >= 4 {
+                    self.tables("segments", 16, "part", |c| {
+                        c.number("value")?;
+                        c.color("color")
+                    })?;
+                }
+            }
+            "badge" => {
+                self.text("text")?;
+                self.color("text_color")?;
+                self.one_of("weight", &weights)?;
+            }
+            // (boxes and stop lists: version 4; an older game skips them)
+            "box" if version >= 4 => {
+                self.children("children", depth + 1, count, version)?;
+                self.number("gap")?;
+            }
+            "stops" if version >= 4 => {
+                self.tables("stops", MAX_POINTS / 4, "stop", |c| {
+                    for k in ["name", "time", "expected", "tag"] {
+                        c.text(k)?;
+                    }
+                    c.color("expected_color")?;
+                    c.one_of("state", &["done", "now", "ahead"])
+                })?;
+                self.number("size")?;
+            }
+            "divider" => {}
+            "space" => self.number("size")?,
+            "button" => {
+                needs_id("button")?;
+                self.text("text")?;
+                self.text("icon")?;
+            }
+            "image" => {
+                self.text("src")?;
+                self.number("width")?;
+                self.number("height")?;
+            }
+            "checkbox" => {
+                needs_id("checkbox")?;
+                self.text("text")?;
+                self.boolean("checked")?;
+            }
+            "slider" => {
+                needs_id("slider")?;
+                for k in ["min", "max", "value", "step"] {
+                    self.number(k)?;
+                }
+            }
+            "input" => {
+                needs_id("text field")?;
+                self.text("text")?;
+                self.text("placeholder")?;
+                self.number("max")?;
+            }
+            "tabs" => {
+                needs_id("tabs element")?;
+                self.texts("tabs")?;
+                self.number("selected")?;
+            }
+            "chart" => {
+                self.numbers("values")?;
+                for k in ["min", "max", "height"] {
+                    self.number(k)?;
+                }
+                self.one_of("style", &["line", "bars"])?;
+                self.boolean("fill")?;
+            }
+            "table" => {
+                for (i, row) in self.list("rows")?.iter().enumerate() {
+                    let path = format!("{}[{}]", self.at("rows"), i + 1);
+                    let Value::Array(cells) = row else { return Err(format!("{path}: a row is a list of texts")) };
+                    for (j, cell) in cells.iter().enumerate() {
+                        if cell.is_object() && version >= 4 {
+                            let c = Check { t: cell, path: format!("{path}[{}]", j + 1) };
+                            c.text("text")?;
+                            c.color("color")?;
+                        }
+                    }
+                }
+                self.texts("columns")?;
+                self.numbers("widths")?;
+                self.number("size")?;
+                if version >= 4 {
+                    for a in self.list("aligns")? {
+                        if !matches!(a.as_str(), Some("left" | "center" | "right")) {
+                            return Err(format!("{}: {a} is no alignment (left, center, right)", self.at("aligns")));
+                        }
+                    }
+                }
+            }
+            // (an element of a later version of the API, or one this game skips)
+            _ => return Ok(()),
+        }
+        self.color("color")?;
+        for k in ["grow", "clickable", "visible"] {
+            self.boolean(k)?;
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -571,5 +912,33 @@ mod tests {
         h.state.borrow_mut().duty = None;
         h.frame().unwrap();
         assert_eq!(h.lua.globals().get::<Option<String>>("last").unwrap(), None);
+    }
+    #[test]
+    fn a_panel_is_checked_as_openomsi_reads_it() {
+        let ok = json!({ "anchor": "navigator", "grab": true, "children": [
+            { "type": "row", "align": "between", "children": [{ "type": "badge", "text": "307", "color": "#FFD23F", "weight": "bold" }, { "type": "text", "text": 12.5, "grow": true }] },
+            { "type": "tabs", "id": "t", "tabs": ["A", "B"], "selected": 2 },
+            { "type": "box", "children": [] },
+            { "type": "stops", "stops": [{ "name": "Zoo", "state": "now" }] },
+            { "type": "table", "rows": [["a", { "text": "+1:00", "color": "#FF453A" }]], "aligns": ["left", "right"] },
+            { "type": "later_element", "anything": {} },
+        ] });
+        assert_eq!(check_panel(&ok, 5), Ok(()));
+        // (no navigator before version 3; boxes and stop lists skipped before 4)
+        assert!(check_panel(&ok, 2).unwrap_err().contains("anchor"));
+        let old = json!({ "children": [{ "type": "stops", "stops": [{ "state": "gone" }] }] });
+        assert_eq!(check_panel(&old, 2), Ok(()));
+        for (bad, why) in [
+            (json!({ "children": [{ "type": "text", "size": "12" }] }), "children[1].size: a number is expected"),
+            (json!({ "children": [{ "type": "button", "text": "Go" }] }), "children[1]: a button needs an id"),
+            (json!({ "children": [{ "type": "row", "children": [{ "type": "badge", "color": "yellow" }] }] }), "children[1].children[1].color"),
+            (json!({ "children": [{ "type": "text", "weight": "heavy" }] }), "children[1].weight"),
+            (json!({ "children": [{ "type": "tabs", "id": "t", "selected": "1" }] }), "children[1].selected"),
+            (json!({ "children": [{ "type": "stops", "stops": [{ "state": "gone" }] }] }), "children[1].stops[1].state"),
+            (json!({ "grab": 1 }), "grab: true or false"),
+        ] {
+            let e = check_panel(&bad, 5).unwrap_err();
+            assert!(e.contains(why), "{e} / {why}");
+        }
     }
 }
