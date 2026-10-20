@@ -22,7 +22,7 @@ import { html, useEffect, useLayoutEffect, useRef, useState } from '../../vendor
 import { S, set } from '../store.js';
 import { language } from '../i18n.js';
 import { tr } from '../hub/bits.js';
-import { handOver, setCo, cmd as coCmd } from '../company/kit.js';
+import { handOver, setCo, cmd as coCmd, refresh as coRefresh } from '../company/kit.js';
 import { setRf, setPart, rfCmd, rfGen, after, bump, say, press, busyIs, readBegun, readDone, nextRead } from './state.js';
 import { Icon } from './ui.js';
 import { CopyPanel, openCopy, chosenTrips } from './tpcopy.js';
@@ -85,19 +85,37 @@ function generated(first, last, heads) {
  * it is asked for anew (the tab is drawn anew on each switch). */
 let lastTp = null;
 
-/** The Timeplan's view (`rf_tp`), asked again when what is shown changed or after an action. */
+/** What is shown, as the Rust side reads it (`timeplan::shown_of`). */
+const shownOf = (t) => ({ day: t.day, side: t.side, pattern: t.pattern, tab: t.tab, points_only: t.pointsOnly });
+
+/** What a view is read for: the company, what is shown, the page's asking again, the
+ * generation as RosterFlow counts it, the language. */
+const tpKey = (t, bumped, gen) => [S.rf.company, JSON.stringify(shownOf(t)), bumped, t.rev, gen, language()].join('|');
+
+/** The view taken last from an action's answer (`rf_tp_act`'s `tp_view`), for which `tpKey`; and
+ * how the Timeplan shown takes one. */
+let tpTaken = null;
+let showTp = null;
+/** How many views were taken from answers: a view asked for before one was is dropped. */
+let tpTakes = 0;
+
+/** The Timeplan's view (`rf_tp`), asked again when what is shown changed - not after an action,
+ * whose answer hands it (`tpSend`). */
 function useTp() {
   const r = S.rf;
   const t = r.tp;
   const [v, setV] = useState(() => (lastTp && lastTp.company === r.company ? lastTp.v : null));
   const gen = rfGen();
+  showTp = setV;
   useEffect(() => {
+    if (tpTaken === tpKey(t, r.bump, gen)) return;
     let gone = false;
     const n = readBegun('tp');
     const company = S.rf.company;
-    rfCmd('rf_tp', { day: t.day, side: t.side, pattern: t.pattern, tab: t.tab, points_only: t.pointsOnly })
+    const takes = tpTakes;
+    rfCmd('rf_tp', shownOf(t))
       .then((x) => {
-        if (gone) return;
+        if (gone || takes !== tpTakes) return;
         setV(x);
         lastTp = { company, v: x };
       })
@@ -132,12 +150,23 @@ async function tpSend(act, args) {
   // (the Undo offered after trips were taken out goes with the next action)
   if (t.undoable && act !== 'delete' && act !== 'bulk_delete') tpSet({ undoable: null });
   try {
-    r = await rfCmd('rf_tp_act', { act, day: t.day, side: t.side, pattern: t.pattern, tab: t.tab, ...args });
+    r = await rfCmd('rf_tp_act', { act, day: t.day, side: t.side, pattern: t.pattern, tab: t.tab, ...args, shown: shownOf(t) });
   } catch (e) {
     say(e.message, true);
     return null;
   }
   after(r);
+  // (the view the action changed came with its answer: shown, and the company's shell read - the
+  // view not asked for again when the shell comes back with the generation it was made at)
+  const now = S.rf.tp;
+  if (r?.tp_view && r.rf_gen != null && JSON.stringify(shownOf(now)) === JSON.stringify(shownOf(t))) {
+    tpTaken = tpKey(now, S.rf.bump, r.rf_gen);
+    tpTakes += 1;
+    lastTp = { company: S.rf.company, v: r.tp_view };
+    showTp?.(r.tp_view);
+    if (WRITES.includes(act)) coRefresh();
+    return r;
+  }
   if (!WRITES.includes(act)) {
     refreshTp();
     return r;

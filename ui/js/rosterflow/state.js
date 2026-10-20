@@ -126,6 +126,43 @@ export function bump() {
   return coRefresh(() => setRf((r) => ({ bump: r.bump + 1 })));
 }
 
+// --- the day's board ------------------------------------------------------------------------------------
+
+/** What the board taken last from an action's answer was made for (`boardKey`): `useBoard` asks
+ * for nothing when the shell comes back with that generation. */
+let boardTaken = null;
+
+/** What a board is read for: the company, the day, its generation as RosterFlow counts it, the
+ * page's asking again, the language. */
+export const boardKey = (day, gen, bumped, lang) => [S.rf.company, day, gen, bumped, lang].join('|');
+
+/** Whether the board for `key` came with an action's answer already. */
+export const boardHad = (key) => boardTaken === key;
+
+/** How many boards were taken from actions' answers: a board asked for before one was is
+ * dropped (`useBoard`). */
+let boardTakes = 0;
+export const boardTakesNow = () => boardTakes;
+
+/** The days of the switcher read again (`rf_on`), as they are now. */
+export async function rereadDays() {
+  const on = await rfCmd('rf_on').catch(() => null);
+  if (on?.days && on.company === S.rf.company) setRf({ days: on.days });
+}
+
+/** A board's answer (`rf_board`, or an action's `fresh`) for day `day` taken. */
+export function takeBoard(v, day) {
+  told(v.told);
+  // (the company's day moved on since the switcher's days were read: read again, or every
+  // day of the switcher - and every copy to one - is the day after the one it says)
+  if (v.head?.date && S.rf.days?.[day] && S.rf.days[day].date !== v.head.date) rereadDays();
+  // (the same board: drawn again only when its head says something else)
+  if (v.same) {
+    if (JSON.stringify(v.head) !== JSON.stringify(S.rf.data?.head)) setRf({ data: { ...S.rf.data, head: v.head } });
+  } else if (v.board) setRf({ data: v, rev: v.rev });
+  else setRf({ data: { head: v.head, reading: v.reading }, rev: '' });
+}
+
 // --- what a button waits for ------------------------------------------------------------------------
 // (SAVE writes files and the board comes after it: the button says so at once, and a second press
 // meanwhile does nothing)
@@ -194,10 +231,11 @@ export async function rfAct(act, args = {}) {
 
 async function send(act, args, wait) {
   let r;
+  const day = S.rf.day;
   try {
     // (the day as the page shows it: an edit of a day somebody else changed meanwhile is refused,
     // not made on the wrong trips - `rosterflow::act`'s `stale`)
-    r = await rfCmd('rf_act', { act, day: S.rf.day, rev: S.rf.rev || '', ...args });
+    r = await rfCmd('rf_act', { act, day, rev: S.rf.rev || '', ...args });
   } catch (e) {
     say(e.message, true);
     return null;
@@ -208,6 +246,15 @@ async function send(act, args, wait) {
   // (undone or redone: the day's blocks and trips are numbered anew, as after an edit - what is
   // chosen, held or carded by its numbers let go)
   if (r?.say && UNDOES.includes(act)) settle();
+  // (the board the action changed came with its answer: taken, and the company's shell read -
+  // the board not asked for again when the shell comes back with the generation it was made at)
+  if (r?.fresh && r.rf_gen != null && S.rf.day === day) {
+    boardTaken = boardKey(day, r.rf_gen, S.rf.bump, language());
+    boardTakes += 1;
+    takeBoard(r.fresh, day);
+    coRefresh();
+    return r;
+  }
   // (a button: pressed until the board it changed is read - SAVE says Saved when it is)
   const read = wait ? nextRead('board') : null;
   bump();

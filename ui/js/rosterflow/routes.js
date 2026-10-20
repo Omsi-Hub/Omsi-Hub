@@ -12,10 +12,9 @@
 // `lineeditor::headless`) with the map's lanes and its router, the line editor's own map draws it
 // (`LineMap`: a stop clicked goes into the direction, the way to it is found over the roads), and
 // a route is saved where the line editor saves a line - the map's lines and the company's - so
-// that the line editor, the Timeplan and the tenders all have it. The company is stopped and saved
-// before the line editor reads it (`co_leave`), read again by the line editor before anything is
-// paid (`c_reread`: its clock goes on meanwhile), and read again here once the line editor wrote
-// it (`co_reread`).
+// that the line editor, the Timeplan and the tenders all have it. The line editor takes the company
+// from its session as it is (`company::company_now`: its clock goes on meanwhile) and pays and
+// writes on the session's company itself (`company::act_on`), which the pages read again then.
 
 import { html, useEffect, useRef, useState } from '../../vendor/preact-htm.js';
 import { S, set } from '../store.js';
@@ -76,7 +75,6 @@ async function openFor(company) {
   // (only what the line editor says from now on is passed on)
   RT.seen = Date.now() - 1;
   L.hooks = { timeplan: toTimeplan, companyChanged };
-  await coCmd('co_leave').catch(() => {});
   const maps = (S.maps || []).map((m) => [mapLabel(m), m.file]);
   // (line 0 is none of the line editor's: no new line made, the company's first one shown)
   await le('open', { maps, root: S.boot?.root || '', date: S.choice?.date || '', choice_map: S.choice?.map || '', company, line: 0, new_days: null, map_line: '' });
@@ -88,16 +86,11 @@ async function openFor(company) {
   return true;
 }
 
-/** The line editor wrote the company's file: the company read again, RosterFlow's day with it, and
+/** The line editor changed the company (in its session): RosterFlow's day read again with it, and
  * the Timeplan to open the route anew when it is shown next. */
-function companyChanged(id) {
-  const company = id || S.co.shell?.id;
-  RT.rereading = coCmd('co_reread', { id: company })
-    .catch(() => null)
-    .then(() => {
-      bump();
-      return timeplanFollows();
-    });
+function companyChanged() {
+  bump();
+  RT.rereading = timeplanFollows();
 }
 
 /** The Timeplan to open the route shown, read again, when it is shown next. */
@@ -115,11 +108,9 @@ async function toTimeplan({ id, name, hint } = {}) {
   setRf({ view: TIMEPLAN, tpLine: line, tpHint: hint ? 'new' : null, tpReload: true, hand: null, zones: null, sel: [], card: null, menu: null, panel: null });
 }
 
-/** A request that pays or writes the company: the company saved first and read again by the line
- * editor, so that what is paid is taken from the company as it is now. */
-async function paid(op, args = {}) {
-  await coCmd('co_leave').catch(() => {});
-  await le('c_reread');
+/** A request that pays or writes the company (the line editor takes the company as it is now
+ * itself before it pays). */
+function paid(op, args = {}) {
   return le(op, args);
 }
 

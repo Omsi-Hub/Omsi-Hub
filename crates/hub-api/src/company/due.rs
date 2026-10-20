@@ -79,6 +79,8 @@ pub(super) fn refill(s: &mut Session) {
 fn take_effect_in_timetable(map: &str, id: u64) -> Result<(), String> {
     let folder = reg::map_folder(map);
     let path = reg::registry_path(&folder);
+    // (after a save of the Timeplan's on its way to it: `rosterflow::writes`)
+    crate::rosterflow::writes::settle(Some(&path));
     let mut r = reg::load_registry(&path);
     let Some(x) = r.line_mut(id) else { return Ok(()) };
     x.live = None;

@@ -341,8 +341,15 @@ fn main() {
             let _ = app.get_webview_window("main");
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("the app could not start");
+        .build(tauri::generate_context!())
+        .expect("the app could not start")
+        .run(|_, event| {
+            // (what the company's session still writes behind the page, written before it ends:
+            // `company::saver`)
+            if let tauri::RunEvent::Exit = event {
+                hub_api::company::quit();
+            }
+        });
 }
 
 #[cfg(test)]

@@ -51,7 +51,8 @@ fn open(s: &mut Session, req: &Value) -> R {
         v.leave_company();
         s.company = None;
     } else {
-        let c = co::store::load(&core::data_dir(), &company).map_err(|e| format!("{e:#}"))?;
+        // (the company as its session has it now: no need to stop and save it first)
+        let c = crate::company::company_now(&company)?;
         let runs = c.lines.iter().filter(|x| !x.own).map(|x| x.name.clone()).collect();
         let rosterflow = co::autopilot::rosterflow(&c);
         let line = req.get("line").and_then(Value::as_u64);
@@ -85,6 +86,8 @@ fn open(s: &mut Session, req: &Value) -> R {
     if maps.is_empty() {
         return Ok(());
     }
+    // (a line the Timeplan saved still on its way into a registry: written first, `rosterflow::writes`)
+    crate::rosterflow::writes::settle(None);
     // (working for the bus company: its map, and no other)
     let company_map = s.v.company.as_ref().map(|f| f.map.clone());
     let k = if let Some(cm) = company_map {

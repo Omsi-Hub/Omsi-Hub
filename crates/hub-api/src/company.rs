@@ -56,6 +56,8 @@ mod overview;
 mod people;
 mod photos;
 mod reputation;
+// (the company's file written behind the page: `changed`)
+pub(crate) mod saver;
 // (the company's link to the plugin: its part of a duty's assignment, `crate::addon`)
 pub mod plugin;
 // (Beta 61: a sandbox company's rules, set by the player)
@@ -579,9 +581,21 @@ pub fn link_own_lines(c: &mut Company, lines: &[core::LineInfo]) -> bool {
     any
 }
 
-/// After a change made on a page: saved, and today's plan made again (`company::changed`).
+/// After a change made on a page: saved, and today's plan made again (`company::changed`). The
+/// file is written on the saver's thread a moment later (`saver`): what reads it waits for it.
 pub fn changed(s: &mut Session) {
     s.plan = None;
+    kept(s);
+}
+
+/// A change of RosterFlow's draft only (an edit not saved yet, its undo): saved as `changed`
+/// saves, today's plan kept - the day runs the saved planning, not the draft.
+pub fn changed_draft(s: &mut Session) {
+    kept(s);
+}
+
+/// The company changed: the page's to read again, the list's copy and its file to be written.
+fn kept(s: &mut Session) {
     s.generation += 1;
     if let Some(c) = s.company.as_ref() {
         if let Some(list) = s.companies.as_mut() {
@@ -593,11 +607,50 @@ pub fn changed(s: &mut Session) {
         if dry() {
             return;
         }
-        if let Err(e) = co::store::save(&data(), c) {
-            let t = format!("{e:#}");
-            s.say(t, true);
-        }
+        saver::queue(data(), c.clone());
     }
+}
+
+/// The company `id` as it is now: the session's when it is the one open (its file may still be
+/// on its way), else its file. (The line editor working for it, Omsi-Hub 4/6.)
+#[cfg(feature = "native")]
+pub(crate) fn company_now(id: &str) -> Result<Company, String> {
+    if let Some(c) = session().lock().unwrap_or_else(|e| e.into_inner()).company.as_ref().filter(|c| c.id == id) {
+        return Ok(c.clone());
+    }
+    saver::settle();
+    co::store::load(&data(), id).map_err(|e| format!("{e:#}"))
+}
+
+/// Something done to company `id` by another part of the launcher (the line editor): on the
+/// session's company when it is the one open - as a page's change, the clock's minutes since it
+/// was read kept -, else on its file. Its refusal comes back; else what `f` gave and the company.
+#[cfg(feature = "native")]
+pub(crate) fn act_on<T>(id: &str, f: impl FnOnce(&mut Company) -> Result<T, &'static str>) -> Result<(T, Company), String> {
+    let mut s = session().lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(c) = s.company.as_mut().filter(|c| c.id == id) {
+        let x = f(c).map_err(|e| e.to_string())?;
+        let c = c.clone();
+        changed(&mut s);
+        return Ok((x, c));
+    }
+    drop(s);
+    saver::settle();
+    let mut c = co::store::load(&data(), id).map_err(|e| format!("{e:#}"))?;
+    let x = f(&mut c).map_err(|e| e.to_string())?;
+    co::store::save(&data(), &c).map_err(|e| format!("{e:#}"))?;
+    Ok((x, c))
+}
+
+/// The app ends: what a playing clock left unsaved and what waits to be written, written - a
+/// line the Timeplan saved, the company.
+pub fn quit() {
+    super::rosterflow::writes::settle(None);
+    {
+        let mut s = session().lock().unwrap_or_else(|e| e.into_inner());
+        flush(&mut s);
+    }
+    saver::settle();
 }
 
 thread_local! {
@@ -648,9 +701,14 @@ pub fn popup(s: &Session, p: kit::Popup) -> Value {
 /// timetable of the company's day and the own lines of its map, the easy mode's morning, today's
 /// plan and the company's day for the game, the dealer's and the depot's clocks.
 fn work(s: &mut Session) {
+    // (a company's file that could not be written, said)
+    for e in saver::failed() {
+        s.say(e, true);
+    }
     let profile = core::load_config().profile;
     if s.companies_for.as_deref() != Some(profile.as_str()) {
         s.companies_for = Some(profile.clone());
+        saver::settle();
         let list = co::store::list(&data(), &profile);
         let keep = s.company.as_ref().map(|c| c.id.clone());
         s.company = keep.and_then(|id| list.iter().find(|c| c.id == id).cloned());
@@ -836,6 +894,8 @@ fn depot_tick(s: &mut Session) {
         crew_notices(s);
         if !done.is_empty() {
             changed(s);
+            // (their file is gone: the company that carried them out written at once)
+            saver::settle();
             match done.iter().find_map(|x| x.1.err()) {
                 Some(e) => {
                     let t = trf("An order from the phone was refused: %{why}", &[("why", &tr(e))]);
@@ -967,6 +1027,9 @@ pub fn simulate(s: &mut Session, to: i64, quick: bool) {
     s.closing = true;
     s.clock.dirty = None;
     s.generation += 1;
+    // (the simulation saves the company itself: a write of the session's waiting is not to come
+    // after it)
+    saver::settle();
     crate::spawn(move || {
         let d = data();
         let mut c = c;
@@ -1166,6 +1229,7 @@ fn catch_up(s: &mut Session, c: Company, real: i64) {
     s.closing = true;
     s.clock.dirty = None;
     s.generation += 1;
+    saver::settle();
     let lines = s.map_lines().map(|l| l.to_vec());
     crate::spawn(move || {
         let d = data();
@@ -1602,6 +1666,7 @@ fn open(s: &mut Session, id: &str) -> Answer {
 /// editor confirmed a line, the livery studio saved a livery - Trello "Tauri 5/6"). The one
 /// open here takes it, its day planned anew.
 fn reread(s: &mut Session, id: &str) -> Answer {
+    saver::settle();
     let c = co::store::load(&data(), id).map_err(|e| format!("{e:#}"))?;
     if let Some(list) = s.companies.as_mut() {
         match list.iter_mut().find(|x| x.id == id) {
@@ -1627,6 +1692,7 @@ fn delete(s: &mut Session, id: &str) -> Answer {
     if open {
         play(s, 0.0);
     }
+    saver::forget(id);
     if let Err(e) = co::store::delete(&data(), id) {
         s.say(format!("{e:#}"), true);
         return Ok(json!({}));
@@ -1648,6 +1714,8 @@ fn delete(s: &mut Session, id: &str) -> Answer {
 /// and what it left unsaved is saved (`company::leave`); the duty launcher closes with them.
 fn leave(s: &mut Session) -> Answer {
     play(s, 0.0);
+    // (the file as the session has it: what the part handed over to reads it)
+    saver::settle();
     s.launch = None;
     // (a cloud company's change goes up - `cloud.rs`)
     if let Some(c) = &s.company {

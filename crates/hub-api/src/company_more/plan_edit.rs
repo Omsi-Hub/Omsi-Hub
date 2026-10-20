@@ -492,7 +492,7 @@ pub fn act(s: &mut Session, e: &mut PlanEdit, what: &str, args: &Value) -> Optio
             let c = tpl::commit(s, &e.company, &e.line, &o, &mut from, &mut out);
             e.from = from;
             match c {
-                Commit::Saved | Commit::Gone => out["closed"] = json!(true),
+                Commit::Saved(_) | Commit::Gone => out["closed"] = json!(true),
                 Commit::Kept => {}
                 // (the line as the registry has it now, shown as it is)
                 Commit::Stale => {

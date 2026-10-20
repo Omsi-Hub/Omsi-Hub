@@ -8,12 +8,13 @@
 //! Saved, the line's timetable is the company's as every own line's is (`plan_edit::commit` of
 //! the game-drawn launcher: a line in service from the day chosen, else at once; a line of the
 //! map's at once, `save_map`): the registry, the map's timetable and the depot files written
-//! into the content folder, the company's timetables read again.
+//! into the content folder on a thread of their own (`writes`), the company's timetables read
+//! again once they are (`written`). The Timeplan shows the line as it was written meanwhile.
 
 use super::super::company::kit::Popup;
 use super::super::company::words::{day_label, eur, tr, trf};
 use super::super::company::{self, Session};
-use super::{str_arg, usize_arg, Rf};
+use super::{str_arg, usize_arg, writes, Rf};
 use crate::launcher as core;
 use crate::Answer;
 use hub_core::company::plandays::{self as pd, DayCopied, How, Template};
@@ -58,6 +59,19 @@ fn own_of(id: u64, path: PathBuf, stem: String, saved: LineDesign) -> Own {
         None => base.clone(),
     };
     Own { id, path, stem, saved, draft: base.clone(), base, live }
+}
+
+/// An own line as the Timeplan opens it: its table made, nothing changed yet.
+fn opened_own(mut own: Own) -> Own {
+    tp::as_table(&mut own.base);
+    own.draft = own.base.clone();
+    own
+}
+
+/// The line editor's registry at `path`, a write of the Timeplan's on its way to it waited for.
+fn registry(path: &Path) -> reg::Registry {
+    writes::settle(Some(path));
+    reg::load_registry(path)
 }
 
 /// The line being planned: its own line, whether it is a line of the map's, and whether it was
@@ -314,7 +328,7 @@ fn route(s: &mut Session, r: &mut Rf, cmd: &str, args: &Value) -> Answer {
 pub(crate) fn load_own(c: &Company, cl: &CompanyLine) -> Result<Own, &'static str> {
     let id = cl.plan.as_ref().map(|p| p.line_id).ok_or(NOT_FOUND)?;
     let path = reg::registry_path(&reg::map_folder(&c.map));
-    let r = reg::load_registry(&path);
+    let r = registry(&path);
     let saved = r.line(id).cloned().ok_or(NOT_FOUND)?;
     let stem = reg::stems(&r).get(&id).cloned().unwrap_or_else(|| cl.name.clone());
     Ok(own_of(id, path, stem, saved))
@@ -375,11 +389,11 @@ fn import_for_timeplan(map_file: &str, date: &str, ttl: &str) -> Option<LineDesi
 /// line of the map's the line editor never saved imported from the map's timetable - or why it
 /// cannot be planned here.
 fn load(c: &Company, cl: &CompanyLine) -> Result<Work, &'static str> {
-    let (mut own, map, fresh) = if cl.own {
+    let (own, map, fresh) = if cl.own {
         (load_own(c, cl)?, false, false)
     } else {
         let path = reg::registry_path(&reg::map_folder(&c.map));
-        let r = reg::load_registry(&path);
+        let r = registry(&path);
         match r.map_line(&cl.name).cloned() {
             Some(line) => {
                 let stem = reg::stems(&r).get(&line.id).cloned().unwrap_or_default();
@@ -391,9 +405,7 @@ fn load(c: &Company, cl: &CompanyLine) -> Result<Work, &'static str> {
             }
         }
     };
-    tp::as_table(&mut own.base);
-    own.draft = own.base.clone();
-    Ok(Work { own, map, fresh })
+    Ok(Work { own: opened_own(own), map, fresh })
 }
 
 /// The line chosen (the first own line, else the first), read when another is chosen.
@@ -597,7 +609,7 @@ pub(super) fn run(s: &mut Session, r: &mut Rf, cmd: &str, args: &Value) -> Optio
     })
 }
 
-fn view(s: &mut Session, r: &mut Rf, args: &Value) -> Answer {
+pub(super) fn view(s: &mut Session, r: &mut Rf, args: &Value) -> Answer {
     // (the week's timetables, for the calendar strip)
     company::week_work(s);
     let Some(c) = s.company.clone() else { return Ok(json!({ "none": true })) };
@@ -1310,7 +1322,8 @@ fn merge3(base: &Value, theirs: &Value, mine: &Value) -> Option<Value> {
 
 /// What came of saving an own line's timetable (`plan_edit::Commit`).
 pub(crate) enum Commit {
-    Saved,
+    /// Saved: the line as it is written (its files on their way, `writes`).
+    Saved(Own),
     Gone,
     Kept,
     Stale,
@@ -1338,15 +1351,15 @@ fn save(s: &mut Session, r: &mut Rf, day_shown: usize) -> Value {
         let c = commit(s, &company_id, &line, &w.own, &mut from, &mut out);
         r.tp.from = from;
         match c {
-            Commit::Saved => true,
+            Commit::Saved(own) => Some(own),
             Commit::Stale | Commit::Gone => {
                 r.tp.loaded = None;
-                false
+                None
             }
-            Commit::Kept => false,
+            Commit::Kept => None,
         }
     };
-    if saved {
+    if let Some(own) = saved {
         // (the line under its new name, if its number changed it: its templates with it)
         let id = w.own.id;
         if let Some(name) = s.company.as_ref().and_then(|c| c.lines.iter().find(|x| x.own && x.plan.as_ref().is_some_and(|p| p.line_id == id)).map(|x| x.name.clone())) {
@@ -1365,10 +1378,17 @@ fn save(s: &mut Session, r: &mut Rf, day_shown: usize) -> Value {
                 v.unsynced.push((v.line.clone(), d));
             }
         }
-        v.loaded = None;
+        // (the line as it is being written - its files on their way, `written` reads it again
+        // once they are there: not read now from a registry not written yet)
+        v.work = Some(Work { own: opened_own(own), map: w.map, fresh: false });
+        v.loaded = Some((v.company.clone(), v.line.clone()));
+        v.undo.clear();
+        v.redo.clear();
         r.cache = None;
+        out["saved"] = json!(true);
+    } else {
+        out["saved"] = json!(false);
     }
-    out["saved"] = json!(saved);
     out
 }
 
@@ -1389,7 +1409,7 @@ pub(crate) fn commit(s: &mut Session, company_id: &str, line: &str, o: &Own, fro
     }
     // (the line as the registry has it now: changed meanwhile where the draft changed it too, it
     // is shown as it is - else the draft goes onto it, `rebase`)
-    let r = reg::load_registry(&o.path);
+    let r = registry(&o.path);
     let Some(on_disk) = r.line(o.id).cloned() else {
         say_into(out, tr(NOT_FOUND), true);
         return Commit::Gone;
@@ -1469,26 +1489,22 @@ pub(crate) fn commit(s: &mut Session, company_id: &str, line: &str, o: &Own, fro
             (LineDesign { live: None, pending_from: String::new(), draft: false, ..draft }, t)
         }
     };
-    let result = write_line(&c.map, &o.path, to_write);
-    company::reload_timetable(s);
-    match result {
-        Ok(None) => say_into(out, text, false),
-        Ok(Some(depots)) => say_into(out, format!("{text} {}: {depots}", tr("A depot file could not be written (displays and IBIS)")), true),
-        Err(err) => say_into(out, format!("{}: {err}", tr("The timetable files could not be written")), true),
-    }
-    Commit::Saved
+    let own = own_of(o.id, o.path.clone(), o.stem.clone(), to_write.clone());
+    write_behind(&c.id, &c.map, &o.path, to_write, &number);
+    say_into(out, text, false);
+    Commit::Saved(own)
 }
 
 /// A line of the map's the company runs, saved (`timeplan::save_map`): its changed route paid
 /// for (`ownline::apply_map_change`), the registry and the timetable written.
-fn save_map(s: &mut Session, w: &Work, out: &mut Value) -> bool {
+fn save_map(s: &mut Session, w: &Work, out: &mut Value) -> Option<Own> {
     let o = &w.own;
     if let Some(p) = reg::problems(&o.draft).first() {
         say_into(out, tr(p.text).replace("%{n}", &p.n.to_string()), true);
-        return false;
+        return None;
     }
-    let Some(ttl) = o.draft.map.as_ref().map(|m| m.ttl.clone()) else { return false };
-    let mut r = reg::load_registry(&o.path);
+    let ttl = o.draft.map.as_ref().map(|m| m.ttl.clone())?;
+    let mut r = registry(&o.path);
     // (imported for the Timeplan: still none in the registry, else as the registry has it - the
     // draft onto what is there now where it changed nothing the draft changed, `rebase`)
     let mut rebased = None;
@@ -1503,7 +1519,7 @@ fn save_map(s: &mut Session, w: &Work, out: &mut Value) -> bool {
             }
             None => {
                 say_into(out, tr(NOT_FOUND), true);
-                return false;
+                return None;
             }
         }
     };
@@ -1513,35 +1529,73 @@ fn save_map(s: &mut Session, w: &Work, out: &mut Value) -> bool {
             s,
             Popup::new("departure_board", "Changed meanwhile", tr("The line's timetable was changed meanwhile - in the line editor, or its new timetable began: it is shown as it is now."), "", None),
         );
-        return false;
+        return None;
     }
-    let Some(map) = s.company.as_ref().map(|c| c.map.clone()) else { return false };
+    let (id, map) = s.company.as_ref().map(|c| (c.id.clone(), c.map.clone()))?;
     let (old, mut new) = (o.live.clone(), o.draft.clone());
     let paid = match company::act(s, |c| ownline::apply_map_change(c, &ttl, &old, &new, false)) {
         Ok(p) => p,
         Err(p) => {
             out["popup"] = p;
-            return false;
+            return None;
         }
     };
     // (the imported line into the registry, under an id of its own, before it is written)
+    let mut stem = o.stem.clone();
     if w.fresh {
         new.id = r.add_map_line(new.clone()).id;
+        stem = reg::stems(&r).get(&new.id).cloned().unwrap_or_default();
         if let Err(e) = reg::save_registry(&o.path, &r) {
             say_into(out, format!("{}: {e}", tr("The timetable files could not be written")), true);
-            return false;
+            return None;
         }
     }
     let number = new.number.trim().to_string();
-    let result = write_line(&map, &o.path, LineDesign { live: None, pending_from: String::new(), ..new });
+    let line = LineDesign { live: None, pending_from: String::new(), ..new };
+    let own = own_of(line.id, o.path.clone(), stem, line.clone());
+    write_behind(&id, &map, &o.path, line, &number);
+    say_into(out, tr("Line %{n} saved.").replace("%{n}", &number) + &approved(paid), false);
+    Some(own)
+}
+
+/// Line `line` (number `number`) of company `company` written into the map's registry at `path`
+/// on the writes' thread (`writes`): once it is, the company's timetables read again, the line
+/// shown read again as written, and a file that could not be written said.
+fn write_behind(company: &str, map: &str, path: &Path, line: LineDesign, number: &str) {
+    let (company, map, number, id) = (company.to_string(), map.to_string(), number.to_string(), line.id);
+    let (lang, path2, path3) = (company::words::language(), path.to_path_buf(), path.to_path_buf());
+    let l2 = lang.clone();
+    writes::queue(
+        path.to_path_buf(),
+        move || {
+            company::words::set_language(&l2);
+            write_line(&map, &path2, line)
+        },
+        move |result| {
+            super::with_rf(|s, r| {
+                company::words::set_language(&lang);
+                written(s, r, &company, id, &path3, &number, result);
+            })
+        },
+    );
+}
+
+/// A line's files written (`write_behind`, `result` what came of it): the company's timetables
+/// read again, the Timeplan's line read again from the registry when it is the one shown and not
+/// changed since, what could not be written said.
+fn written(s: &mut Session, r: &mut Rf, company: &str, id: u64, path: &Path, number: &str, result: Result<Option<String>, String>) {
     company::reload_timetable(s);
-    let text = tr("Line %{n} saved.").replace("%{n}", &number) + &approved(paid);
-    match result {
-        Ok(None) => say_into(out, text, false),
-        Ok(Some(depots)) => say_into(out, format!("{text} {}: {depots}", tr("A depot file could not be written (displays and IBIS)")), true),
-        Err(err) => say_into(out, format!("{}: {err}", tr("The timetable files could not be written")), true),
+    r.cache = None;
+    let v = &mut r.tp;
+    if v.company == company && !v.dirty() && v.work.as_ref().is_some_and(|w| w.own.id == id && w.own.path == path) {
+        v.loaded = None;
     }
-    true
+    let line = tr("Line %{n} saved.").replace("%{n}", number);
+    match result {
+        Ok(None) => {}
+        Ok(Some(depots)) => s.say(format!("{line} {}: {depots}", tr("A depot file could not be written (displays and IBIS)")), true),
+        Err(err) => s.say(format!("{} ({number}): {err}", tr("The timetable files could not be written")), true),
+    }
 }
 
 /// A line written into the map's registry, its timetable and its depot files as the line editor

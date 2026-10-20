@@ -1,8 +1,10 @@
 //! The line editor working for the bus company (`ForCompany`), without its window: its start
 //! (a new line, or the one asked for), the figures of the line shown (`company_figures`), the
 //! estimate over the map and the left panel's foot (`estimate_card`, `company_foot`), and what
-//! its buttons ask for (`company_action`, `withdraw`, `change_dialog`). The company is read
-//! from its file when the page opens the editor for it, and written back after each act.
+//! its buttons ask for (`company_action`, `withdraw`, `change_dialog`). The company is taken from
+//! the company's session when the page opens the editor for it and before each act that pays or
+//! writes it (`company::company_now`), and each act is made on the session's company - its clock
+//! going on meanwhile - and saved with it (`company::act_on`).
 
 use super::*;
 use crate::launcher::company::ownline as own;
@@ -248,19 +250,28 @@ fn foot(s: &Session, f: &Figures) -> Value {
 /// Something done to the company (`company::act`): written back when it went, its refusal said
 /// when not.
 fn company_do<T>(s: &mut Session, f: impl FnOnce(&mut Company) -> Result<T, &'static str>) -> Option<T> {
-    let c = s.company.as_mut()?;
-    match f(c) {
-        Ok(x) => {
-            if let Err(e) = co::store::save(&core::data_dir(), c) {
-                s.say(format!("{e:#}"), true);
-            }
+    let id = s.company.as_ref()?.id.clone();
+    match crate::company::act_on(&id, f) {
+        Ok((x, c)) => {
+            s.company = Some(c);
             Some(x)
         }
         Err(e) => {
-            s.say(crate::lineeditor::ui::tr(e).into_owned(), true);
+            s.say(crate::lineeditor::ui::tr(&e).into_owned(), true);
             None
         }
     }
+}
+
+/// The company as it is now (`company::company_now`), the line's changes kept: its figures made
+/// again with it.
+fn reread(s: &mut Session) -> Result<(), String> {
+    let Some(id) = s.company.as_ref().map(|c| c.id.clone()) else { return Ok(()) };
+    s.company = Some(crate::company::company_now(&id)?);
+    if let Some(fc) = s.v.company.as_mut() {
+        fc.cache = None;
+    }
+    Ok(())
 }
 
 /// The company's buttons (`company_action`, `withdraw`, `change_dialog`).
@@ -276,17 +287,9 @@ pub(super) fn act(s: &mut Session, op: &str, req: &Value) -> Result<(), String> 
             s.v.change_ask = None;
             return Ok(());
         }
-        // (the company read again from its file, the line's changes kept: RosterFlow's Routes tab
-        // lets the company's clock go on while a route is drawn, and its acts are to write onto
-        // the company as it is now - its figures made again with it)
-        "c_reread" => {
-            let Some(id) = s.company.as_ref().map(|c| c.id.clone()) else { return Ok(()) };
-            s.company = Some(co::store::load(&core::data_dir(), &id).map_err(|e| format!("{e:#}"))?);
-            if let Some(fc) = s.v.company.as_mut() {
-                fc.cache = None;
-            }
-            return Ok(());
-        }
+        // (the company read again, the line's changes kept: RosterFlow's Routes tab lets the
+        // company's clock go on while a route is drawn - the acts that pay read it themselves)
+        "c_reread" => return reread(s),
         "c_change_day" => {
             if let Some(ask) = s.v.change_ask.as_mut() {
                 let d = req.get("d").and_then(Value::as_i64).unwrap_or(0);
@@ -297,6 +300,13 @@ pub(super) fn act(s: &mut Session, op: &str, req: &Value) -> Result<(), String> 
             }
             return Ok(());
         }
+        _ => {}
+    }
+    // (what pays or writes the company: worked out on the company as it is now - the clock went
+    // on while the line was drawn), its figures made with it
+    reread(s)?;
+    figures(s);
+    match op {
         "c_change_save" => {
             let Some(ask) = s.v.change_ask.take() else { return Ok(()) };
             return action(s, CompanyAct::Schedule(ask.from));

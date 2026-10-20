@@ -33,6 +33,8 @@ mod print;
 mod roster;
 // (its Own, load_own and commit save the planning's sheet of a line too: Omsi-Hub 6/6)
 pub(crate) mod timeplan;
+// (a line the Timeplan saved written into the map on a thread: `timeplan::commit`)
+pub(crate) mod writes;
 mod tutorial;
 
 /// Luc's driver drag (`rf-driver-drag`): single trips of a duty to another duty or a new one.
@@ -185,9 +187,27 @@ fn route(cmd: &str, args: &Value, _p: &dyn Platform) -> Option<Answer> {
     match cmd {
         "rf_print" => return Some(print::print(args)),
         c if c.starts_with("rf_tut") => return tutorial::call(c, args),
+        // (the drop zones: worked out off the session, which the other commands want meanwhile)
+        "rf_view" if str_arg(args, "view") == "zones" => return Some(zones_answer(args)),
         _ => {}
     }
     with_rf(|s, r| run_as(s, r, live::Editor::Boss, cmd, args))
+}
+
+/// The boss's drop zones (`rf_view` "zones"): the day's board taken from the session as it is
+/// shown - shared, not copied -, the zones rated after the session is let go.
+fn zones_answer(args: &Value) -> Answer {
+    let k = with_rf(|s, r| {
+        live::before(s, r, live::Editor::Boss);
+        let date = date_of(s, args)?;
+        Some(ensure(s, r, &date))
+    });
+    match k {
+        None => Ok(json!({ "none": true })),
+        Some(None) => Ok(json!({ "reading": tr("Reading the timetable…") })),
+        Some(Some(Err(e))) => Err(e),
+        Some(Some(Ok(k))) => Ok(json!(zones_for(&k, &k.board, &hand_of(args)))),
+    }
 }
 
 /// A command of RosterFlow run for `by` on the session with his RosterFlow state: what the
@@ -208,8 +228,32 @@ fn run_as(s: &mut Session, r: &mut Rf, by: live::Editor, cmd: &str, args: &Value
                 }
             }
         }
+        fresh_view(s, r, cmd, args, &mut v);
         v
     }))
+}
+
+/// The view an action changed, in its answer (`fresh`: the day's board after `rf_act`, as
+/// `rf_board` answers it to the revision the page had; `tp_view`: the Timeplan after `rf_tp_act`,
+/// as `rf_tp` answers it for what the page shows), with the generation it was made at: the page
+/// takes it instead of asking again once the company's shell is back.
+fn fresh_view(s: &mut Session, r: &mut Rf, cmd: &str, args: &Value, v: &mut Value) {
+    if !v.is_object() {
+        return;
+    }
+    let made = match cmd {
+        // (what is taken up changes nothing)
+        "rf_act" if str_arg(args, "act") != "pick" => {
+            let ask = json!({ "day": usize_arg(args, "day"), "have": args.get("rev").cloned().unwrap_or(Value::Null) });
+            board_answer(s, r, &ask).ok().map(|b| ("fresh", b))
+        }
+        "rf_tp_act" => timeplan::view(s, r, args.get("shown").unwrap_or(args)).ok().map(|t| ("tp_view", t)),
+        _ => None,
+    };
+    if let Some((key, view)) = made {
+        v[key] = view;
+        v["rf_gen"] = json!(rf_generation(s));
+    }
 }
 
 /// The commands of RosterFlow (besides the print and the tutorial's), on any editor's state.
@@ -882,12 +926,24 @@ fn zones_for(k: &Cached, board: &Board, h: &Hand) -> Vec<Value> {
     let base = board.figures.total() + board.figures.penalties;
     let hard_now = board.issues.iter().filter(|i| i.hard).count();
     let mut out: Vec<(Value, Cents, bool)> = Vec::new();
+    // (each zone tried on a copy of the company, their boards made on several threads a few at a
+    // time: as many copies at once at most)
+    let mut probes: Vec<(Value, Company)> = Vec::new();
+    let rate_probes = |probes: &mut Vec<(Value, Company)>, out: &mut Vec<(Value, Cents, bool)>| {
+        let rated = company::par_map(probes, |(_, p)| {
+            let b = rf::board(p, &k.lines, &k.date);
+            let hard = b.issues.iter().filter(|i| i.hard).count();
+            (b.figures.total() + b.figures.penalties - base, hard <= hard_now)
+        });
+        out.extend(probes.drain(..).zip(rated).map(|((drop, _), (delta, clean))| (drop, delta, clean)));
+    };
     let mut probe_with = |drop: Value, f: &dyn Fn(&mut Company) -> Result<(), &'static str>| {
         let mut probe = c.clone();
         if f(&mut probe).is_ok() {
-            let b = rf::board(&probe, &k.lines, &k.date);
-            let hard = b.issues.iter().filter(|i| i.hard).count();
-            out.push((drop, b.figures.total() + b.figures.penalties - base, hard <= hard_now));
+            probes.push((drop, probe));
+            if probes.len() >= PROBES_AT_ONCE {
+                rate_probes(&mut probes, &mut out);
+            }
         }
     };
     match h {
@@ -945,6 +1001,7 @@ fn zones_for(k: &Cached, board: &Board, h: &Hand) -> Vec<Value> {
         }
         Hand::None => {}
     }
+    rate_probes(&mut probes, &mut out);
     let stars = rate(&out.iter().map(|z| (z.1, z.2)).collect::<Vec<_>>());
     out.into_iter()
         .zip(stars)
@@ -960,6 +1017,9 @@ fn zones_for(k: &Cached, board: &Board, h: &Hand) -> Vec<Value> {
         })
         .collect()
 }
+
+/// How many copies of the company `zones_for` tries at once.
+const PROBES_AT_ONCE: usize = 16;
 
 /// The stars (`rf_gantt::rate`): the cheapest five, the dearest one; a zone that breaks a rule
 /// two at most.
@@ -1178,10 +1238,11 @@ fn edit_rows(s: &mut Session, r: &mut Rf, label: String, rows: Rows, f: impl FnO
                     Rows::Anew => rf::pin_rows(&mut v, k.board.weekday, &tours, &was),
                 }
             }
-            let _ = company::act(s, |c| {
+            // (the draft only: today's plan runs the saved planning, it is not made again)
+            if let Some(c) = s.company.as_mut() {
                 rf::keep_draft(c, &v);
-                Ok(())
-            });
+            }
+            company::changed_draft(s);
             r.edits += 1;
             r.undo.push((snapshot, label));
             if r.undo.len() > 60 {
@@ -1319,10 +1380,10 @@ fn undo(s: &mut Session, r: &mut Rf, back: bool) -> Value {
     } else {
         r.undo.push((now, label.clone()));
     }
-    let _ = company::act(s, |c| {
+    if let Some(c) = s.company.as_mut() {
         rf::set_draft(c, d);
-        Ok(())
-    });
+    }
+    company::changed_draft(s);
     let words = if back { tr("Undone: %{edit}") } else { tr("Redone: %{edit}") };
     said(words.replace("%{edit}", &label), false)
 }
@@ -1563,8 +1624,9 @@ fn act(s: &mut Session, r: &mut Rf, by: live::Editor, args: &Value) -> Answer {
         out["stale"] = json!(true);
         return Ok(out);
     }
+    // (the day's board shared with the cache, not copied)
     let board = k.board.clone();
-    let tours = board.tours.clone();
+    let tours: &[TourOfDay] = &board.tours;
     let wd = board.weekday;
     let tour = usize_arg(args, "tour");
     let trips = usizes(args, "trips");
