@@ -21,7 +21,10 @@ the plugin through plain files (`crates/hub-game/src/bridge.rs`).
 - `harness/`: our own test harness (`hub-plugin-harness`, on mlua). It mocks the official API
   functions the plugin uses, so `cargo test` runs the plugin without openOMSI; a panel openOMSI's
   parser would refuse is refused there too (`check_panel`, in `GameState::ui_errors`). The
-  phone's tests are in `harness/tests/phone.rs`, their helpers in `harness/tests/common/`.
+  phone's tests are in `harness/tests/phone.rs` (the shell), `phone_ride.rs` (Ride, Stops, Bus
+  and the summaries), `phone_duty.rs` (Duty, Messages, the pause menu) and `phone_budget.rs`
+  (every tab at its fullest within openOMSI's panel limits), their helpers in
+  `harness/tests/common/`.
 
 A change to a `.lua` file needs the plugin's `VERSION` raised in `main.lua` and in
 `crates/hub-game/src/install.rs` (a test keeps the two the same).

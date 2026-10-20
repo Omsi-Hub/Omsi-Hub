@@ -21,12 +21,32 @@ never changes their files.
   plugin into openOMSI (Settings, "openOMSI and OMSI 2", switches it off or removes it).
 - **The phone in openOMSI's navigator** (openOMSI 0.3.38 and newer): under the navigator's map a
   status line (the trip's line, where it goes, trip 3 of 8, on time or how late in the
-  navigator's own colours) and five tabs - Ride (the next stops, passengers, speed and delay),
-  Stops, Duty (signing on, the duty strip, the duty's trips), Messages (the control room's, a new
-  one counted on the tab, an instruction opens it) and Bus (fuel, passengers). As a trip ends
-  its card, then at a terminus with time to spare the break clock take the Ride tab over. Its
-  tabs work without F10; a short navigator gets one line, a light one dark text. An older
-  openOMSI, or a navigator without its board, keeps the panels of before.
+  navigator's own colours) and five tabs, all working without F10:
+  - **Ride**: the next stop large with when the bus gets there, the stop after it, passengers,
+    speed and delay, and only the lines that apply - the bus ahead and how long to hold, a
+    connection to wait for, a diversion, the control room's instruction waiting (one click to
+    Messages), the company's punctuality coach - and the trip's progress.
+  - **Stops**: the trip's stops, those passed, the next one and the rest, each late arrival in
+    the time's colour, closed stops marked; during a break the next trip's.
+  - **Duty**: starting the duty and signing off, the duty strip (the next break, relief or end
+    counting down), today's changes, the duty's trips, the IBIS codes of the trip (and, where the
+    game can type them, "Type the IBIS for me"), your week and, from the bus, a sick call, a duty
+    swap or a day off, each asked again before it goes to the company, whose answer comes back
+    as a notice.
+  - **Messages**: the control room's messages, newest first, an instruction with Accept and
+    Can't, the canned replies and the quick reports to control; a message is told read once
+    shown.
+  - **Bus**: fuel or charge (and when to go back to refuel), seated and standing passengers,
+    the tickets sold and fares taken, collisions and repairs, the bus's open defects, the notes
+    left for you and one for the next driver.
+  As a trip ends its card (score, punctuality, comfort, passengers, fares), at a terminus with
+  time to spare the break clock and as the duty ends its summary (trips, on time, score,
+  passengers, km, fares - also kept in Omsi-Hub) take the Ride tab over. A short navigator gets
+  one line, a light one dark text; Settings, "openOMSI and OMSI 2", switches the phone off, and
+  the launcher says whether your openOMSI has it. With openOMSI 0.3.39 and newer the pause menu
+  has the duty, a message to control and ending the duty, and closed stops are struck through on
+  the navigator's map. An older openOMSI (0.3.37), or a navigator without its board, keeps the
+  panels of before.
 - **Windows blocking openOMSI** (Smart App Control, "os error 4551"): Omsi-Hub takes the
   "downloaded from the internet" mark off openOMSI's program and its libraries before it starts
   them, and where Windows still refuses it, says so and what can be done.

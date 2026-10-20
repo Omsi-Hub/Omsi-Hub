@@ -150,11 +150,11 @@ The new app keeps the same shape with its own minimal `Platform` (`emit`, `quit`
 
   | Extra | How it can be done |
   |---|---|
-  | Pause menu | (c) cannot be an add-on; an upstream "pause-menu entries" hook would allow a part of it |
+  | Pause menu | (a) a part of it: upstream's `ui.set_menu_item` (openOMSI 0.3.39) gives the plugin 3 lines; `phone_menu.lua` puts the duty, a message to control and ending the duty there |
   | Display font | (b) PR: `bus.set_display_font` |
   | IBIS auto-typing | (b) PR: `duty.set_auto_ibis`. Typing itself is mostly possible today via `bus.set_line`/`set_destination` |
-  | Closed stops on the navigator | (b) PR: `duty.set_closed_stops` |
-  | Navigator dock, plugin UI v3 (boxes, stop lists, bar segments, Hanken font, `grab`) | (b) PRs on `omsi-plugin-ui`. The Lua already falls back on UI v2 |
+  | Closed stops on the navigator | (a) upstream `duty.set_closed_stops` (openOMSI 0.3.39), used by `ontime.lua` |
+  | Navigator dock (the phone: `nav.lua`, `phone_*.lua`) | (a) upstream since openOMSI 0.3.38: `anchor = "navigator"`, `ui.dock` (UI v3), boxes, stop lists, bar segments (v4), `grab` (v5). Without the board (0.3.37: UI v2) the modules keep their own panels |
   | Relief mid-trip, multi-leg duties | (a) possible today via `duty.start` and chaining |
   | `--free-line`, company-only AI | (b) CLI PR; the company-only AI is effectively (c) |
 
