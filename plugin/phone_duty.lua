@@ -4,8 +4,10 @@
 -- a countdown bar, today's changes: duty_strip.lua's own reckoning), the IBIS codes to type for
 -- the trip and, where the game types them itself, a switch for that; the duty's trips, the
 -- one under way marked; the week's roster and the requests the company takes (a sick call, a
--- swap, leave), each asked again before it goes; the strip's note and walk-around.
--- Its modes: a driver still to sign on, and the walk-around at sign-off.
+-- swap, leave), each asked again before it goes; the strip's note and walk-around. The actions
+-- come before the lists (the room under the map cuts the panel's end off).
+-- Its modes: a driver still to sign on, and the walk-around at sign-off. What other modules
+-- draw (the sign-on, the strip's forms) is shown in the phone's look (phone_theme.adopt).
 --
 -- What it reads of the assignment, each optional: `ibis_codes` as a list of
 -- { trip, dep, line, route, dest, text } - the codes to type, found by the trip's departure
@@ -20,6 +22,7 @@
 local messages = require("messages")
 local signon = require("signon")
 local strip = require("duty_strip")
+local summary = require("phone_summary")
 local P = require("phone_theme")
 
 local M = {}
@@ -83,7 +86,7 @@ local function ibis(ctx, out)
     if (c.text or "") ~= "" then out[#out + 1] = P.text(th, c.text, "dim", 12) end
   end
   if auto then
-    out[#out + 1] = { type = "checkbox", id = "duty_ibis", text = tr("Type the IBIS for me"), checked = ctx.hooks.ibis_auto() == true, color = th.secondary }
+    out[#out + 1] = P.check(th, { type = "checkbox", id = "duty_ibis", text = tr("Type the IBIS for me"), checked = ctx.hooks.ibis_auto() == true })
   end
 end
 
@@ -275,22 +278,28 @@ local function confirm(ctx, out)
   } }
 end
 
--- the requests the company takes, as buttons; those sent this drive said
+-- the requests the company takes, as buttons two by two (no icons: their names need the
+-- width); those sent this drive said
 local function requests(ctx, out)
   local th, tr = ctx.theme, ctx.tr
   local can = crew(ctx).can
   if type(can) ~= "table" then return end
-  local row = { type = "row", gap = 6, children = {} }
+  local buttons = {}
   for _, w in ipairs(WHAT) do
     -- (a swap or leave only with a day it can be for)
     if can[w] == true and (w == "sick" or #duty_days(ctx, w) > 0) then
-      row.children[#row.children + 1] = { type = "button", id = "duty_" .. w, text = tr(LABEL[w]), icon = ICON[w], color = th.neutral, grow = true }
+      buttons[#buttons + 1] = { type = "button", id = "duty_" .. w, text = tr(LABEL[w]), color = th.neutral, grow = true }
     end
   end
-  if #row.children == 0 then return end
-  if #week(ctx) == 0 then out[#out + 1] = { type = "divider" } end
-  out[#out + 1] = row
+  if #buttons == 0 then return end
+  out[#out + 1] = { type = "divider" }
+  for i = 1, #buttons, 2 do out[#out + 1] = { type = "row", gap = 6, children = { buttons[i], buttons[i + 1] } } end
   for _, text in ipairs(asked) do out[#out + 1] = P.text(th, "✓ " .. text, "dim", 12) end
+end
+
+-- the strip's note and walk-around (its own elements: the clicks go to it) in the phone's look
+local function tools(ctx, out)
+  for _, e in ipairs(P.adopt(ctx.theme, strip.tools())) do out[#out + 1] = e end
 end
 
 -- --- the tab --------------------------------------------------------------------------------------
@@ -303,7 +312,8 @@ local function head(ctx, out)
     { type = "icon", name = "badge", size = 18, color = th.dim },
     { type = "text", text = tr("Duty %{duty}: line %{line}, tour %{tour}", { duty = a.duty, line = a.line or "", tour = a.tour or "" }), size = 13, weight = "bold", color = th.ink, grow = true },
   } }
-  local can_start = not ctx.duty and ctx.has("duty.start") and (a.line or "") ~= ""
+  -- (not again once the duty has ended)
+  local can_start = not ctx.duty and not summary.ended() and ctx.has("duty.start") and (a.line or "") ~= ""
   local buttons = {}
   if can_start then buttons[#buttons + 1] = { type = "button", id = "start", text = tr("Start duty"), icon = "play_arrow", color = th.primary, grow = true } end
   if signon.signed() then buttons[#buttons + 1] = { type = "button", id = "signoff", text = tr("Sign off"), icon = "logout", color = th.neutral, grow = true } end
@@ -319,23 +329,23 @@ function M.rows(ctx)
     out[#out + 1] = { type = "divider" }
     confirm(ctx, out)
   end
-  if strip.form() == "note" then strip.tools(out) end
+  if strip.form() == "note" then tools(ctx, out) end
   local strip_shown = ctx.at_work and strip_block(ctx, out)
+  requests(ctx, out)
+  if strip_shown and strip.form() ~= "note" then tools(ctx, out) end
   if ctx.duty then
     ibis(ctx, out)
     trip_list(ctx, out)
   end
   roster(ctx, out)
-  requests(ctx, out)
-  if strip_shown and strip.form() ~= "note" then strip.tools(out) end
   if #out == 0 then out[1] = P.text(ctx.theme, ctx.tr("No duty: take one in the Omsi-Hub app"), "dim") end
   return out
 end
 
 -- signing on, and the walk-around at sign-off: the tab is about nothing else then
 function M.mode(ctx)
-  if ctx.hooks.duty_children and not signon.at_work() then return ctx.hooks.duty_children() end
-  if strip.form() == "check" then return strip.tools() end
+  if ctx.hooks.duty_children and not signon.at_work() then return P.adopt(ctx.theme, ctx.hooks.duty_children()) end
+  if strip.form() == "check" then return P.adopt(ctx.theme, strip.tools()) end
   return nil
 end
 

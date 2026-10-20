@@ -156,7 +156,7 @@ local function show_notice(n)
   omsi.data.seen[n.id] = true
   local text = n.text or ""
   if has["ui.toast"] then
-    omsi.ui.toast(text, { title = n.title, icon = n.kind == "alert" and "warning" or "business", seconds = 12 })
+    omsi.ui.toast(text, { title = n.title, icon = n.kind == "alert" and "warning" or "badge", seconds = 12 })
   else
     local title = n.title and n.title ~= "" and (n.title .. ": ") or ""
     omsi.message(title .. text, 10)
@@ -228,7 +228,7 @@ local function duty_children()
   local can_start = work and not d and has["duty.start"] and (assignment.line or "") ~= ""
   local children = {
     { type = "row", children = {
-      { type = "icon", name = "business", color = "#F58620" },
+      { type = "icon", name = "badge", color = "#F58620" },
       { type = "text", text = assignment.company ~= "" and assignment.company or "Omsi-Hub", weight = "bold", grow = true, wrap = false },
     } },
     { type = "text", text = tr("Duty %{duty}: line %{line}, tour %{tour}", { duty = assignment.duty, line = assignment.line, tour = assignment.tour }) },
@@ -442,6 +442,16 @@ local function boarded()
   return { trip.boarded_on_trip(), trip.boarded_total(), fn("bus.passengers") and omsi.bus.passengers() or nil }
 end
 
+-- (the duty board: wanted unless Omsi-Hub says not, and not before the driver signed on - on
+-- the screen while the phone waits for the navigator's board)
+local function board_wanted()
+  return not assignment or assignment.board ~= false
+end
+
+local function boards()
+  board.update(board_wanted() and signon.at_work() and not nav.active(), company_duty() and parts() or {}, assignment, boarded(), nav.asking())
+end
+
 -- the driver ends the duty before its end (the phone's Duty tab, the pause menu): the trip under
 -- way reported as not completed, the duty finished - its end and the walk-around follow
 local function end_duty()
@@ -477,7 +487,8 @@ omsi.on("menu_item", function(id) menu.pick(id) end)
 omsi.on("duty", function(line, tour)
   -- (a short-turn takes the same duty again at its next trip: no new duty)
   if messages.turned(line, tour) then return panel() end
-  if state.line then report("duty_end", summary.fields({ line = state.line, tour = state.tour })) end
+  -- (the duty's end carries the whole duty's totals, a part's end its own)
+  if state.line then report("duty_end", summary.fields({ line = state.line, tour = state.tour }, not line)) end
   -- (the company's duty ended: the walk-around before the driver leaves the bus)
   if state.line and not line then strip.sign_off() end
   state.line, state.tour, state.last_trip = line, tour, nil
@@ -527,6 +538,12 @@ omsi.on("red_light", function(kmh) watch.red_light(kmh) end)
 local editor_opened = false
 
 omsi.on("frame", function(dt)
+  -- (the navigator's board back: the phone takes the panels over in this frame)
+  if nav.poll() then
+    panel()
+    boards()
+  end
+  menu.frame()
   if assignment and assignment.editor and not editor_opened then
     editor_opened = true
     if has["game.action"] then omsi.game.action("object_editor") end
@@ -685,17 +702,15 @@ local function dispatch()
   end
 end
 
--- (the duty board: wanted unless Omsi-Hub says not, and not before the driver signed on)
 omsi.every(1, function()
   -- (the panels gave the mouse back without F10 - Esc, a menu: their size rows go)
   layout.watch()
   -- (the phone where it can be; the board, the strip and the inbox on their own else - the board
   -- on the screen while the phone waits for the navigator's board)
-  local wanted = not assignment or assignment.board ~= false
   local was = nav.active()
-  nav.update(wanted and (company_duty() or duty_now() ~= nil or messages.has_inbox()))
+  nav.update(board_wanted() and (company_duty() or duty_now() ~= nil or messages.has_inbox()))
   if nav.active() ~= was then panel() end
-  board.update(wanted and signon.at_work() and not nav.active(), company_duty() and parts() or {}, assignment, boarded(), nav.asking())
+  boards()
   messages.tick()
   strip.update(company_duty() and signon.at_work())
   if signon.at_work() then ontime.tick(1) end

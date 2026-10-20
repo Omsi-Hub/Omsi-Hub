@@ -83,9 +83,24 @@ fn omsi_hub_s_brief_gives_the_ride_tab_the_lines_that_apply() {
     std::fs::write(dir.join("data").join("ontime.json"), brief.to_string()).unwrap();
     run(&mut h, 5);
     assert!(shows(&h, PHONE, "101 ahead 6 min  ·  hold 40 s"), "{}", phone(&h));
-    assert!(shows(&h, PHONE, "At Hbf: train to Erfurt 07:44  ·  wait max 2 min"));
+    // (a connection to wait for: until when, as Omsi-Hub says now)
+    assert!(shows(&h, PHONE, "At Hbf: train to Erfurt 07:44  ·  Hold until 07:46"), "{}", phone(&h));
     assert!(shows(&h, PHONE, "Diversion: Markt closed, via Ringstraße"));
     assert!(!has_panel(&h, "omsihub_ontime"), "no on-time card of its own");
+    no_ui_errors(&h);
+    // too late to wait for it, or no wait needed: said so, no wait offered
+    for (status, says) in [(json!({ "kind": "too_late" }), "Too late to wait for: leave on time"), (json!({ "kind": "not_needed" }), "No wait needed"), (json!(null), "wait max 2 min")] {
+        let mut b = brief.clone();
+        b["connections"][0]["status"] = status;
+        b["connections"][0]["late"] = json!(6);
+        b["at"] = json!(h.state.borrow().now);
+        std::fs::write(dir.join("data").join("ontime.json"), b.to_string()).unwrap();
+        run(&mut h, 5);
+        assert!(shows(&h, PHONE, &format!("At Hbf: train to Erfurt 07:44 (+6 min)  ·  {says}")), "{says}: {}", phone(&h));
+        if says != "wait max 2 min" {
+            assert!(!shows(&h, PHONE, "wait max"), "{says}");
+        }
+    }
     no_ui_errors(&h);
 }
 
@@ -236,6 +251,9 @@ fn after_the_last_trip_the_duty_s_summary_and_its_totals_in_the_duty_end_report(
     h.state.borrow_mut().clock = 30_730.0;
     run(&mut h, 1);
     assert!(shows(&h, PHONE, "Duty done"), "{}", phone(&h));
+    // (the status line's chip: finished, in neutral ink - the time's colours are the time's)
+    let chip = phone(&h)["children"][0]["children"][3].clone();
+    assert_eq!((chip["text"].as_str(), chip["text_color"].as_str()), (Some("Duty finished"), Some("#A1A1A8")));
     assert_eq!(stat(&h, "TRIPS")["text"], "2");
     assert_eq!(stat(&h, "ON TIME")["text"], "100 %");
     assert_eq!(stat(&h, "PASSENGERS")["text"], "8");
@@ -254,6 +272,12 @@ fn after_the_last_trip_the_duty_s_summary_and_its_totals_in_the_duty_end_report(
     assert!(shows(&h, PHONE, "Duty done"));
     click(&h, "ride_summary_close");
     assert!(!shows(&h, PHONE, "Duty done"), "{}", phone(&h));
+    // the duty over: said so, and not offered again
+    assert!(shows(&h, PHONE, "Duty finished") && !shows(&h, PHONE, "Not started yet"), "{}", phone(&h));
+    choose_tab(&h, 3);
+    assert!(!has_element(&h, PHONE, |e| e["id"] == "start"), "{}", phone(&h));
+    choose_tab(&h, 2);
+    assert!(shows(&h, PHONE, "Duty finished"), "{}", phone(&h));
     no_ui_errors(&h);
 }
 
@@ -273,5 +297,69 @@ fn the_slim_phone_shows_the_stop_ahead_and_then_the_trip_s_card() {
     run(&mut h, 1);
     assert!(shows(&h, PHONE, "Trip done"), "{}", phone(&h));
     assert_eq!(phone(&h)["children"].as_array().unwrap().len(), 2);
+    // the duty ended, the trip's card over: the duty's summary's line, with a button to put it away
+    {
+        let mut s = h.state.borrow_mut();
+        s.duty = None;
+        s.clock = 29_540.0;
+    }
+    run(&mut h, 1);
+    assert!(shows(&h, PHONE, "Duty done"), "{}", phone(&h));
+    assert!(has_element(&h, PHONE, |e| e["id"] == "ride_summary_close" && e["icon"] == "close"), "{}", phone(&h));
+    click(&h, "ride_summary_close");
+    assert!(!shows(&h, PHONE, "Duty done"), "{}", phone(&h));
+    no_ui_errors(&h);
+}
+
+#[test]
+fn a_line_that_wraps_does_not_make_the_ride_tab_grow_and_shrink_every_second() {
+    let (dir, mut h) = start("ride-fit", Some(assignment()), docked_game(), 1);
+    std::fs::create_dir_all(dir.join("data")).unwrap();
+    // four lines that apply: the instruction, the headway, a connection and a diversion
+    let inbox = json!({ "messages": [{ "id": 7, "time": "08:05", "from": "Control", "text": "Turn back at Markt", "priority": "instruction", "state": "sent", "action": { "kind": "short_turn" } }], "replies": [], "quick": [] });
+    std::fs::write(dir.join("data").join("messages.json"), inbox.to_string()).unwrap();
+    let now = h.state.borrow().now;
+    let brief = json!({
+        "issued": issued(), "trip": 1, "at": now,
+        "headway": { "ahead": { "bus": "101", "secs": 360 }, "advice": { "kind": "hold", "secs": 40 } },
+        "connections": [{ "stop": "Hbf", "what": "train to Erfurt", "time": "07:44", "onward": false, "max_hold": 2 }],
+        "ahead": { "stop": "Markt", "via": "Ringstraße" }, "closed": ["Markt"],
+    });
+    std::fs::write(dir.join("data").join("ontime.json"), brief.to_string()).unwrap();
+    run(&mut h, 3);
+    choose_tab(&h, 1);
+    // the game lays the panel out: one line 22 points, the fourth (two lines) 38.5; 30 points
+    // of room left under three
+    let lines_shown = |h: &Harness| {
+        phone(h)["children"].as_array().unwrap().iter().filter(|e| e["type"] == "row" && e["children"][0]["type"] == "icon" && e["children"][0]["size"] == 16).count()
+    };
+    let mut seen = Vec::new();
+    for _ in 0..14 {
+        let n = lines_shown(&h);
+        seen.push(n);
+        let height = 300.0 + [0.0, 22.0, 44.0, 66.0, 104.5][n.min(4)];
+        h.state.borrow_mut().dock = Some((360.0, 396.0, height, true));
+        run(&mut h, 1);
+    }
+    assert!(seen.contains(&4), "a fourth line tried: {seen:?}");
+    assert!(seen[6..].iter().all(|&n| n == 3), "settled on three: {seen:?}");
+    no_ui_errors(&h);
+}
+
+#[test]
+fn a_game_that_does_not_mark_closed_stops_has_them_tagged_from_omsi_hub_s_brief() {
+    let dir = installed("stops-brief-closed");
+    hub_game::bridge::write_assignment(&dir, &assignment()).unwrap();
+    let mut h = Harness::load_with(&dir, long_trip(docked_game()), "omsi.duty.set_closed_stops = nil").unwrap();
+    run(&mut h, 1);
+    let now = h.state.borrow().now;
+    let brief = json!({ "issued": issued(), "trip": 1, "at": now, "closed": [" markt "] });
+    std::fs::create_dir_all(dir.join("data")).unwrap();
+    std::fs::write(dir.join("data").join("ontime.json"), brief.to_string()).unwrap();
+    run(&mut h, 3);
+    choose_tab(&h, 2);
+    let rail = find(&h, PHONE, |e| e["type"] == "stops").expect("the rail");
+    assert_eq!((rail["stops"][1]["name"].as_str(), rail["stops"][1]["tag"].as_str()), (Some("Markt"), Some("closed")), "{rail}");
+    assert_eq!(rail["stops"][2]["tag"], "");
     no_ui_errors(&h);
 }

@@ -198,7 +198,7 @@ local function warn(now)
   local key = r.kind .. hhmm(r.from)
   if not told[key] then
     told[key] = true
-    notify("swap_horiz", tr("Relief due"), tr("At %{place} at %{time}", { place = r.at, time = hhmm(r.from) }))
+    notify("group", tr("Relief due"), tr("At %{place} at %{time}", { place = r.at, time = hhmm(r.from) }))
   end
 end
 
@@ -211,7 +211,7 @@ local function note_form(children)
   end
   add({ type = "input", id = "strip_note_text", text = note.text, placeholder = tr("Or type a note"), max = tonumber(crew.text_max) or 140 })
   add({ type = "row", children = {
-    { type = "button", id = "strip_note_send", text = tr("Leave the note"), icon = "sticky_note_2", grow = true },
+    { type = "button", id = "strip_note_send", text = tr("Leave the note"), icon = "description", grow = true },
     { type = "button", id = "strip_close", text = tr("Close"), grow = true },
   } })
 end
@@ -226,8 +226,8 @@ local function check_form(children)
   end
   add({ type = "input", id = "strip_chk_text", text = check.text, placeholder = tr("What is wrong (optional)"), max = tonumber(crew.text_max) or 140 })
   add({ type = "row", children = {
-    { type = "button", id = "strip_chk_send", text = tr("Report defects"), icon = "build", grow = true },
-    { type = "button", id = "strip_chk_ok", text = tr("All in order"), icon = "task_alt", grow = true },
+    { type = "button", id = "strip_chk_send", text = tr("Report defects"), icon = "construction", grow = true },
+    { type = "button", id = "strip_chk_ok", text = tr("All in order"), icon = "check_circle", grow = true },
   } })
 end
 
@@ -243,12 +243,12 @@ function M.rows(now)
   local b = next_break(now)
   if b then
     local when = b.from <= now and tr("now, until %{time}", { time = hhmm(b.to) }) or (hhmm(b.from) .. " · " .. until_text(b.from, now))
-    add(line("coffee", tr("Next break"), b.at .. "  " .. when))
+    add(line("schedule", tr("Next break"), b.at .. "  " .. when))
   end
   local r = next_relief(now)
   if r then
     local soon = r.from - now <= RELIEF_WARN
-    add(line("swap_horiz", tr("Next relief"), r.at .. "  " .. hhmm(r.from) .. " · " .. until_text(r.from, now), soon and AMBER or nil))
+    add(line("group", tr("Next relief"), r.at .. "  " .. hhmm(r.from) .. " · " .. until_text(r.from, now), soon and AMBER or nil))
     warn(now)
   end
   local last = crew.rows[#crew.rows]
@@ -259,7 +259,7 @@ function M.rows(now)
   if fuel.level then
     local label = fuel.kind == "charge" and tr("Charge") or tr("Fuel")
     add({ type = "row", children = {
-      { type = "icon", name = fuel.kind == "charge" and "battery_charging_full" or "local_gas_station", color = fuel.low and RED or DIM, size = 16 },
+      { type = "icon", name = fuel.kind == "charge" and "bolt" or "local_gas_station", color = fuel.low and RED or DIM, size = 16 },
       { type = "text", text = label .. " " .. math.floor(fuel.level * 100 + 0.5) .. " %", size = 12, color = fuel.low and RED or DIM, wrap = false },
       { type = "bar", value = fuel.level, grow = true, color = fuel.low and RED or GREEN },
     } })
@@ -280,8 +280,8 @@ function M.tools(children)
     check_form(children)
   else
     children[#children + 1] = { type = "row", children = {
-      { type = "button", id = "strip_note", text = tr("Leave a note"), icon = "sticky_note_2", grow = true },
-      { type = "button", id = "strip_check", text = tr("Defect check"), icon = "build", grow = true },
+      { type = "button", id = "strip_note", text = tr("Leave a note"), icon = "description", grow = true },
+      { type = "button", id = "strip_check", text = tr("Defect check"), icon = "construction", grow = true },
     } }
   end
   return children
@@ -357,7 +357,7 @@ function M.signed_on()
   for _, n in ipairs(crew.notes or {}) do
     if not omsi.data.strip_seen[n] then
       omsi.data.strip_seen[n] = true
-      notify("sticky_note_2", tr("A note was left for you"), n)
+      notify("description", tr("A note was left for you"), n)
     end
   end
 end
@@ -386,7 +386,7 @@ local function send_check(all_fine)
   check = { ticked = {}, text = "", done = true }
   open = nil
   if sent > 0 then
-    notify("build", tr("Defects reported"), tr("%{n} reported to the workshop", { n = sent }))
+    notify("construction", tr("Defects reported"), tr("%{n} reported to the workshop", { n = sent }))
   end
 end
 
@@ -400,7 +400,7 @@ function M.click(p, element)
   elseif element == "strip_note_send" or element == "strip_note_text" then
     if note.template or note.text ~= "" then
       report("note", { template = note.template or "", text = note.text, bus_id = crew.bus })
-      notify("sticky_note_2", tr("Note left"), tr("The next driver of bus %{bus} sees it", { bus = crew.bus_number or "" }))
+      notify("description", tr("Note left"), tr("The next driver of bus %{bus} sees it", { bus = crew.bus_number or "" }))
       note = { template = nil, text = "" }
       open = nil
     end

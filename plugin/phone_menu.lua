@@ -4,9 +4,9 @@
 -- duty" asks on the Duty tab whether to end it. Choosing a line closes the menu and the game
 -- sends `menu_item` with its id (main.lua). The lines go when the duty has ended.
 --
--- Without the phone (no navigator's board): the duty said on a card, the inbox's own panel
--- opened with the mouse on it, and "End the duty" chosen a second time within half a minute
--- to end it.
+-- Without the phone (no navigator's board), and with the slim phone (no tabs to open): the duty
+-- said on a card, the inbox's own panel opened with the mouse on it, and "End the duty" chosen
+-- a second time within half a minute to end it.
 
 local messages = require("messages")
 local nav = require("nav")
@@ -17,9 +17,11 @@ local M = {}
 -- the lines in their order in the menu, and their icons
 local IDS = { "duty", "control", "end" }
 local ICON = { duty = "badge", control = "forum", ["end"] = "flag" }
--- (a label has 40 characters at most; how long the second choice of "End the duty" may wait, s)
+-- (a label has 40 characters at most; how long the second choice of "End the duty" may wait, s;
+-- how many frames the mouse is asked for after the menu closed)
 local LABEL_MAX = 40
 local CONFIRM = 30
+local FOCUS_TRIES = 120
 
 local tr = function(t) return t end
 local assignment = nil
@@ -30,8 +32,10 @@ local set = {}
 local order = {}
 local ran = false
 local ended = false
--- (without the phone: "End the duty" chosen once, until then, s of the game)
+-- (without the phone: "End the duty" chosen once, until then, s of the game; the frames left to
+-- ask for the mouse in)
 local armed = nil
+local focus_wanted = 0
 
 local function fn(name)
   local t = omsi
@@ -120,7 +124,7 @@ end
 -- a line of the menu chosen (the game's `menu_item`)
 function M.pick(id)
   if not set[id] then return end
-  local phone = nav.active()
+  local phone = nav.active() and not nav.slim()
   if id == "duty" then
     if phone then
       nav.show("duty")
@@ -132,8 +136,9 @@ function M.pick(id)
       nav.show("messages")
       messages.open_quick()
     elseif messages.open() and fn("ui.focus") then
-      -- (its buttons take the mouse at once, as with F10)
-      omsi.ui.focus(true)
+      -- (its buttons take the mouse, as with F10: the game gives it only once its panels show
+      -- again, a frame after the menu closed - asked again until then)
+      if not omsi.ui.focus(true) then focus_wanted = FOCUS_TRIES end
     end
   elseif id == "end" then
     if phone then
@@ -149,6 +154,13 @@ function M.pick(id)
   end
   if phone then nav.refresh() end
   M.update()
+end
+
+-- every frame (main.lua): the mouse asked for the inbox opened from the menu, until it is given
+function M.frame()
+  if focus_wanted <= 0 then return end
+  focus_wanted = focus_wanted - 1
+  if not fn("ui.focus") or omsi.ui.focus(true) then focus_wanted = 0 end
 end
 
 return M

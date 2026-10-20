@@ -42,7 +42,7 @@ never changes their files.
   As a trip ends its card (score, punctuality, comfort, passengers, fares), at a terminus with
   time to spare the break clock and as the duty ends its summary (trips, on time, score,
   passengers, km, fares - also kept in Omsi-Hub) take the Ride tab over. A short navigator gets
-  one line, a light one dark text; Settings, "openOMSI and OMSI 2", switches the phone off, and
+  one line (and the inbox its own panel), a light one dark text; Settings, "openOMSI and OMSI 2", switches the phone off, and
   the launcher says whether your openOMSI has it. With openOMSI 0.3.39 and newer the pause menu
   has the duty, a message to control and ending the duty, and closed stops are struck through on
   the navigator's map. An older openOMSI (0.3.37), or a navigator without its board, keeps the

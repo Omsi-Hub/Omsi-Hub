@@ -129,9 +129,10 @@ local function waiting(m)
   return m.state ~= "accepted" and m.state ~= "declined"
 end
 
--- an info message of the first two not answered yet: the canned replies under it
+-- an info message of the first two not answered yet: the canned replies under it (one read
+-- is still to be answered: Omsi-Hub takes a reply after the read)
 local function can_reply(m, k)
-  return not m.mine and not m.action and m.state ~= "read" and not answered[m.id] and k <= 2
+  return not m.mine and not m.action and (m.reply or "") == "" and not answered[m.id] and k <= 2
 end
 
 local function any_waiting()
@@ -450,7 +451,7 @@ function M.read()
   -- (what Omsi-Hub's inbox says now wins)
   for id in pairs(answered) do
     local m = find(id)
-    if not m or m.state == "accepted" or m.state == "declined" or m.state == "read" then answered[id] = nil end
+    if not m or m.state == "accepted" or m.state == "declined" or (m.reply or "") ~= "" then answered[id] = nil end
   end
   panel()
 end

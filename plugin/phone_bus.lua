@@ -121,7 +121,7 @@ local function defects(ctx, out)
 end
 
 -- the notes left on the bus, and one for the next driver (duty_strip.lua's form, its own
--- elements: the clicks go to it)
+-- elements in the phone's look: the clicks go to it)
 local function notes(ctx, out)
   local c = crew(ctx)
   if not c then return end
@@ -131,18 +131,9 @@ local function notes(ctx, out)
     out[#out + 1] = P.label(th, tr("Notes for you"))
     for k = 1, math.min(#left, NOTES) do out[#out + 1] = line(th, "description", cut(left[k], 300)) end
   end
-  local s = strip.children()
-  if #s == 0 then return end
+  if #strip.children() == 0 then return end
   if strip.form() == "note" then
-    -- (the strip's rows end with the open form, from its divider on)
-    local from = nil
-    for k, e in ipairs(s) do
-      if e.type == "divider" then
-        from = k
-        break
-      end
-    end
-    for k = from or #s + 1, #s do out[#out + 1] = s[k] end
+    for _, e in ipairs(P.adopt(th, strip.tools())) do out[#out + 1] = e end
     out[#out + 1] = P.text(th, tr("Typing needs F10"), "dim", 11.5)
   else
     out[#out + 1] = { type = "button", id = "strip_note", text = tr("Leave a note"), icon = "description", color = th.secondary }

@@ -85,9 +85,10 @@ local function totals(from)
 end
 
 -- the duty (or its part) ended: the duty-end report's `f` with the part's totals (trips,
--- on_time %, average score, passengers, km, fares); its summary comes up
-function M.fields(f)
-  local t = totals(first)
+-- on_time %, average score, passengers, km, fares) - the whole duty's at its end (`whole`), as
+-- its summary shows them; its summary comes up
+function M.fields(f, whole)
+  local t = totals(whole and 1 or first)
   for _, k in ipairs({ "trips", "on_time", "score", "passengers", "km", "fares" }) do f[k] = t[k] end
   ended = true
   return f
@@ -96,6 +97,11 @@ end
 -- the duty's summary put away (its close button)
 function M.dismiss()
   dismissed = true
+end
+
+-- whether the duty has ended (until the next one begins)
+function M.ended()
+  return ended
 end
 
 -- --- the cards --------------------------------------------------------------------------------
@@ -202,11 +208,14 @@ function M.slim(ctx)
   else
     return nil
   end
-  return { type = "row", gap = 6, children = {
+  local row = { type = "row", gap = 6, children = {
     { type = "icon", name = icon, size = 16, color = th.ink },
     { type = "text", text = text, size = 12.5, weight = "bold", color = th.ink, grow = true, wrap = false },
     { type = "text", text = value, size = 13, weight = "bold", color = th.ink, wrap = false },
   } }
+  -- (the duty's summary stays until it is put away: its close button)
+  if not r then row.children[4] = { type = "button", id = "ride_summary_close", text = "", icon = "close", color = th.neutral } end
+  return row
 end
 
 return M

@@ -13,10 +13,12 @@
 -- 150 points) gets the slim phone: the status line and the one line that matters now.
 --
 -- An openOMSI without the navigator's board (`omsi.ui.version` below 3 or no `omsi.ui.dock`),
--- the phone switched off (`nav = { phone = false }`), a navigator that shows no board for 3 s
+-- the phone switched off (`nav = { phone = false }`), a navigator that shows no board for 6 s
 -- (switched off, Shift+N put it away) or whose board another plugin has: the modules' own
 -- panels, as before (the board, the trip's card, the inbox, the on-time card, the duty strip).
--- Never both: the modules are told (`dock`) whether the phone has them.
+-- Never both: the modules are told (`dock`) whether the phone has them, and the board coming
+-- back is looked for every frame (`poll`), so the phone takes them over in the same frame.
+-- The slim phone leaves the inbox its own panel (it has no room to answer there).
 --
 -- A tab module (phone_ride, phone_stops, phone_duty, phone_msgs, phone_bus) exports:
 --   M.id               "ride", "stops", "duty", "messages", "bus" (its element ids start with
@@ -64,6 +66,8 @@
 --   slim               room below 150 points: the slim phone
 --   fit                the entries the tab shown may list (its M.fit, fitted to the room)
 --   tab                the id of the tab shown
+--   visible            the phone is on the screen this second (not while the board is away):
+--                      only then is a message shown told read
 --   unread             the control room's messages come in since the Messages tab was seen
 --   wants              an instruction waits for the driver's answer (or a hold runs)
 --   at_work            the driver is signed on (or no sign-on asked)
@@ -92,13 +96,16 @@ local TABS = { require("phone_ride"), require("phone_stops"), require("phone_dut
 local BY_ID = {}
 for k, t in ipairs(TABS) do BY_ID[t.id] = k end
 -- (what the slim phone shows when no mode applies: the first tab of these with a line)
-local SLIM_ORDER = { "messages", "ride", "duty", "stops", "bus" }
+local SLIM_ORDER = { "ride", "duty", "stops", "bus" }
 
 -- (shorter than this the slim phone; how long the board may stay away before the modules get
--- their own panels back, s)
+-- their own panels back, s - not counted while the game's menu is open, and long enough that a
+-- look at the city map, which hides the board without a word, flips nothing)
 local SLIM = 150
-local GRACE = 3
+local GRACE = 6
 local PADDING, GAP = 10, 6
+-- (a tab with a count: about this many letters fit on it, the count's too)
+local TAB_LETTERS = 8
 
 local tr = function(t) return t end
 local hooks = {}
@@ -108,9 +115,11 @@ local docked = false
 local away = 0
 -- (the room under the map and the height the panel came to, as last seen)
 local size = { room = nil, height = 0 }
--- (by tab: the entries it lists, fitted to the room; whether its mode applied last time)
+-- (by tab: the entries it lists, fitted to the room; whether its mode applied last time; the
+-- height before its last entry was added, and the height that entry took where it did not fit)
 local fit = {}
 local moded = {}
+local grew, need = {}, {}
 local ctx = nil
 
 omsi.data.nav_tab = BY_ID[omsi.data.nav_tab or ""] and omsi.data.nav_tab or "ride"
@@ -163,6 +172,16 @@ function M.active()
   return shown and docked
 end
 
+-- whether the room under the map gives the slim phone
+function M.slim()
+  return size.room ~= nil and size.room < SLIM
+end
+
+-- whether the inbox is in the phone (its own panel is the driver's else: left alone)
+local function inbox_inside()
+  return shown and docked and not M.slim()
+end
+
 function M.asking()
   return shown
 end
@@ -176,6 +195,7 @@ function M.show(id)
   if not BY_ID[id] then return end
   omsi.data.nav_tab = id
   if ctx then ctx.tab = id end
+  if not inbox_inside() then return end
   if id == "messages" then messages.seen() else messages.hide() end
 end
 
@@ -213,7 +233,7 @@ end
 -- how the duty stands, on its chip: the text and its colour
 local function chip(c)
   local th, d = c.theme, c.duty
-  if c.phase == "finished" then return tr("Duty finished"), th.on_time end
+  if c.phase == "finished" then return tr("Duty finished"), th.dim end
   if c.phase == "break" then
     local left = ((c.trip or {}).departure or c.clock) - c.clock
     if left >= 0 then return tr("break, %{m} min left", { m = math.max(math.ceil(left / 60), 0) }), th.dim end
@@ -248,7 +268,14 @@ local function tabs(c, selected)
   for k, t in ipairs(TABS) do
     local name = tr(t.tab or t.title)
     local b = t.badge and t.badge(c) or nil
-    if b and b ~= 0 and b ~= "" and k ~= selected then name = name .. " " .. tostring(b) end
+    if b and b ~= 0 and b ~= "" and k ~= selected then
+      -- (the name cut where the two do not fit: the count is what the driver looks for)
+      local count = tostring(b)
+      local most = TAB_LETTERS - 1 - #count
+      local n = utf8.len(name)
+      if n and n > most and most > 1 then name = name:sub(1, utf8.offset(name, most) - 1) .. "…" end
+      name = name .. " " .. count
+    end
     names[k] = name
   end
   return { type = "tabs", id = TABS_ID, tabs = names, selected = selected, color = c.theme.tab_on }
@@ -260,20 +287,26 @@ end
 function M.children()
   ctx = context()
   local c = ctx
+  -- (on the screen this second: the board is there; while it is away the phone is built still,
+  -- to ask for it, but changes nothing)
+  c.visible = docked and away == 0
   -- (a mode beginning brings its tab up: the break, an instruction to answer, the walk-around,
-  -- a driver still to sign on - once, then the driver may go to another tab)
+  -- a driver still to sign on - once, then the driver may go to another tab; one that began
+  -- while the board was away, as it comes back)
   local modes = {}
   local switched = false
   for _, t in ipairs(TABS) do
     local m = t.mode and t.mode(c) or nil
     modes[t.id] = m
-    if m and not moded[t.id] and not switched then
-      M.show(t.id)
-      switched = true
+    if c.visible then
+      if m and not moded[t.id] and not switched then
+        M.show(t.id)
+        switched = true
+      end
+      moded[t.id] = m ~= nil
     end
-    moded[t.id] = m ~= nil
   end
-  if c.tab == "messages" then messages.seen() end
+  if c.visible and c.tab == "messages" and not c.slim then messages.seen() end
   c.fit = fit[c.tab]
 
   local children = { status_line(c) }
@@ -304,10 +337,34 @@ end
 
 -- the modules' own panels go (the phone has them) or come back
 local function hand_over(on)
-  messages.dock(on)
+  messages.dock(on and not M.slim())
   strip.dock(on)
   ontime.dock(on)
   card.dock(on)
+end
+
+-- the entries the shown tab lists: as many as there is room for, found from how tall the panel
+-- came out. An entry added that did not fit is not added again for less room than it took (a
+-- line that wraps is taller than the margin).
+local function fit_to(room, h)
+  if room ~= size.room then need = {} end
+  size = { room = room, height = h }
+  local t = TABS[BY_ID[omsi.data.nav_tab]]
+  if not (t.fit and h > 0 and room > 0) then return end
+  local id = t.id
+  if grew[id] and h > room then need[id] = h - grew[id] end
+  grew[id] = nil
+  if h > room and fit[id] > 1 then
+    fit[id] = fit[id] - 1
+  elseif h + math.max(26, need[id] or 0) < room and fit[id] < t.fit[2] then
+    grew[id] = h
+    fit[id] = fit[id] + 1
+  end
+end
+
+-- whether the game's menu is open (it hides the panels: the board is not counted away then)
+local function menu_open()
+  return has("game.menu_open") and omsi.game.menu_open() == true
 end
 
 -- the phone now (`wanted`: a duty or an inbox to show). Whether it is in the navigator; when
@@ -322,20 +379,10 @@ function M.update(wanted)
   local w, room, h, mine = dock()
   if w and mine then
     away = 0
-    size = { room = room, height = h }
-    -- (the entries the tab lists: as many as there is room for, found from how tall it came out)
-    local t = TABS[BY_ID[omsi.data.nav_tab]]
-    if t.fit and h > 0 and room > 0 then
-      local id = t.id
-      if h > room and fit[id] > 1 then
-        fit[id] = fit[id] - 1
-      elseif h + 26 < room and fit[id] < t.fit[2] then
-        fit[id] = fit[id] + 1
-      end
-    end
-  else
-    -- (no board: the navigator is off, Shift+N put it away or another plugin has it; asked for
-    -- still, so that it comes as soon as the board is there again)
+    fit_to(room, h)
+  elseif not menu_open() then
+    -- (no board: the navigator is off, Shift+N put it away, another plugin has it or the city
+    -- map is open; asked for still, so that it comes as soon as the board is there again)
     away = away + 1
   end
   local was = docked
@@ -343,7 +390,23 @@ function M.update(wanted)
   shown = true
   set()
   if docked ~= was then hand_over(docked) end
+  -- (the room went to the slim phone or back: the inbox out of the phone or into it)
+  if docked then messages.dock(not M.slim()) end
   return docked
+end
+
+-- the board back while the modules have their own panels, looked for every frame: the phone
+-- takes them over at once, not up to a second later beside them. True when it did (main.lua's
+-- own panel and the board on the screen go then).
+function M.poll()
+  if not shown or docked then return false end
+  local w, room, h, mine = dock()
+  if not (w and mine) then return false end
+  away, docked = 0, true
+  size = { room = room, height = h }
+  hand_over(true)
+  set()
+  return true
 end
 
 -- the phone drawn again at once (a click on it)
@@ -391,7 +454,7 @@ end
 -- F9: the Messages tab shown, or the tab before it again
 local before = "ride"
 function M.key(key, down)
-  if not (M.active() and key == "F9" and down) then return false end
+  if not (inbox_inside() and key == "F9" and down) then return false end
   if omsi.data.nav_tab == "messages" then
     M.show(before)
   else

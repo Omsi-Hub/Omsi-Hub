@@ -58,7 +58,7 @@ fn without_the_navigator_s_board_the_panels_come_back_after_a_grace_and_go_again
     assert!(!has_panel(&h, "omsihub"));
     // Shift+N put the board away: nothing changes for a few seconds
     h.state.borrow_mut().dock = None;
-    run(&mut h, 3);
+    run(&mut h, 6);
     assert!(!has_panel(&h, "omsihub") && !has_panel(&h, "omsihub_board"), "within the grace");
     // then the modules' own panels, the board on the screen
     run(&mut h, 1);
@@ -71,7 +71,7 @@ fn without_the_navigator_s_board_the_panels_come_back_after_a_grace_and_go_again
     assert_eq!(phone(&h)["anchor"], "navigator");
     // another plugin has the board: the panels again
     h.state.borrow_mut().dock = Some((360.0, 420.0, 0.0, false));
-    run(&mut h, 4);
+    run(&mut h, 7);
     assert!(has_panel(&h, "omsihub"));
     no_ui_errors(&h);
 }
@@ -95,7 +95,8 @@ fn the_navigator_s_light_look_gets_dark_ink() {
     assert_eq!(phone(&h)["children"][0]["children"][1]["color"], "#F2F2F7");
     let (_, h) = start("light", Some(light(assignment())), docked_game(), 2);
     assert_eq!(phone(&h)["children"][0]["children"][1]["color"], "#1C1C1E");
-    assert_eq!(find(&h, PHONE, |e| e["type"] == "tabs").unwrap()["color"], "#1C1C1E");
+    // (the game draws the tabs on its own dark grey: the tab shown stands out light)
+    assert_eq!(find(&h, PHONE, |e| e["type"] == "tabs").unwrap()["color"], "#F2F2F7");
     no_ui_errors(&h);
 }
 
@@ -200,4 +201,110 @@ fn f9_opens_the_inbox_and_goes_back() {
     assert_eq!(tabs(&h).unwrap().1, 4);
     h.fire("key", &[json!("F9"), json!(true)]).unwrap();
     assert_eq!(tabs(&h).unwrap().1, 1);
+}
+
+#[test]
+fn the_game_s_menu_hiding_the_board_flips_nothing_and_the_phone_takes_over_as_soon_as_it_is_back() {
+    let (_, mut h) = start("menu-hides", Some(assignment()), docked_game(), 3);
+    // the game's menu open in a LAN session (the game runs on), the board hidden with it
+    {
+        let mut g = h.state.borrow_mut();
+        g.dock = None;
+        g.game_menu = true;
+    }
+    run(&mut h, 20);
+    assert!(!has_panel(&h, "omsihub") && !has_panel(&h, "omsihub_board"), "not counted as the board gone");
+    // the city map says nothing: past the grace, the panels of their own
+    h.state.borrow_mut().game_menu = false;
+    run(&mut h, 7);
+    assert!(has_panel(&h, "omsihub") && has_panel(&h, "omsihub_board"));
+    // the board back: in that very frame the phone has them, nothing beside it
+    h.state.borrow_mut().dock = Some((360.0, 420.0, 0.0, true));
+    h.fire("frame", &[json!(0.016)]).unwrap();
+    assert!(!has_panel(&h, "omsihub") && !has_panel(&h, "omsihub_board"));
+    assert_eq!(phone(&h)["anchor"], "navigator");
+    no_ui_errors(&h);
+}
+
+#[test]
+fn a_count_on_a_tab_with_a_long_name_stays_readable() {
+    let dir = installed("tab-count");
+    bridge::write_assignment(&dir, &assignment()).unwrap();
+    let texts = std::collections::BTreeMap::from([("Inbox".to_string(), "Posteingang".to_string())]);
+    bridge::write_texts(&dir, &texts).unwrap();
+    let mut h = hub_plugin_harness::Harness::load(&dir, docked_game()).unwrap();
+    run(&mut h, 2);
+    std::fs::create_dir_all(dir.join("data")).unwrap();
+    let inbox = json!({ "messages": [
+        { "id": 6, "time": "08:01", "from": "Control", "text": "Guten Morgen", "priority": "info", "state": "sent" },
+        { "id": 5, "time": "08:00", "from": "Control", "text": "Hallo", "priority": "info", "state": "sent" },
+        { "id": 4, "time": "07:59", "from": "Control", "text": "Servus", "priority": "info", "state": "sent" },
+    ], "replies": [], "quick": [] });
+    std::fs::write(dir.join("data").join("messages.json"), inbox.to_string()).unwrap();
+    run(&mut h, 3);
+    let label = tabs(&h).unwrap().0[3].clone();
+    // (the name cut, not the count: the game cuts a tab's label at its end)
+    assert_eq!(label, "Poste… 3");
+    assert!(label.chars().count() <= 8);
+    no_ui_errors(&h);
+}
+
+/// The icons of openOMSI 0.3.37 (`assets/icons/{material,custom}`; 0.3.38 adds build, edit):
+/// a name the game has not draws nothing.
+const GAME_ICONS: &str = "stop_request ac_unit account_circle add air airline_seat_recline_normal airport_shuttle alt_route apps arrow_back arrow_upward autorenew back_hand badge bolt calendar_month campaign chat check check_circle chevron_left chevron_right close cloud cloud_download commute confirmation_number construction content_copy dark_mode delete departure_board description directions_bus directions_car directions_walk display_settings dns door_front door_sliding download drive_folder_upload emergency_home emoji_events error event exit_to_app expand_less expand_more extension filter_list flag flashlight_on foggy folder folder_open fork_left fork_right forum fullscreen gamepad garage grid_view group groups headphones help highlight history home hub info install_desktop install_mobile inventory_2 key keyboard keyboard_arrow_down keyboard_arrow_up lan language light light_mode link local_car_wash local_gas_station local_parking location_on lock logout map menu military_tech mobile_friendly monitor mouse my_location navigation near_me nights_stay north open_in_new open_with palette pan_tool_alt partly_cloudy_day pause payments person photo_camera play_arrow power_settings_new public radio rainy receipt_long refresh remove restart_alt roundabout_left roundabout_right route save schedule school screen_rotation sd_card search settings signal_cellular_alt smartphone sort south speed sports_esports sports_score star stars stop stop_circle straight sync_alt system_update terminal thermostat thunderstorm timer today touch_app traffic trending_up tune turn_left turn_right turn_slight_left turn_slight_right u_turn_left unfold_more upload vibration videocam view_list visibility volume_up warning water_drop wb_sunny wb_twilight weather_snowy wifi wifi_tethering zoom_in zoom_out";
+
+/// The quoted name right after `at` in `line` (`"name"` with letters, digits and _ only).
+fn quoted(line: &str, at: usize) -> Option<&str> {
+    let rest = line[at..].strip_prefix('"')?;
+    let end = rest.find('"')?;
+    let name = &rest[..end];
+    (!name.is_empty() && name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')).then_some(name)
+}
+
+#[test]
+fn every_icon_the_plugin_names_is_one_the_game_has() {
+    let have: Vec<&str> = GAME_ICONS.split_whitespace().collect();
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let mut missing = Vec::new();
+    for entry in std::fs::read_dir(&dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.extension().is_none_or(|e| e != "lua") {
+            continue;
+        }
+        let lua = std::fs::read_to_string(&path).unwrap();
+        for (n, line) in lua.lines().enumerate() {
+            let mut names = Vec::new();
+            // `icon = "x"`, an icon element's `name = "x"`, a card's `notify("x"`, a line's
+            // `line("x"` / `line(th, "x"`, and `and "x" or "y"` where an icon is chosen
+            for key in ["icon = ", "notify(", "line(", "line(th, ", "line(ctx, ", "line(ctx.theme, "] {
+                for (at, _) in line.match_indices(key) {
+                    names.extend(quoted(line, at + key.len()));
+                }
+            }
+            if line.contains("type = \"icon\"") {
+                for (at, _) in line.match_indices("name = ") {
+                    names.extend(quoted(line, at + 7));
+                }
+            }
+            if line.contains("icon") || line.contains("line(") || line.contains("name = ") {
+                for (at, _) in line.match_indices(" and \"") {
+                    names.extend(quoted(line, at + 5));
+                    if let Some(or) = line[at + 5..].find("\" or ") {
+                        names.extend(quoted(line, at + 5 + or + 5));
+                    }
+                }
+            }
+            if line.trim_start().starts_with("local ICON = {") {
+                for (at, _) in line.match_indices("= \"") {
+                    names.extend(quoted(line, at + 2));
+                }
+            }
+            for name in names {
+                if !have.contains(&name) {
+                    missing.push(format!("{}:{}: {name}", path.file_name().unwrap().to_string_lossy(), n + 1));
+                }
+            }
+        }
+    }
+    assert!(missing.is_empty(), "icons the game has not: {missing:?}");
 }

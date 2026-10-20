@@ -90,7 +90,7 @@ function M.coach(d, trips, clock, contract)
       return {
         text = tr("Hold %{s} here · leave at %{time}", { s = mmss(hold), time = hhmm(s.departure) }),
         note = costly and tr("Leaving now counts as early") or nil,
-        color = costly and RED or BLUE, icon = "pan_tool",
+        color = costly and RED or BLUE, icon = "pan_tool_alt",
       }
     end
     return nil

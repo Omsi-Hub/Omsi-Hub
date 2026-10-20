@@ -236,6 +236,13 @@ fn willing(c: &Company, p: &DayPlan, mine: &DutyRef) -> Option<u32> {
     colleagues.iter().copied().find(|&id| crew::ai_answer(c, p, no, Who::Player, mine, id).is_ok()).or(colleagues.first().copied())
 }
 
+/// Whether a line of the plugin is for the duty given now (`issued`): a request of the driver's
+/// (a sick call, leave, a swap) only from that duty - one left unread from another drive or
+/// another company's duty would be carried out for the wrong day.
+fn for_duty(r: &Reply, issued: u64) -> bool {
+    r.kind != "crew" || (r.issued != 0 && r.issued == issued)
+}
+
 fn now_unix() -> f64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0.0, |d| d.as_secs_f64())
 }
@@ -264,7 +271,7 @@ pub fn tick(s: &mut Session) {
         let mut reader = bridge::ReplyReader { offset: c.messages.link };
         let new = reader.read_new(dir);
         c.messages.link = reader.offset;
-        for r in &new {
+        for r in new.iter().filter(|r| for_duty(r, a.issued)) {
             take_reply(c, r, &a.line, &a.tour, &a.driver, dp.as_ref(), &mut run);
         }
         let st = bridge::read_status(dir).filter(|st| st.issued == a.issued && (now_unix() - st.at).abs() < STATUS_FRESH);
@@ -558,6 +565,16 @@ mod tests {
         assert!(!take_reply(&mut c, &crew("overtime", "o1"), "Linie5", "1", "Luc", None, &mut run));
         // (each line once)
         assert!(!take_reply(&mut c, &Reply { days: 2, ..crew("sick", "s1") }, "Linie5", "1", "Luc", None, &mut run));
+    }
+
+    #[test]
+    fn a_request_left_from_another_duty_is_not_carried_out() {
+        let crew = |issued: u64| Reply { kind: "crew".into(), what: "sick".into(), uid: format!("s{issued}"), issued, ..Reply::default() };
+        assert!(for_duty(&crew(1_700_000_000), 1_700_000_000));
+        assert!(!for_duty(&crew(1_600_000_000), 1_700_000_000), "an older duty's");
+        assert!(!for_duty(&crew(0), 1_700_000_000), "no duty's");
+        // (the other lines as before: answers and quick buttons)
+        assert!(for_duty(&Reply { kind: "quick".into(), ..Reply::default() }, 1_700_000_000));
     }
 
     #[test]

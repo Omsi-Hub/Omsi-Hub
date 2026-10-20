@@ -181,6 +181,9 @@ fn a_shift_s_parts_are_chained_and_the_duty_ends_after_the_last() {
     let reports = ReportReader::default().read_new(&dir);
     let kinds: Vec<(&str, &str)> = reports.iter().map(|r| (r.kind.as_str(), r.line.as_str())).collect();
     assert_eq!(kinds, [("duty_start", "10"), ("trip", "10"), ("duty_end", "10"), ("duty_start", "11"), ("trip", "11"), ("duty_end", "11")]);
+    // (a part's end with its own totals, the duty's end with the whole duty's)
+    let ends: Vec<u32> = reports.iter().filter(|r| r.kind == "duty_end").map(|r| r.trips).collect();
+    assert_eq!(ends, [1, 2]);
 }
 
 #[test]

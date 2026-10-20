@@ -133,6 +133,12 @@ pub struct GameState {
     /// The plugin's lines in the pause menu (`omsi.ui.set_menu_item`, openOMSI after 0.3.38):
     /// id, label and icon, in the order first set; None: a game without the functions.
     pub menu: Option<Vec<MenuLine>>,
+    /// Whether the game's menu is open (`omsi.game.menu_open`), and whether the plugins' panels
+    /// are hidden this frame (the game's menu, the city map; and in the frame a line of the
+    /// pause menu is chosen in: the panels show again only in the next): `omsi.ui.focus(true)`
+    /// is refused then, as openOMSI's `UiState::set_focus` refuses it.
+    pub game_menu: bool,
+    pub hidden: bool,
 }
 
 /// A line of the pause menu: its id, label and icon (`omsi.ui.set_menu_item`).
@@ -181,6 +187,8 @@ impl Default for GameState {
             passed: 0,
             closed: Vec::new(),
             menu: None,
+            game_menu: false,
+            hidden: false,
         }
     }
 }
@@ -230,6 +238,7 @@ pub const FUNCTIONS: &[&str] = &[
     "game.settings",
     "game.action",
     "game.has",
+    "game.menu_open",
     "map.info",
     "map.tile_at",
     "audio.play",
@@ -352,7 +361,11 @@ impl Harness {
     pub fn pick_menu_item(&self, id: &str) -> mlua::Result<bool> {
         let there = self.state.borrow().menu.as_ref().is_some_and(|m| m.iter().any(|l| l.0 == id));
         if there {
-            self.fire("menu_item", &[json!(id)])?;
+            // (the panels were hidden with the menu until now: they show from the next frame)
+            self.state.borrow_mut().hidden = true;
+            let r = self.fire("menu_item", &[json!(id)]);
+            self.state.borrow_mut().hidden = false;
+            r?;
         }
         Ok(there)
     }
@@ -532,11 +545,14 @@ fn api(lua: &Lua, state: &Rc<RefCell<GameState>>, plugin_dir: &Path) -> mlua::Re
     {
         let focused = Rc::new(RefCell::new(false));
         let f2 = Rc::clone(&focused);
+        let st = Rc::clone(state);
         ui.set(
             "focus",
             lua.create_function(move |_, on: bool| {
-                *f2.borrow_mut() = on;
-                Ok(())
+                // (the new state: no mouse while the panels are hidden)
+                let hidden = { st.borrow().game_menu || st.borrow().hidden };
+                *f2.borrow_mut() = on && !hidden;
+                Ok(on && !hidden)
             })?,
         )?;
         ui.set("focused", lua.create_function(move |_, ()| Ok(*focused.borrow()))?)?;
@@ -627,6 +643,7 @@ fn api(lua: &Lua, state: &Rc<RefCell<GameState>>, plugin_dir: &Path) -> mlua::Re
     f!(game, "api", |_l, s, _a: ()| Ok(s.borrow().api));
     f!(game, "platform", |_l, s, _a: ()| Ok(s.borrow().platform.clone()));
     f!(game, "settings", |l, s, _a: ()| to_lua(l, &json!({ "language": s.borrow().language, "units": "metric" })));
+    f!(game, "menu_open", |_l, s, _a: ()| Ok(s.borrow().game_menu));
     f!(game, "action", |_l, s, name: String| {
         s.borrow_mut().actions.push(name);
         Ok(true)

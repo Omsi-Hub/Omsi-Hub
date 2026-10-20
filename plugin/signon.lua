@@ -54,7 +54,7 @@ function M.children(duty)
       { type = "text", text = tr("Line") .. " " .. (duty.line or "") .. "  ·  " .. tr("Tour") .. " " .. (duty.tour or ""), size = 13 },
       { type = "table", columns = { tr("Line"), tr("Departure"), "" }, widths = { 0.2, 0.25, 0.55 }, rows = rows, size = 12, visible = #rows > 0 },
       { type = "text", text = tr("The duty's codes go to the IBIS as soon as you accept it."), size = 12, color = "#9AA3AD" },
-      { type = "button", id = "accept", text = tr("Accept duty"), icon = "task_alt" },
+      { type = "button", id = "accept", text = tr("Accept duty"), icon = "check_circle" },
     }
   end
   return {}

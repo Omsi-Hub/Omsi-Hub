@@ -34,7 +34,8 @@ local LIGHT = {
   badge = "#FFD23F", badge_ink = "#1A1400",
   late = "#FF453A", on_time = "#2FA84F", early = "#2F7CF6",
   primary = "#FFD23F", secondary = "#4A5BD6", neutral = "#E5E5EA",
-  tab_on = "#1C1C1E", accent = "#FFD23F",
+  -- (the game draws the tabs on its own dark grey on either card: the tab shown light there too)
+  tab_on = "#F2F2F7", accent = "#FFD23F",
 }
 
 -- the inks for the navigator's light card (`light`) or its dark one
@@ -138,6 +139,55 @@ function M.stat(theme, label, value, color, boxes)
   }
   if boxes then return { type = "box", color = theme.faint, grow = true, gap = 0, children = children } end
   return { type = "row", grow = true, gap = 6, children = { children[1], children[2] } }
+end
+
+-- a checkbox (`e`: its element) in the theme: its box in the indigo, never the game's amber;
+-- on the light card its label a text of its own beside it (the game writes a checkbox's label
+-- in its light ink whatever its colour)
+function M.check(theme, e)
+  local box = {}
+  for k, v in pairs(e) do box[k] = v end
+  box.color = theme.secondary
+  if not theme.light or (e.text or "") == "" then return box end
+  box.text, box.visible = "", nil
+  return { type = "row", gap = 8, visible = e.visible, children = {
+    box, { type = "text", text = e.text, size = 14, color = theme.ink, grow = true },
+  } }
+end
+
+-- (the colours of the other modules' panels, as the phone writes them: their grey and their
+-- orange dim, their red ink - red is the time's only)
+local ADOPT = { ["#9AA3AD"] = "dim", ["#F58620"] = "dim", ["#F47F30"] = "dim", ["#FF5F57"] = "ink" }
+-- (the buttons of theirs that are the action to take)
+local PRIMARY = { signon = true, accept = true, start = true, strip_note_send = true, strip_chk_ok = true }
+
+-- another module's elements (the company's panel, the sign-on, the strip's note and
+-- walk-around) in the phone's look: copies, their texts, icons and tables in the theme's inks,
+-- their buttons in its fills, their checkboxes as `check` draws them
+function M.adopt(theme, list)
+  local out = {}
+  for _, e in ipairs(list or {}) do
+    if type(e) == "table" then
+      local c = {}
+      for k, v in pairs(e) do c[k] = v end
+      local t = c.type
+      if t == "checkbox" then
+        c = M.check(theme, c)
+      elseif t == "text" or t == "icon" or t == "table" then
+        if c.color == nil then
+          c.color = theme.ink
+        elseif ADOPT[c.color] then
+          if t == "text" and c.color == "#FF5F57" then c.weight = "bold" end
+          c.color = theme[ADOPT[c.color]]
+        end
+      elseif t == "button" and c.color == nil then
+        c.color = PRIMARY[c.id or ""] and theme.primary or theme.neutral
+      end
+      if t ~= "checkbox" and type(c.children) == "table" then c.children = M.adopt(theme, c.children) end
+      out[#out + 1] = c
+    end
+  end
+  return out
 end
 
 return M

@@ -304,10 +304,13 @@ fn without_the_phone_the_pause_menu_opens_the_panels_and_asks_twice_to_end() {
     assert!(!has_panel(&h, PHONE));
     h.pick_menu_item("duty").unwrap();
     assert!(toasted(&h, "Duty D-12 · trip 1/2"));
-    // the inbox's own panel, its quick reports open, with the mouse
+    // the inbox's own panel, its quick reports open, with the mouse - given by the game only
+    // once its panels show again, in the frame after the menu closed
     h.pick_menu_item("control").unwrap();
     assert!(has_element(&h, "omsihub_msgs", |e| e["id"] == "msg_q_traffic"), "{:?}", h.state.borrow().panels.keys().collect::<Vec<_>>());
-    assert!(h.lua.load("return omsi.ui.focused()").eval::<bool>().unwrap());
+    assert!(!h.lua.load("return omsi.ui.focused()").eval::<bool>().unwrap(), "refused while the panels are hidden");
+    run(&mut h, 1);
+    assert!(h.lua.load("return omsi.ui.focused()").eval::<bool>().unwrap(), "asked again");
     // ending the duty: chosen twice
     h.pick_menu_item("end").unwrap();
     assert!(h.state.borrow().duty.is_some());
@@ -327,5 +330,196 @@ fn an_openomsi_without_pause_menu_lines_is_left_alone() {
     assert!(!h.pick_menu_item("duty").unwrap());
     assert!(h.lua.load("return omsi.ui.set_menu_item == nil").eval::<bool>().unwrap());
     run(&mut h, 2);
+    no_ui_errors(&h);
+}
+
+/// Every text, icon and table of the phone in the inks of the light card (or the dark one), and
+/// its checkboxes as the light card needs them: no label of their own (the game writes it in
+/// light ink whatever its colour), the box in the indigo.
+fn in_the_phone_s_inks(h: &Harness, inks: &[&str], light: bool) {
+    for e in elements(&phone(h)) {
+        let t = e["type"].as_str().unwrap_or("");
+        if ["text", "icon", "table"].contains(&t) {
+            let c = e["color"].as_str().unwrap_or("none");
+            assert!(inks.contains(&c), "{c}: {e}\n{}", phone(h));
+        }
+        if t == "checkbox" {
+            assert_eq!(e["color"], "#4A5BD6", "{e}");
+            if light {
+                assert_eq!(e["text"], "", "{e}");
+            }
+        }
+    }
+}
+
+#[test]
+fn the_sign_on_and_the_strip_s_forms_are_drawn_in_the_phone_s_look() {
+    let crew = Crew {
+        templates: vec![("door".into(), "A door sticks".into())],
+        checks: vec![("doors".into(), "Doors".into()), ("mirrors".into(), "Mirrors".into())],
+        text_max: 140,
+        ..crew()
+    };
+    let pass = Some(bridge::Personnel { number: "4711".into(), code: "1234".into() });
+    let a = light(Assignment { crew: Some(crew.clone()), personnel: pass.clone(), ..assignment() });
+    let (_, h) = start_with("light-forms", a, "", docked_game(), "", 3);
+    let light_inks = ["#1C1C1E", "#6E6E73", "#A1A1A8"];
+    // signing on: the Duty tab, the company and the pass in dark ink on the white card
+    assert_eq!(tabs(&h).unwrap().1, 3);
+    assert!(shows(&h, PHONE, "Not signed on") && shows(&h, PHONE, "Stadtbus Berlin"), "{}", phone(&h));
+    in_the_phone_s_inks(&h, &light_inks, true);
+    // the duty order, its table too
+    h.fire("ui_change", &[json!(PHONE), json!("signon_number"), json!("4711")]).unwrap();
+    h.fire("ui_change", &[json!(PHONE), json!("signon_code"), json!("1234")]).unwrap();
+    click(&h, "signon");
+    assert!(shows(&h, PHONE, "Duty assignment"), "{}", phone(&h));
+    assert_eq!(find(&h, PHONE, |e| e["id"] == "accept").unwrap()["color"], "#FFD23F", "the action to take");
+    in_the_phone_s_inks(&h, &light_inks, true);
+    click(&h, "accept");
+    // the walk-around: each part's name a text of its own beside its box
+    choose_tab(&h, 3);
+    click(&h, "strip_check");
+    assert!(has_element(&h, PHONE, |e| e["type"] == "checkbox" && e["id"] == "strip_chk_doors"), "{}", phone(&h));
+    assert!(has_element(&h, PHONE, |e| e["type"] == "text" && e["text"] == "Doors" && e["color"] == "#1C1C1E"));
+    in_the_phone_s_inks(&h, &light_inks, true);
+    click(&h, "strip_chk_ok");
+    // the note form and the IBIS switch
+    click(&h, "strip_note");
+    assert!(has_element(&h, PHONE, |e| e["type"] == "text" && e["text"] == "A door sticks"), "{}", phone(&h));
+    assert!(has_element(&h, PHONE, |e| e["type"] == "text" && e["text"] == "Type the IBIS for me"));
+    in_the_phone_s_inks(&h, &light_inks, true);
+    no_ui_errors(&h);
+    // the dark card: the labels on the boxes, but no orange, red or amber
+    let a = Assignment { crew: Some(crew), personnel: pass, ..assignment() };
+    let (_, h) = start_with("dark-forms", a, "", docked_game(), "", 3);
+    in_the_phone_s_inks(&h, &["#F2F2F7", "#A1A1A8", "#6E6E73"], false);
+    no_ui_errors(&h);
+}
+
+/// A click on the element `element` of the panel `p`.
+fn click_in(h: &Harness, p: &str, element: &str) {
+    h.fire("ui_click", &[json!(p), json!(element)]).unwrap();
+}
+
+#[test]
+fn the_slim_phone_leaves_the_inbox_its_own_panel_and_the_pause_menu_works_there() {
+    let mut g = docked_game();
+    g.dock = Some((360.0, 120.0, 0.0, true));
+    g.menu = Some(Vec::new());
+    let (dir, mut h) = start("slim-menu", Some(assignment()), g, 1);
+    write_inbox(&dir, json!({ "messages": [], "replies": [], "quick": [{ "key": "traffic", "label": "Delay: traffic", "icon": "traffic" }] }));
+    run(&mut h, 3);
+    // a message to control: the inbox's own panel, its quick reports open, with the mouse
+    h.pick_menu_item("control").unwrap();
+    assert!(has_element(&h, "omsihub_msgs", |e| e["id"] == "msg_q_traffic"), "{:?}", h.state.borrow().panels.keys().collect::<Vec<_>>());
+    run(&mut h, 1);
+    assert!(h.lua.load("return omsi.ui.focused()").eval::<bool>().unwrap());
+    click_in(&h, "omsihub_msgs", "msg_close");
+    // an instruction: answered on the inbox's own panel
+    write_inbox(
+        &dir,
+        json!({ "messages": [{ "id": 7, "time": "08:05", "from": "Control", "text": "Turn back at Markt", "priority": "instruction", "state": "sent", "action": { "kind": "short_turn" } }], "replies": [], "quick": [] }),
+    );
+    run(&mut h, 3);
+    assert!(has_element(&h, "omsihub_msgs", |e| e["id"] == "msg_accept_7"), "{:?}", h.state.borrow().panels.keys().collect::<Vec<_>>());
+    click_in(&h, "omsihub_msgs", "msg_decline_7");
+    assert!(lines(&dir, "replies.jsonl").iter().any(|r| r["kind"] == "decline" && r["id"] == 7));
+    // ending the duty: chosen twice, as without the phone
+    h.pick_menu_item("end").unwrap();
+    assert!(h.state.borrow().duty.is_some());
+    assert!(toasted(&h, "again"));
+    h.pick_menu_item("end").unwrap();
+    assert!(h.state.borrow().duty.is_none());
+    // the room back: the inbox in the phone again
+    h.state.borrow_mut().dock = Some((360.0, 420.0, 0.0, true));
+    run(&mut h, 2);
+    assert!(!has_panel(&h, "omsihub_msgs"));
+    no_ui_errors(&h);
+}
+
+#[test]
+fn a_message_read_keeps_its_replies_and_nothing_is_told_read_while_the_phone_is_away() {
+    let (dir, mut h) = start("msgs-read-replies", Some(assignment()), docked_game(), 1);
+    let inbox = |state: &str| {
+        json!({ "messages": [{ "id": 5, "time": "08:01", "from": "Control", "text": "Good morning", "priority": "info", "state": state }],
+            "replies": [{ "key": "ok", "label": "OK" }], "quick": [] })
+    };
+    write_inbox(&dir, inbox("sent"));
+    run(&mut h, 3);
+    choose_tab(&h, 4);
+    assert!(has_element(&h, PHONE, |e| e["id"] == "msg_reply_5_ok"));
+    // Omsi-Hub marks it read: still to be answered
+    write_inbox(&dir, inbox("read"));
+    run(&mut h, 3);
+    assert!(has_element(&h, PHONE, |e| e["id"] == "msg_reply_5_ok"), "{}", phone(&h));
+    // the board put away on the Messages tab: a new message is delivered, not read
+    h.state.borrow_mut().dock = None;
+    run(&mut h, 8);
+    let mut fresh = inbox("read");
+    fresh["messages"].as_array_mut().unwrap().insert(0, json!({ "id": 6, "time": "08:09", "from": "Control", "text": "Road works", "priority": "info", "state": "sent" }));
+    write_inbox(&dir, fresh);
+    run(&mut h, 4);
+    let said: Vec<(String, i64)> = lines(&dir, "replies.jsonl").iter().map(|r| (r["kind"].as_str().unwrap().to_string(), r["id"].as_i64().unwrap())).collect();
+    assert!(said.contains(&("delivered".into(), 6)) && !said.contains(&("read".into(), 6)), "{said:?}");
+    no_ui_errors(&h);
+}
+
+#[test]
+fn the_inbox_opened_while_the_phone_is_away_stays_open_as_a_break_begins() {
+    let (dir, mut h) = start("away-inbox", Some(assignment()), docked_game(), 1);
+    write_inbox(&dir, json!({ "messages": [{ "id": 5, "time": "08:01", "from": "Control", "text": "Good morning", "priority": "info", "state": "read" }], "replies": [], "quick": [] }));
+    run(&mut h, 3);
+    // the board put away: past the grace the panels of their own; F9 opens the inbox
+    h.state.borrow_mut().dock = None;
+    run(&mut h, 8);
+    h.fire("key", &[json!("F9"), json!(true)]).unwrap();
+    run(&mut h, 1);
+    assert!(has_panel(&h, "omsihub_msgs"));
+    // the trip done at the terminus with time to spare: the break, in the phone not shown
+    {
+        let mut g = h.state.borrow_mut();
+        g.trip_done = true;
+        g.clock = 29_500.0;
+    }
+    h.fire("trip_done", &[json!(1), json!("arrived"), json!(90.0), json!(90.0), json!(100.0)]).unwrap();
+    run(&mut h, 3);
+    assert!(has_panel(&h, "omsihub_msgs"), "left open");
+    // the board back: the break brings the Ride tab up then
+    h.state.borrow_mut().dock = Some((360.0, 420.0, 0.0, true));
+    run(&mut h, 1);
+    assert_eq!(tabs(&h).unwrap().1, 1);
+    no_ui_errors(&h);
+}
+
+#[test]
+fn the_actions_come_before_the_lists_and_their_labels_have_the_width() {
+    let crew = Crew { week: week(), can: CrewCan { sick: true, swap: true, leave: true }, ..crew() };
+    let mut g = docked_game();
+    g.dock = Some((360.0, 530.0, 0.0, true));
+    let (dir, mut h) = start_with("actions-first", Assignment { crew: Some(crew), ..assignment() }, "", g, "", 3);
+    choose_tab(&h, 3);
+    let all = elements(&phone(&h));
+    let at = |f: &dyn Fn(&Value) -> bool| all.iter().position(f).unwrap_or_else(|| panic!("{}", phone(&h)));
+    let sick = at(&|e| e["id"] == "duty_sick");
+    assert!(sick < at(&|e| e["type"] == "table"), "the requests before the trips and the roster");
+    // two by two, no icons: their names need the width
+    for id in ["duty_sick", "duty_swap", "duty_leave"] {
+        assert!(find(&h, PHONE, |e| e["id"] == id).unwrap().get("icon").is_none(), "{id}");
+    }
+    assert!(all.iter().filter(|e| e["type"] == "row").all(|r| r["children"].as_array().unwrap().iter().filter(|c| c["type"] == "button").count() <= 2));
+    // the quick reports first on the Messages tab, without icons
+    write_inbox(
+        &dir,
+        json!({ "messages": [{ "id": 5, "time": "08:01", "from": "Control", "text": "Good morning", "priority": "info", "state": "read" }], "replies": [],
+            "quick": [{ "key": "traffic", "label": "Delay: traffic", "icon": "traffic" }, { "key": "aggressive", "label": "Aggressive passenger", "icon": "warning" }] }),
+    );
+    run(&mut h, 3);
+    choose_tab(&h, 4);
+    click(&h, "msg_quick");
+    let all = elements(&phone(&h));
+    let quick = all.iter().position(|e| e["id"] == "msg_q_aggressive").expect("the quick reports");
+    let message = all.iter().position(|e| e["text"] == "Good morning").unwrap();
+    assert!(quick < message, "{}", phone(&h));
+    assert!(all[quick].get("icon").is_none());
     no_ui_errors(&h);
 }

@@ -5,8 +5,11 @@
 -- the break the next trip's stops.
 --
 -- The rail is openOMSI's `stops` element (ui version 4). An older openOMSI, and the navigator's
--- light card (the rail writes its names in light ink), get a table in its place.
+-- light card (the rail writes its names in light ink), get a table in its place. A game that
+-- does not mark the closed stops itself (before 0.3.39): those Omsi-Hub's brief names closed.
 
+local ontime = require("ontime")
+local summary = require("phone_summary")
 local P = require("phone_theme")
 
 local M = {}
@@ -67,9 +70,22 @@ local function rail(ctx, list)
   return { type = "table", columns = {}, widths = { 0.08, 0.6, 0.16, 0.16 }, aligns = { "center", "left", "right", "right" }, rows = rows, size = 13, color = th.ink }
 end
 
+-- a stop's name as the brief and the game are compared (hub-core's `same`)
+local function norm(name)
+  return tostring(name or ""):gsub("^%s+", ""):gsub("%s+$", ""):lower()
+end
+
+-- the stops closed today by Omsi-Hub's brief, by their names
+local function closed_today()
+  local out = {}
+  local b = ontime.brief()
+  for _, n in ipairs(type(b) == "table" and type(b.closed) == "table" and b.closed or {}) do out[norm(n)] = true end
+  return out
+end
+
 function M.rows(ctx)
   local th, tr = ctx.theme, ctx.tr
-  if not ctx.duty then return { P.text(th, tr("No trip under way"), "dim") } end
+  if not ctx.duty then return { P.text(th, summary.ended() and tr("Duty finished") or tr("No trip under way"), "dim") } end
   if ctx.phase == "finished" then return { P.text(th, tr("Duty finished"), "dim") } end
   local out = {}
   local served, now
@@ -91,6 +107,7 @@ function M.rows(ctx)
   local from = math.max(math.min(at - 1, #served), 1)
   local to = math.min(from + math.max(ctx.fit or M.fit[1], 2) - 1, #served, from + MOST - 1)
   local list = {}
+  local gone = closed_today()
   for j = from, to do
     local s = served[j]
     local state = ctx.phase == "break" and "ahead" or (j < at and "done" or (j == at and "now" or "ahead"))
@@ -98,7 +115,7 @@ function M.rows(ctx)
     -- (none for the stop the bus stands at)
     if state == "ahead" or (state == "now" and not ctx.duty.at_stop) then expected, color = M.expected(ctx, s) end
     local tag = ""
-    if s.closed then tag = tr("closed") elseif j == #served then tag = tr("terminus") end
+    if s.closed or (s.closed == nil and gone[norm(s.name)]) then tag = tr("closed") elseif j == #served then tag = tr("terminus") end
     list[#list + 1] = { name = s.name or "", time = P.hhmm(s.arrival), expected = expected or "", expected_color = color, state = state, tag = tag }
   end
   out[#out + 1] = rail(ctx, list)

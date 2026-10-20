@@ -104,12 +104,12 @@ local function instruction(ctx)
   return said.text
 end
 
--- a line that applies now: its icon and text
-local function line(ctx, icon, text, extra)
+-- a line that applies now: its icon and text (`one`: on one line, cut where it is longer)
+local function line(ctx, icon, text, extra, one)
   local th = ctx.theme
   local children = {
     { type = "icon", name = icon, size = 16, color = th.dim },
-    { type = "text", text = text, size = 12.5, color = th.ink, grow = true },
+    { type = "text", text = text, size = 12.5, color = th.ink, grow = true, wrap = not one },
   }
   if extra then children[3] = extra end
   return { type = "row", gap = 8, children = children }
@@ -127,7 +127,8 @@ local function context(ctx)
   local out = {}
   if ctx.wants then
     local text = instruction(ctx) or tr("Message from control")
-    out[#out + 1] = line(ctx, "forum", text, { type = "button", id = "ride_inbox", text = tr("Open"), color = th.primary })
+    -- (a pointer to Messages, on one line: the message itself is read there)
+    out[#out + 1] = line(ctx, "forum", text, { type = "button", id = "ride_inbox", text = tr("Open"), color = th.primary }, true)
   end
   local b = ontime.brief() or {}
   local h = b.headway
@@ -151,7 +152,15 @@ local function context(ctx)
     local due = (k.time or "") .. ((tonumber(k.late) or 0) > 0 and (" (+" .. k.late .. " min)") or "")
     local text = tr("At %{stop}: %{what} %{time}", { stop = cut(k.stop, 60), what = cut(k.what, 100), time = cut(due, 30) })
     local st = type(k.status) == "table" and k.status or {}
-    if not k.onward then
+    -- (one the bus waits for: what Omsi-Hub says of it now, as the on-time card did; the
+    -- company's longest wait where the brief says nothing)
+    if not k.onward and st.kind == "wait" then
+      text = text .. "  ·  " .. tr("Hold until %{time}", { time = cut(st["until"], 10) })
+    elseif not k.onward and st.kind == "too_late" then
+      text = text .. "  ·  " .. tr("Too late to wait for: leave on time")
+    elseif not k.onward and st.kind == "not_needed" then
+      text = text .. "  ·  " .. tr("No wait needed")
+    elseif not k.onward then
       text = text .. "  ·  " .. tr("wait max %{m} min", { m = k.max_hold or 0 })
     elseif st.kind == "made" then
       text = text .. "  ·  " .. tr("%{m} min to change", { m = st.m or 0 })
@@ -186,6 +195,7 @@ end
 function M.rows(ctx)
   local th, tr = ctx.theme, ctx.tr
   if not ctx.duty then
+    if summary.ended() then return { P.text(th, tr("Duty finished"), "dim") } end
     return { P.text(th, ctx.at_work and tr("Not started yet") or tr("Not signed on"), "dim") }
   end
   if ctx.phase == "finished" then return { P.text(th, tr("Duty finished"), "dim") } end
