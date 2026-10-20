@@ -88,6 +88,17 @@ pub static FEATURES: &[Feature] = &[
     },
 ];
 
+/// The phone docked under the navigator's map (`plugin/nav.lua`): openOMSI 0.3.38 and newer,
+/// as the handshake's `dock` says (the navigator's board, `ui.dock`). It is listed after
+/// [`FEATURES`] and makes no game limited: without it the plugin's panels are as before.
+pub const PHONE: Feature = Feature { id: "phone", label: "Phone unit in the navigator", needs: &[], essential: false, fallback: "needs openOMSI 0.3.38 or newer" };
+/// The first openOMSI with the navigator's board.
+pub const PHONE_FROM: GameVersion = GameVersion::new(0, 3, 38);
+
+fn phone(on: bool) -> FeatureState {
+    FeatureState { id: PHONE.id, label: PHONE.label, on, fallback: PHONE.fallback }
+}
+
 /// The notes [`Compat`] gives, for the player (English: the app translates them).
 pub const NOTE_UNKNOWN: &str = "The version was not found: the first drive checks what this openOMSI offers";
 pub const NOTE_TOO_OLD: &str = "This openOMSI is older than 0.2.22: update it to use Omsi-Hub";
@@ -141,10 +152,15 @@ fn all_features(on: impl Fn(&Feature) -> bool) -> Vec<FeatureState> {
 /// the plugin ever ran there.
 pub fn estimate(version: Option<&GameVersion>) -> Compat {
     match version {
-        None => Compat { level: Level::Unknown, api: None, features: all_features(|_| true), notes: vec![NOTE_UNKNOWN.into()], confirmed: false },
-        Some(v) if *v < FIRST_SUPPORTED => Compat { level: Level::Unsupported, api: None, features: all_features(|_| false), notes: vec![NOTE_TOO_OLD.into()], confirmed: false },
-        Some(_) => Compat { level: Level::Supported, api: None, features: all_features(|_| true), notes: Vec::new(), confirmed: false },
+        None => Compat { level: Level::Unknown, api: None, features: with_phone(all_features(|_| true), true), notes: vec![NOTE_UNKNOWN.into()], confirmed: false },
+        Some(v) if *v < FIRST_SUPPORTED => Compat { level: Level::Unsupported, api: None, features: with_phone(all_features(|_| false), false), notes: vec![NOTE_TOO_OLD.into()], confirmed: false },
+        Some(v) => Compat { level: Level::Supported, api: None, features: with_phone(all_features(|_| true), *v >= PHONE_FROM), notes: Vec::new(), confirmed: false },
     }
+}
+
+fn with_phone(mut features: Vec<FeatureState>, on: bool) -> Vec<FeatureState> {
+    features.push(phone(on));
+    features
 }
 
 /// The add-on and a game as the plugin's handshake describes it.
@@ -169,7 +185,9 @@ pub fn negotiate(hello: &Hello) -> Compat {
     } else {
         Level::Supported
     };
-    Compat { level, api: Some(hello.api), features, notes, confirmed: true }
+    // (a plugin older than the phone does not say: the game's version does)
+    let dock = hello.dock || (hello.ui == 0 && GameVersion::find(&hello.game).is_some_and(|v| v >= PHONE_FROM));
+    Compat { level, api: Some(hello.api), features: with_phone(features, dock), notes, confirmed: true }
 }
 
 /// The add-on and the game in a folder: the handshake when there is one from this very version
@@ -186,7 +204,7 @@ mod tests {
     use super::*;
 
     fn hello(api: i64, missing: &[&str]) -> Hello {
-        let mut h = Hello { api, game: "0.2.1500".into(), ..Hello::default() };
+        let mut h = Hello { api, game: "0.2.1500".into(), ui: 5, dock: true, ..Hello::default() };
         for f in FEATURES {
             for n in f.needs {
                 h.functions.insert(n.to_string(), !missing.contains(n));
@@ -228,6 +246,21 @@ mod tests {
         let mut h = hello(1, &[]);
         h.functions.remove("send");
         assert_eq!(negotiate(&h).level, Level::Limited);
+    }
+
+    #[test]
+    fn the_phone_needs_the_navigator_s_board_and_limits_nothing_without_it() {
+        let on = |c: &Compat| c.features.iter().find(|f| f.id == "phone").map(|f| f.on);
+        assert_eq!(on(&negotiate(&hello(1, &[]))), Some(true));
+        // openOMSI 0.3.37: no board, the panels of before - still supported
+        let old = negotiate(&Hello { ui: 2, dock: false, game: "0.3.37".into(), ..hello(1, &[]) });
+        assert_eq!((old.level, on(&old)), (Level::Supported, Some(false)));
+        // a plugin older than the phone said nothing: the game's version tells
+        assert_eq!(on(&negotiate(&Hello { ui: 0, dock: false, game: "0.3.38".into(), ..hello(1, &[]) })), Some(true));
+        assert_eq!(on(&estimate(Some(&GameVersion::new(0, 3, 37)))), Some(false));
+        assert_eq!(on(&estimate(Some(&GameVersion::new(0, 3, 38)))), Some(true));
+        assert_eq!(estimate(Some(&GameVersion::new(0, 3, 37))).level, Level::Supported);
+        assert_eq!(PHONE.needs, &[] as &[&str], "nothing for the plugin's handshake to look up");
     }
 
     #[test]

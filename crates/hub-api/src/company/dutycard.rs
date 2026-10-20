@@ -303,6 +303,40 @@ pub fn view(s: &mut Session, args: &Value) -> Value {
     }
 }
 
+/// The IBIS codes of duty `r`'s trips for the game's plugin (`Assignment::ibis_codes`): what its
+/// card prints (empty: the day is still being read, or the depot file says nothing).
+pub(crate) fn ibis_codes(s: &mut Session, c: &Company, r: &DutyRef) -> Vec<hub_game::bridge::TripIbis> {
+    card_of(s, c, r).map(|(card, _)| ibis_codes_of(&card)).unwrap_or_default()
+}
+
+/// The card's trips with passengers and their IBIS codes, numbered from 1 in the order they
+/// are driven (the deadheads not counted), each with its departure in seconds of the day.
+pub(crate) fn ibis_codes_of(card: &Card) -> Vec<hub_game::bridge::TripIbis> {
+    let trips = card.pieces.iter().flat_map(|p| &p.items).filter_map(|i| match i {
+        Item::Trip { dep, empty: false, ibis, .. } => Some((*dep, ibis)),
+        _ => None,
+    });
+    trips
+        .enumerate()
+        .filter_map(|(k, (dep, ibis))| {
+            let i = ibis.as_ref()?;
+            let line = match &i.suffix {
+                Some(x) => format!("{}{x}", i.line),
+                None => i.line.clone(),
+            };
+            Some(hub_game::bridge::TripIbis {
+                trip: k as u32 + 1,
+                dep: dep as f64 * 60.0,
+                line,
+                route: i.route.clone().unwrap_or_default(),
+                dest: i.dest.clone().unwrap_or_default(),
+                text: i.dest_text.clone(),
+                kurs: i.kurs.clone(),
+            })
+        })
+        .collect()
+}
+
 /// The card for a player of "Play together" (`company::relayed`): his own duty's whatever his
 /// role, another's only when he may see the planning (`relay::RF_VIEW`). Read-only: nothing of
 /// it changes the company.
@@ -386,6 +420,11 @@ mod tests {
         };
         let look = Lookups { stops: &stops, ibis: &ibis, design: &|_| None };
         let card = dc::card(&c, &p, None, &r, 0, "Luc", &look).unwrap();
+        // the game's plugin gets the codes of the trip with passengers alone, by its departure
+        let codes = ibis_codes_of(&card);
+        assert_eq!(codes.len(), 1, "{codes:?}");
+        let x = &codes[0];
+        assert_eq!((x.trip, x.dep, x.line.as_str(), x.route.as_str(), x.dest.as_str(), x.text.as_str(), x.kurs.as_str()), (1, 21_600.0, "130", "13001", "042", "Zentrum", "1"));
         let v = card_json(&c, &card, &p);
         assert_eq!(v["name"], "Connexion Nederland");
         assert_eq!(v["date"], "Mon 4 Mar 2024");

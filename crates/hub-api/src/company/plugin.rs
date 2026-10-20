@@ -19,6 +19,8 @@ pub struct Parts {
     pub controls: Vec<bridge::ControlNote>,
     pub fare: Option<bridge::Fare>,
     pub contract: Option<bridge::ContractNote>,
+    /// The IBIS codes of the duty's trips, as its duty card prints them.
+    pub ibis: Vec<bridge::TripIbis>,
 }
 
 /// Give the plugin the duty of a drive about to start: `company` names the company's duty (its

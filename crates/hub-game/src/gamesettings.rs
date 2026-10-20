@@ -156,6 +156,18 @@ pub fn value<'a>(text: &'a str, key: &str) -> Option<&'a str> {
     text.lines().filter_map(key_value).rfind(|(k, _)| *k == key).map(|(_, v)| v)
 }
 
+/// A switch of the file's text as openOMSI reads it (`1`, `true`, `on`, `yes`; anything else
+/// or not there: `default`).
+pub fn switch(text: &str, key: &str, default: bool) -> bool {
+    value(text, key).map_or(default, |v| matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "on" | "yes"))
+}
+
+/// The navigator in its light look (`nav_light` of the settings in the home folder `home`;
+/// openOMSI's default is the dark one): the phone under its map then writes in dark ink.
+pub fn nav_light(home: &Path) -> bool {
+    switch(&std::fs::read_to_string(path(home)).unwrap_or_default(), "nav_light", false)
+}
+
 /// Why a value is refused for a setting.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Refusal {
@@ -291,6 +303,48 @@ mod tests {
         assert_eq!(value(FILE, "fullscreen"), Some("1"));
         assert_eq!(value("#msaa=4\n; fov=3", "msaa"), None, "comments are no values");
         assert_eq!(value(" ui_scale = 1.25 ", "ui_scale"), Some("1.25"));
+    }
+
+    #[test]
+    fn a_switch_is_read_as_openomsi_reads_it() {
+        assert!(switch(
+            "nav_light=1
+",
+            "nav_light",
+            false
+        ));
+        assert!(switch(
+            "nav_light = True
+",
+            "nav_light",
+            false
+        ));
+        assert!(!switch(
+            "nav_light=0
+",
+            "nav_light",
+            true
+        ));
+        assert!(!switch(
+            "nav_light=maybe
+",
+            "nav_light",
+            false
+        ));
+        assert!(switch("", "nav_light", true), "not there: the default");
+        let home = std::env::temp_dir().join(format!("hub-game-navlight-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        assert!(!nav_light(&home), "no file: openOMSI's dark look");
+        std::fs::create_dir_all(path(&home).parent().unwrap()).unwrap();
+        std::fs::write(
+            path(&home),
+            "msaa=4
+nav_light=1
+",
+        )
+        .unwrap();
+        assert!(nav_light(&home));
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     #[test]

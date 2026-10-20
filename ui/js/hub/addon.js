@@ -4,12 +4,15 @@
 // (supported, with limits, not supported - estimated from the version until the first drive,
 // then checked with the plugin's own handshake), the duty the plugin was last given, and the
 // Omsi-Hub plugin switched on or off there, or taken out (`addon_state`, `addon_enable`,
-// `addon_remove`; the folders' checks are `hub_setup_openomsi` and `hub_setup_omsi2`).
+// `addon_remove`; the folders' checks are `hub_setup_openomsi` and `hub_setup_omsi2`), and the
+// phone in openOMSI's navigator switched on or off (`nav_phone`, given to the plugin with
+// every drive).
 
 import { html, useEffect, useState } from '../../vendor/preact-htm.js';
 import { call, openPath, pickFolder } from '../api.js';
 import { S, set } from '../store.js';
 import { Icon, Button, Switch, tr } from './bits.js';
+import { saveSettings } from './drive.js';
 
 const LEVELS = {
   supported: ['check_circle', 'Supported', 'ok'],
@@ -103,6 +106,10 @@ export function AddonPanel() {
         ${plugin?.state === 'outdated' && html`<${Button} icon="download" label="Update the plugin" disabled=${busy} onClick=${() => run('addon_enable', { on: true })} />`}
       </div>
       <p class="muted small" style="margin:4px 0 0">${plugin ? pluginLine(plugin, s.plugin_version) : ''}</p>
+      ${plugin && plugin.state !== 'missing' && html`<div class="row wrap" style="gap:12px;align-items:center;margin-top:12px">
+          <span class="grow"><${Switch} checked=${S.settings?.nav_phone !== false} label="Phone unit in the navigator" onChange=${(on) => saveSettings({ nav_phone: on })} /></span>
+        </div>
+        <p class="muted small" style="margin:4px 0 0">${tr("The ride, the stops, your duty, the messages and the bus under the navigator's map (openOMSI 0.3.38 or newer). Off, or in an older openOMSI: the panels on the screen as before.")}</p>`}
       <p class="muted small" style="margin:4px 0 0;word-break:break-all">${tr('Plugins folder: %{dir}', { dir: inst.plugins_dir || '-' })}</p>
       ${s.assigned && html`<p class="muted small" id="addon-assigned" style="margin:4px 0 0">${s.assigned.company
         ? tr('Last drive: %{company}, line %{line}, tour %{tour}', { company: s.assigned.company, line: s.assigned.line, tour: s.assigned.tour })
