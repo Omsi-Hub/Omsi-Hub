@@ -14,6 +14,8 @@ the plugin through plain files (`crates/hub-game/src/bridge.rs`).
   share (`ctx`, documented at its top). Each tab is a module of its own: `phone_ride`,
   `phone_stops`, `phone_duty`, `phone_msgs`, `phone_bus`; `phone_theme` has the inks (dark and
   light navigator) and the time colours. Without the board the modules keep panels of their own.
+- `phone_menu.lua`: the company's duty in openOMSI's pause menu (`omsi.ui.set_menu_item`, after
+  0.3.38): the duty, a message to control and ending the duty, each opening the phone's tab.
 - `harness/`: our own test harness (`hub-plugin-harness`, on mlua). It mocks the official API
   functions the plugin uses, so `cargo test` runs the plugin without openOMSI; a panel openOMSI's
   parser would refuse is refused there too (`check_panel`, in `GameState::ui_errors`). The

@@ -122,7 +122,13 @@ pub struct GameState {
     /// many of the passengers stand (`omsi.bus.passengers` gives total, seated, standing).
     pub fuel: Option<f64>,
     pub standing: i64,
+    /// The plugin's lines in the pause menu (`omsi.ui.set_menu_item`, openOMSI after 0.3.38):
+    /// id, label and icon, in the order first set; None: a game without the functions.
+    pub menu: Option<Vec<MenuLine>>,
 }
+
+/// A line of the pause menu: its id, label and icon (`omsi.ui.set_menu_item`).
+pub type MenuLine = (String, String, Option<String>);
 
 impl Default for GameState {
     fn default() -> GameState {
@@ -162,6 +168,7 @@ impl Default for GameState {
             ui_errors: Vec::new(),
             fuel: None,
             standing: 0,
+            menu: None,
         }
     }
 }
@@ -325,6 +332,17 @@ impl Harness {
         Ok(())
     }
 
+    /// The player chooses the plugin's line `id` of the pause menu: the menu closes and the
+    /// plugin hears `menu_item` (in its next frame in the game; here at once). Whether it had
+    /// that line.
+    pub fn pick_menu_item(&self, id: &str) -> mlua::Result<bool> {
+        let there = self.state.borrow().menu.as_ref().is_some_and(|m| m.iter().any(|l| l.0 == id));
+        if there {
+            self.fire("menu_item", &[json!(id)])?;
+        }
+        Ok(there)
+    }
+
     /// The game's log, as one text.
     pub fn log_text(&self) -> String {
         self.state.borrow().log.join("\n")
@@ -462,6 +480,41 @@ fn api(lua: &Lua, state: &Rc<RefCell<GameState>>, plugin_dir: &Path) -> mlua::Re
         Ok((m.map(|m| m.0), m.map(|m| m.1)))
     });
     f!(ui, "update", |_l, _s, _a: mlua::MultiValue| Ok(true));
+    // (the pause menu's lines: as openOMSI's `ui/menu.rs` takes them - 3 a plugin, a label of
+    // one line and 40 characters at most)
+    if state.borrow().menu.is_some() {
+        f!(ui, "set_menu_item", |l, s, a: (String, String, Option<String>)| {
+            let label = a.1.split(|c: char| c.is_control() || c.is_whitespace()).filter(|w| !w.is_empty()).collect::<Vec<_>>().join(" ");
+            let why = if a.0.is_empty() || a.0.chars().count() > MAX_ID {
+                Some(format!("the line's id is 1 to {MAX_ID} characters"))
+            } else if label.is_empty() {
+                Some("the label is empty".to_string())
+            } else if label.chars().count() > MAX_MENU_LABEL {
+                Some(format!("the label is longer than {MAX_MENU_LABEL} characters"))
+            } else {
+                None
+            };
+            if let Some(why) = why {
+                return (false, why).into_lua_multi(l);
+            }
+            let icon = a.2.filter(|i| !i.trim().is_empty());
+            let mut g = s.borrow_mut();
+            let menu = g.menu.get_or_insert_with(Vec::new);
+            match menu.iter().position(|m| m.0 == a.0) {
+                Some(i) => menu[i] = (a.0, label, icon),
+                None if menu.len() >= MAX_MENU_ITEMS => return (false, format!("a plugin has {MAX_MENU_ITEMS} lines in the menu at most")).into_lua_multi(l),
+                None => menu.push((a.0, label, icon)),
+            }
+            true.into_lua_multi(l)
+        });
+        f!(ui, "remove_menu_item", |_l, s, id: String| {
+            let mut g = s.borrow_mut();
+            let menu = g.menu.get_or_insert_with(Vec::new);
+            let n = menu.len();
+            menu.retain(|m| m.0 != id);
+            Ok(menu.len() != n)
+        });
+    }
     {
         let focused = Rc::new(RefCell::new(false));
         let f2 = Rc::clone(&focused);
@@ -593,6 +646,9 @@ const MAX_TEXT: usize = 500;
 const MAX_ID: usize = 64;
 const MAX_DEPTH: usize = 8;
 const MAX_POINTS: usize = 512;
+/// The pause menu's lines a plugin has at most, and a label's characters (`ui/menu.rs`).
+const MAX_MENU_ITEMS: usize = 3;
+const MAX_MENU_LABEL: usize = 40;
 
 /// Whether openOMSI's `omsi.ui.set` takes the panel `t` (as JSON) in a game whose
 /// `omsi.ui.version` is `version`, and else why not - its own words where they matter. Written

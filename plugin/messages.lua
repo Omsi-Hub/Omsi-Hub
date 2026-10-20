@@ -44,8 +44,9 @@ local open = false
 local quick = false
 local shown = false
 local seq = 0
--- (answered here, until Omsi-Hub's inbox says so)
+-- (answered here, until Omsi-Hub's inbox says so; told read, once each)
 local answered = {}
+local read_told = {}
 -- what an accepted instruction still asks of the game, and a hold under way
 local todo = {}
 local hold = nil
@@ -98,8 +99,8 @@ local function sound(priority)
   if fn("audio.play") then omsi.audio.play(s[1], { volume = s[2] }) end
 end
 
--- one line to Omsi-Hub
-local function reply(kind, id, key)
+-- one line to Omsi-Hub (`extra`: more fields of its own, a crew request's)
+local function reply(kind, id, key, extra)
   seq = seq + 1
   local a = hook.assignment or {}
   local d = duty()
@@ -109,8 +110,11 @@ local function reply(kind, id, key)
     uid = tostring(hook.issued and hook.issued() or 0) .. "-" .. tostring(math.floor((fn("util.now") and omsi.util.now() or 0))) .. "-" .. seq,
     at = fn("util.now") and omsi.util.now() or 0, clock = clock(),
   }
+  for k, v in pairs(extra or {}) do r[k] = v end
   if hook.send then hook.send("replies.jsonl", "OMSIHUB-REPLY ", r, true) end
 end
+
+M.reply = reply
 
 local function find(id)
   for _, m in ipairs(inbox and inbox.messages or {}) do
@@ -123,6 +127,11 @@ end
 local function waiting(m)
   if m.mine or not m.action or answered[m.id] then return false end
   return m.state ~= "accepted" and m.state ~= "declined"
+end
+
+-- an info message of the first two not answered yet: the canned replies under it
+local function can_reply(m, k)
+  return not m.mine and not m.action and m.state ~= "read" and not answered[m.id] and k <= 2
 end
 
 local function any_waiting()
@@ -198,6 +207,10 @@ local function carry(a)
   elseif kind == "swap" and n then
     -- (the spare takes over at the terminus: the duty ends with the trip before)
     todo[#todo + 1] = { kind = "hand_over", trip = n }
+  elseif kind == "layover" and n then
+    -- (the bus runs late: at the terminus before trip `n` it leaves as soon as it can)
+    local trips = fn("duty.trips") and omsi.duty.trips() or {}
+    todo[#todo + 1] = { kind = "layover", trip = n, minutes = a.minutes or 0, departure = (trips[n] or {}).departure or a.departure }
   end
 end
 
@@ -218,6 +231,12 @@ local function on_trip()
       table.remove(todo, i)
       if fn("duty.finish") then omsi.duty.finish() end
       toast(tr("A spare bus takes over: take your bus back to the depot"), tr("Spare bus"), "sync_alt", COLOR.instruction, 12)
+    elseif t.kind == "layover" and d.trip > t.trip then
+      table.remove(todo, i)
+    elseif t.kind == "layover" and (d.trip == t.trip or (d.trip == t.trip - 1 and d.trip_done)) then
+      -- (at the terminus before that trip, or on it already: said once)
+      table.remove(todo, i)
+      toast(tr("Shorter layover: %{m} min less, leave for the %{time} trip as soon as the passengers are on", { m = t.minutes, time = hhmm(t.departure) }), tr("Shorter layover"), "timer", COLOR.instruction, 12)
     end
   end
 end
@@ -301,7 +320,7 @@ local function children(in_nav)
         { type = "button", id = "msg_accept_" .. m.id, text = tr("Accept"), icon = "check" },
         { type = "button", id = "msg_decline_" .. m.id, text = tr("Decline"), icon = "close" },
       } }
-    elseif not m.mine and not m.action and m.state ~= "read" and not answered[m.id] and k <= 2 then
+    elseif can_reply(m, k) then
       out[#out + 1] = { type = "row", children = choices(inbox.replies, "msg_reply_" .. m.id .. "_") }
     end
   end
@@ -320,6 +339,43 @@ end
 -- the inbox's elements for the navigator's Messages tab (`nav.lua`)
 function M.children()
   return children(true)
+end
+
+-- the inbox as the phone's Messages tab draws it in its own look: the messages shown (the
+-- newest first; each with `state` - its answer here or Omsi-Hub's word -, `waiting` for
+-- Accept and Decline, `replies` for the canned replies), the hold's seconds left, whether the
+-- quick buttons are open and the quick buttons and canned replies themselves
+function M.view()
+  local list = inbox and inbox.messages or {}
+  local out = { messages = {}, quick_open = quick, quick = inbox and inbox.quick or {}, replies = inbox and inbox.replies or {} }
+  if hold then out.hold = math.max(0, hold.until_ - (clock() or hold.until_)) end
+  for k = 1, math.min(SHOWN, #list) do
+    local m = list[k]
+    out.messages[k] = {
+      id = m.id, time = m.time or "", from = m.from or "", mine = m.mine == true, priority = m.priority or "info",
+      text = m.text or "", reply = m.reply or "", outcome = m.outcome or "", icon = m.mine and "near_me" or (ICON[m.priority] or "chat"),
+      state = answered[m.id] and tr(answered[m.id]) or (m.state_label or ""), waiting = waiting(m), replies = can_reply(m, k),
+    }
+  end
+  return out
+end
+
+-- the messages shown in the open Messages tab told read to Omsi-Hub (once each; an
+-- instruction is answered with Accept or Decline instead)
+function M.shown()
+  local list = inbox and inbox.messages or {}
+  for k = 1, math.min(SHOWN, #list) do
+    local m = list[k]
+    if m.id and not m.mine and not m.action and (m.state == "sent" or m.state == "delivered") and not read_told[m.id] then
+      read_told[m.id] = true
+      reply("read", m.id)
+    end
+  end
+end
+
+-- the quick buttons to control opened (the pause menu's "Message to control" on the phone)
+function M.open_quick()
+  quick = true
 end
 
 -- the inbox goes into the navigator (`on`) or has a panel of its own again
@@ -360,6 +416,15 @@ local function panel()
   end
   layout.set(PANEL, { anchor = "bottom_right", x = 16, y = 96, width = 340, accent = "#F47F30", draggable = true, children = children() })
   shown = true
+end
+
+-- (the inbox's own panel opened with the quick buttons: the pause menu's "Message to control"
+-- where the phone is not)
+function M.open()
+  if not inbox then return false end
+  open, quick = true, true
+  panel()
+  return true
 end
 
 -- the inbox read again (every few seconds): what is new told
