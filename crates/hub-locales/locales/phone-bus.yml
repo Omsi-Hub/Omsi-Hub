@@ -1,0 +1,23 @@
+_version: 2
+# The phone's Bus tab (plugin/phone_bus.lua).
+"Seated":
+  nl: "Zittend"
+  de: "Sitzend"
+  fr: "Assis"
+  ru: "Сидят"
+  uk: "Сидять"
+  pl: "Siedzący"
+"Standing":
+  nl: "Staand"
+  de: "Stehend"
+  fr: "Debout"
+  ru: "Стоят"
+  uk: "Стоять"
+  pl: "Stojący"
+"The bus tells nothing of itself":
+  nl: "De bus vertelt niets over zichzelf"
+  de: "Der Bus verrät nichts über sich"
+  fr: "Le bus ne dit rien de lui-même"
+  ru: "Автобус ничего о себе не сообщает"
+  uk: "Автобус нічого про себе не повідомляє"
+  pl: "Autobus nic o sobie nie mówi"

@@ -44,6 +44,8 @@ local brief, closed_sent = nil, nil
 local write_wait, read_wait = 0, 0
 local off = false
 local shown = false
+-- (in the navigator's phone, `nav.lua`: no card of its own; the files and alerts go on)
+local docked = false
 
 local function fn(t, name)
   return type(t) == "table" and type(t[name]) == "function"
@@ -229,6 +231,20 @@ function M.rows(d, b)
   return children
 end
 
+-- the card goes into the navigator's phone (`on`) or has a panel of its own again
+function M.dock(on)
+  docked = on
+  if on and shown and has["ui.remove"] then
+    layout.remove(PANEL)
+    shown = false
+  end
+end
+
+-- Omsi-Hub's brief for the trip under way, as last read (nil: none, or an old one)
+function M.brief()
+  return brief
+end
+
 -- every second (main.lua): the files, the alerts, the card
 function M.tick(dt)
   if not (M.on() and fn(omsi.duty, "get")) then return end
@@ -254,7 +270,7 @@ function M.tick(dt)
       end
     end
   end
-  if not has["ui.set"] then return end
+  if not has["ui.set"] or docked then return end
   layout.set(PANEL, { anchor = "top_left", x = 16, y = 330, width = 330, accent = NOW, draggable = true, children = M.rows(d, brief) })
   shown = true
 end

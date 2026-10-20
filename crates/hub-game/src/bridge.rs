@@ -205,6 +205,20 @@ pub struct Assignment {
     /// A free drive along one route of `line`: the route (its trip's name). The game keeps no
     /// time on it; the plugin shows the route (what the old game's `--free-line` did).
     pub free_line: String,
+    /// The phone in openOMSI's navigator (`lua/nav.lua`): the navigator's light look and
+    /// whether the phone is wanted (None: the dark look, the phone on).
+    #[serde(default)]
+    pub nav: Option<NavLook>,
+}
+
+/// How the player has openOMSI's navigator (its `settings.cfg`), for the phone docked under
+/// its map: its light look (`nav_light`) - the phone's texts are dark on it -, and the
+/// player's switch for the phone (None: on).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct NavLook {
+    pub light: bool,
+    pub phone: Option<bool>,
 }
 
 /// A part of a duty: trips `first` to `first + trips - 1` of a tour (from 1), the first of them
@@ -281,6 +295,12 @@ pub struct Hello {
     pub functions: BTreeMap<String, bool>,
     /// The assignment the plugin found (its `issued`; 0: none).
     pub issued: u64,
+    /// The game's `omsi.ui.version` (0: a game without panels; 5: openOMSI 0.3.38), and
+    /// whether it has the navigator's board the phone docks to (`omsi.ui.dock`).
+    #[serde(default)]
+    pub ui: i64,
+    #[serde(default)]
+    pub dock: bool,
 }
 
 /// One thing that happened on the duty.

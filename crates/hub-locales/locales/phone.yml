@@ -1,0 +1,4 @@
+_version: 2
+# The phone in openOMSI's navigator (plugin/nav.lua, plugin/phone_theme.lua): the shell's own
+# texts. Each tab has a table of its own: phone-ride.yml, phone-stops.yml, phone-duty.yml,
+# phone-msgs.yml, phone-bus.yml (the texts are listed in crates/hub-game/src/install.rs TEXTS).

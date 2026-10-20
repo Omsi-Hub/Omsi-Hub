@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 /// The plugin's name: its folder in the plugins folder.
 pub const NAME: &str = "omsihub";
 /// The plugin's version; `plugin/main.lua` says the same (a test keeps the two the same).
-pub const VERSION: &str = "1.9.0";
+pub const VERSION: &str = "1.12.0";
 /// The plugin's files.
 pub const FILES: &[(&str, &str)] = &[
     ("main.lua", include_str!("../../../plugin/main.lua")),
@@ -38,6 +38,14 @@ pub const FILES: &[(&str, &str)] = &[
     ("traffic.lua", include_str!("../../../plugin/traffic.lua")),
     ("dash.lua", include_str!("../../../plugin/dash.lua")),
     ("layout.lua", include_str!("../../../plugin/layout.lua")),
+    // the phone in openOMSI's navigator: its shell, its look and its tabs
+    ("nav.lua", include_str!("../../../plugin/nav.lua")),
+    ("phone_theme.lua", include_str!("../../../plugin/phone_theme.lua")),
+    ("phone_ride.lua", include_str!("../../../plugin/phone_ride.lua")),
+    ("phone_stops.lua", include_str!("../../../plugin/phone_stops.lua")),
+    ("phone_duty.lua", include_str!("../../../plugin/phone_duty.lua")),
+    ("phone_msgs.lua", include_str!("../../../plugin/phone_msgs.lua")),
+    ("phone_bus.lua", include_str!("../../../plugin/phone_bus.lua")),
 ];
 /// The texts the plugin shows (`tr` in `plugin/main.lua`), in English: Omsi-Hub puts their
 /// translations into the assignment (`bridge::Assignment::texts`).
@@ -257,6 +265,30 @@ pub const TEXTS: &[&str] = &[
     "Roadworks on the line today: expect delays",
     "Diversion on the line today: expect delays",
     "Diversion on the line today",
+    // the phone in openOMSI's navigator (`lua/nav.lua`), tab by tab (their translations:
+    // crates/hub-locales/locales/phone-<tab>.yml)
+    // phone_ride.lua
+    "Ride",
+    "Break",
+    "Break over",
+    "until %{time}",
+    "Trip done",
+    "Delay",
+    "km/h",
+    // phone_stops.lua
+    "No trip under way",
+    // phone_duty.lua
+    "No trips yet: start your duty",
+    "No duty: take one in the Omsi-Hub app",
+    // phone_msgs.lua
+    "Messages",
+    "Inbox",
+    "Message from control",
+    // phone_bus.lua
+    "Bus",
+    "Seated",
+    "Standing",
+    "The bus tells nothing of itself",
 ];
 
 /// The sounds of the control room's messages (`lua/messages.lua`), made here as small WAV files:

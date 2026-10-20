@@ -1,0 +1,9 @@
+_version: 2
+# The phone's Messages tab (plugin/phone_msgs.lua).
+"Message from control":
+  nl: "Bericht van de centrale"
+  de: "Nachricht der Leitstelle"
+  fr: "Message du poste de contrôle"
+  ru: "Сообщение диспетчерской"
+  uk: "Повідомлення диспетчерської"
+  pl: "Wiadomość od dyspozytorni"

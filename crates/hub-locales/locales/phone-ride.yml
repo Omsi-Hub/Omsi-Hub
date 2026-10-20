@@ -1,0 +1,23 @@
+_version: 2
+# The phone's Ride tab (plugin/phone_ride.lua).
+"Ride":
+  nl: "Rit"
+  de: "Fahrt"
+  fr: "Trajet"
+  ru: "Рейс"
+  uk: "Рейс"
+  pl: "Kurs"
+"Break over":
+  nl: "Pauze voorbij"
+  de: "Pause vorbei"
+  fr: "Pause terminée"
+  ru: "Перерыв окончен"
+  uk: "Перерву закінчено"
+  pl: "Przerwa skończona"
+"Trip done":
+  nl: "Rit klaar"
+  de: "Fahrt beendet"
+  fr: "Trajet terminé"
+  ru: "Рейс завершён"
+  uk: "Рейс завершено"
+  pl: "Kurs zakończony"

@@ -19,6 +19,14 @@ never changes their files.
   openOMSI's version), your **account** - sign in, or continue locally without sync -, your driver
   and the way on (the tour, or straight to the start). Before the first drive, Omsi-Hub puts its
   plugin into openOMSI (Settings, "openOMSI and OMSI 2", switches it off or removes it).
+- **The phone in openOMSI's navigator** (openOMSI 0.3.38 and newer): under the navigator's map a
+  status line (the trip's line, where it goes, trip 3 of 8, on time or how late in the
+  navigator's own colours) and five tabs - Ride (the next stops, passengers, speed and delay),
+  Stops, Duty (signing on, the duty strip, the duty's trips), Messages (the control room's, a new
+  one counted on the tab, an instruction opens it) and Bus (fuel, passengers). As a trip ends
+  its card, then at a terminus with time to spare the break clock take the Ride tab over. Its
+  tabs work without F10; a short navigator gets one line, a light one dark text. An older
+  openOMSI, or a navigator without its board, keeps the panels of before.
 - **Windows blocking openOMSI** (Smart App Control, "os error 4551"): Omsi-Hub takes the
   "downloaded from the internet" mark off openOMSI's program and its libraries before it starts
   them, and where Windows still refuses it, says so and what can be done.

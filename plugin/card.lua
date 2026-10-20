@@ -22,6 +22,10 @@ local PLATE, ON_PLATE, ACCENT_INK = "#FFD23F", "#1A1400", "#F9BC84"
 
 local tr = function(t) return t end
 local shown, waiting = nil, nil
+-- (in the navigator's phone, `nav.lua`: the trip's card is the phone's, none of its own here;
+-- the last trip is kept for it with the game's clock it ended at)
+local docked = false
+local last = nil
 
 function M.setup(translate)
   tr = translate
@@ -205,9 +209,26 @@ local function show(run, saved)
   panel(shown)
 end
 
+-- the card goes into the navigator's phone (`on`) or comes on the screen again
+function M.dock(on)
+  docked = on
+  if on then
+    waiting = nil
+    M.close()
+  end
+end
+
+-- the last trip done: { run = its record (`trip.finish`), judged = `career.evaluate(run)`,
+-- saved = whether it was saved, clock = the game's clock it ended at } (nil: none yet)
+function M.last()
+  return last
+end
+
 -- a trip's card: now when the bus stands, else when it next does
 function M.hold(run, saved, standing)
-  if not (omsi.ui and omsi.ui.set) then return end
+  local i = omsi.info and omsi.info() or nil
+  last = { run = run, judged = career.evaluate(run), saved = saved, clock = type(i) == "table" and tonumber(i.clock) or 0 }
+  if not (omsi.ui and omsi.ui.set) or docked then return end
   if standing then
     if waiting then show(waiting[1], waiting[2]) waiting = nil end
     show(run, saved)
