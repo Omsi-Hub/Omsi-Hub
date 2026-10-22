@@ -6,7 +6,9 @@
 // Omsi-Hub plugin switched on or off there, or taken out (`addon_state`, `addon_enable`,
 // `addon_remove`; the folders' checks are `hub_setup_openomsi` and `hub_setup_omsi2`), and the
 // phone in openOMSI's navigator switched on or off (`nav_phone`, given to the plugin with
-// every drive).
+// every drive), and signing on for a company's duty with the driver's pass (`nav_signon`, on
+// unless switched off): the pass's number and code beside it (`hub_profile_personnel`, made for
+// a driver who has none).
 
 import { html, useEffect, useState } from '../../vendor/preact-htm.js';
 import { call, openPath, pickFolder } from '../api.js';
@@ -31,6 +33,7 @@ const FROM = {
 /** The tab's one row: the folder, the game in it, the compatibility, the plugin. */
 export function AddonPanel() {
   const [s, setS] = useState(null);
+  const pass = usePass(S.settings?.nav_signon !== false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const run = (cmd, args) => {
@@ -109,7 +112,12 @@ export function AddonPanel() {
       ${plugin && plugin.state !== 'missing' && html`<div class="row wrap" style="gap:12px;align-items:center;margin-top:12px">
           <span class="grow"><${Switch} checked=${S.settings?.nav_phone !== false} label="Phone unit in the navigator" onChange=${(on) => saveSettings({ nav_phone: on })} /></span>
         </div>
-        <p class="muted small" style="margin:4px 0 0">${tr("The ride, the stops, your duty, the messages and the bus under the navigator's map (openOMSI 0.3.38 or newer). Off, or in an older openOMSI: the panels on the screen as before.")}</p>`}
+        <p class="muted small" style="margin:4px 0 0">${tr("The ride, the stops, your duty, the messages and the bus under the navigator's map (openOMSI 0.3.38 or newer). Off, or in an older openOMSI: the panels on the screen as before.")}</p>
+        <div class="row wrap" style="gap:12px;align-items:center;margin-top:12px">
+          <span class="grow"><${Switch} checked=${S.settings?.nav_signon !== false} label="Sign on with your personnel number and code" onChange=${(on) => saveSettings({ nav_signon: on })} /></span>
+        </div>
+        <p class="muted small" style="margin:4px 0 0">${tr("On a company's duty you sign on in the game before you drive: on the phone's keypad, or in the company's panel (F10) in an older openOMSI.")}</p>
+        ${pass && html`<p class="small" id="addon-pass" style="margin:4px 0 0"><${Icon} name="badge" size=${16} /> <b>${tr('Your pass: %{number} · code %{code}', pass)}</b></p>`}`}
       <p class="muted small" style="margin:4px 0 0;word-break:break-all">${tr('Plugins folder: %{dir}', { dir: inst.plugins_dir || '-' })}</p>
       ${s.assigned && html`<p class="muted small" id="addon-assigned" style="margin:4px 0 0">${s.assigned.company
         ? tr('Last drive: %{company}, line %{line}, tour %{tour}', { company: s.assigned.company, line: s.assigned.line, tour: s.assigned.tour })
@@ -117,6 +125,24 @@ export function AddonPanel() {
       ${plugin && plugin.state !== 'missing' && html`<div class="row" style="margin-top:8px"><${Button} kind="ghost" icon="delete" label="Take the plugin out of openOMSI" disabled=${busy} onClick=${() => run('addon_remove')} /></div>`}
     </div>`}
   </div>`;
+}
+
+/** The pass of the driver who drives (their personnel number and code), made for one who has
+ * none, while signing on is on (`on`); null else or until it is read. */
+export function usePass(on) {
+  const [pass, setPass] = useState(null);
+  const name = S.config?.profile || undefined;
+  useEffect(() => {
+    if (!on) return setPass(null);
+    let live = true;
+    call('hub_profile_personnel', { name, make: true })
+      .then((p) => live && setPass(p && p.number ? p : null))
+      .catch(() => live && setPass(null));
+    return () => {
+      live = false;
+    };
+  }, [on, name]);
+  return pass;
 }
 
 function pluginLine(p, ours) {

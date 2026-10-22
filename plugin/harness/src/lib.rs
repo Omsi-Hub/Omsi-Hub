@@ -96,6 +96,9 @@ pub struct GameState {
     /// How far the player dragged each panel (`omsi.ui.moved`); a panel set again keeps it,
     /// one removed loses it.
     pub moved: BTreeMap<String, (f64, f64)>,
+    /// The size the player gave each panel with the mouse (`omsi.ui.resized`, ui version 6:
+    /// width and height in points); the game keeps it for the panel's id the whole session.
+    pub resized: BTreeMap<String, (f64, f64)>,
     pub actions: Vec<String>,
     pub fonts: Vec<String>,
     pub sent: Vec<(i64, String)>,
@@ -112,6 +115,7 @@ pub struct GameState {
     /// the navigator's board `omsi.ui.dock` says (width, room, height, whether it is this
     /// plugin's; None: no board shown) - `omsi.ui.dock` is there from version 3 on -, and
     /// whether the duty's trip under way is done (at its terminus).
+    /// (6: panels the player resizes with the mouse, `omsi.ui.resized` and `ui_resize`.)
     pub ui_version: i64,
     pub dock: Option<(f64, f64, f64, bool)>,
     pub trip_done: bool,
@@ -167,6 +171,7 @@ impl Default for GameState {
             toasts: Vec::new(),
             panels: BTreeMap::new(),
             moved: BTreeMap::new(),
+            resized: BTreeMap::new(),
             actions: Vec::new(),
             fonts: Vec::new(),
             sent: Vec::new(),
@@ -486,7 +491,12 @@ fn api(lua: &Lua, state: &Rc<RefCell<GameState>>, plugin_dir: &Path) -> mlua::Re
             s.borrow_mut().ui_errors.push(format!("{}: {why}", a.0));
             return (false, why).into_lua_multi(l);
         }
-        s.borrow_mut().panels.insert(a.0, v);
+        let mut g = s.borrow_mut();
+        // (a panel said not to be resizable: the size the player gave it forgotten)
+        if v.get("resizable") == Some(&Value::Bool(false)) {
+            g.resized.remove(&a.0);
+        }
+        g.panels.insert(a.0, v);
         true.into_lua_multi(l)
     });
     f!(ui, "toast", |l, s, a: (String, Option<LuaValue>)| {
@@ -506,6 +516,14 @@ fn api(lua: &Lua, state: &Rc<RefCell<GameState>>, plugin_dir: &Path) -> mlua::Re
         let m = g.panels.contains_key(&id).then(|| g.moved.get(&id).copied().unwrap_or((0.0, 0.0)));
         Ok((m.map(|m| m.0), m.map(|m| m.1)))
     });
+    // (the size the player gave a panel: as long as the panel is there, kept for its id)
+    if version >= 6 {
+        f!(ui, "resized", |_l, s, id: String| {
+            let g = s.borrow();
+            let r = g.panels.contains_key(&id).then(|| g.resized.get(&id).copied()).flatten();
+            Ok((r.map(|r| r.0), r.map(|r| r.1)))
+        });
+    }
     f!(ui, "update", |_l, _s, _a: mlua::MultiValue| Ok(true));
     // (the pause menu's lines: as openOMSI's `ui/menu.rs` takes them - 3 a plugin, a label of
     // one line and 40 characters at most)
@@ -717,6 +735,19 @@ pub fn check_panel(t: &Value, version: i64) -> Result<(), String> {
     }
     for k in ["visible", "clickable", "draggable", "grab"] {
         r.boolean(k)?;
+    }
+    // (resizing: version 6; an older game skips the keys)
+    if version >= 6 {
+        r.boolean("resizable")?;
+        for k in ["min_width", "max_width", "min_height", "max_height"] {
+            r.number(k)?;
+        }
+        r.number("height")?;
+        if let Some(h) = r.get("height").as_f64() {
+            if !(20.0..=4000.0).contains(&h) {
+                return Err(format!("height: {h} is not from 20 to 4000"));
+            }
+        }
     }
     let mut count = 0;
     r.children("children", 0, &mut count, version)

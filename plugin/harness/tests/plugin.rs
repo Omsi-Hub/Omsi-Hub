@@ -365,3 +365,111 @@ fn the_driver_sizes_and_moves_the_panels_and_they_stay_so() {
     let reset = panel(&h, "omsihub");
     assert_eq!((reset["x"].as_f64(), reset["y"].as_f64(), reset["width"].as_f64()), (Some(16.0), Some(0.0), Some(300.0)));
 }
+
+/// Whether a text of the panel `id` has `part` in it (its rows' too).
+fn says(h: &Harness, id: &str, part: &str) -> bool {
+    panel(h, id).to_string().contains(part)
+}
+
+#[test]
+fn an_openomsi_without_the_phone_signs_on_in_the_company_s_panel_as_before() {
+    let dir = installed("signon-v2");
+    let a = Assignment { personnel: Some(bridge::Personnel { number: "4711".into(), code: "2580".into() }), ..assignment() };
+    bridge::write_assignment(&dir, &a).unwrap();
+    let mut h = Harness::load(&dir, game()).unwrap();
+    h.frame().unwrap();
+    // the two text fields, the button and the pass under them; no keypad, no duty yet
+    let p = panel(&h, "omsihub");
+    let ids: Vec<&str> = p["children"].as_array().unwrap().iter().filter_map(|e| e["id"].as_str()).collect();
+    assert!(["signon_number", "signon_code", "signon"].iter().all(|i| ids.contains(i)), "{p}");
+    assert!(!p.to_string().contains("duty_key_"));
+    assert!(says(&h, "omsihub", "Personnel no. 4711"));
+    assert!(h.state.borrow().started.is_empty());
+    // a wrong code: said
+    h.fire("ui_change", &[json!("omsihub"), json!("signon_number"), json!("4711")]).unwrap();
+    h.fire("ui_change", &[json!("omsihub"), json!("signon_code"), json!("1111")]).unwrap();
+    h.fire("ui_click", &[json!("omsihub"), json!("signon")]).unwrap();
+    let wrong = panel(&h, "omsihub")["children"].as_array().unwrap().iter().find(|e| e["text"].as_str().is_some_and(|t| t.starts_with("Not known here"))).cloned().unwrap();
+    assert_eq!(wrong["visible"], true);
+    // the right one (Enter in the field): the duty order, then at work and the duty taken
+    h.fire("ui_change", &[json!("omsihub"), json!("signon_code"), json!("2580")]).unwrap();
+    h.fire("ui_click", &[json!("omsihub"), json!("signon_code")]).unwrap();
+    assert!(says(&h, "omsihub", "Duty assignment"));
+    h.fire("ui_click", &[json!("omsihub"), json!("accept")]).unwrap();
+    h.frame().unwrap();
+    assert_eq!(h.state.borrow().started.len(), 1);
+    assert!(says(&h, "omsihub", "Sign off"));
+}
+
+/// The game of `game()` in an openOMSI whose panels the player resizes (ui version 6), the
+/// phone switched off (the company's panel on the screen).
+fn resizing_game() -> GameState {
+    GameState { ui_version: 6, ..game() }
+}
+
+fn phone_off() -> Assignment {
+    Assignment { nav: Some(bridge::NavLook { light: false, phone: Some(false) }), ..assignment() }
+}
+
+#[test]
+fn the_driver_resizes_the_panels_where_the_game_can_and_they_keep_their_size() {
+    let dir = installed("resize");
+    bridge::write_assignment(&dir, &phone_off()).unwrap();
+    let mut h = Harness::load(&dir, resizing_game()).unwrap();
+    h.frame().unwrap();
+    // resizable, between bounds of its own width; its height its content's
+    let p = panel(&h, "omsihub");
+    assert_eq!((p["resizable"].as_bool(), p["width"].as_f64(), p["min_width"].as_f64(), p["max_width"].as_f64()), (Some(true), Some(300.0), Some(180.0), Some(750.0)));
+    assert!(p.get("height").is_none(), "{p}");
+    assert!(p["min_height"].as_f64().is_some() && p["max_height"].as_f64().is_some());
+    // the player drags its corner: the size kept, the panel given it
+    h.state.borrow_mut().resized.insert("omsihub".into(), (420.0, 260.0));
+    h.fire("ui_resize", &[json!("omsihub"), json!(420.0), json!(260.0)]).unwrap();
+    let p = panel(&h, "omsihub");
+    assert_eq!((p["width"].as_f64(), p["height"].as_f64()), (Some(420.0), Some(260.0)));
+    assert_eq!(eval(&h, "{ omsi.data.layout.omsihub.width, omsi.data.layout.omsihub.height }"), json!([420.0, 260.0]));
+    h.frame().unwrap();
+    assert_eq!(panel(&h, "omsihub")["width"].as_f64(), Some(420.0));
+    // the size row grows it with its texts (the game told to forget the player's size for it)
+    h.fire("key", &[json!("F10"), json!(true)]).unwrap();
+    h.fire("ui_click", &[json!("omsihub"), json!("hub_size_up")]).unwrap();
+    let p = panel(&h, "omsihub");
+    assert_eq!((p["width"].as_f64().map(f64::round), p["height"].as_f64().map(f64::round), p["resizable"].as_bool()), (Some(462.0), Some(286.0), Some(true)));
+    assert!(!h.state.borrow().resized.contains_key("omsihub"));
+    h.fire("key", &[json!("F10"), json!(true)]).unwrap();
+    // the next drive: at that size from the start
+    let kept = eval(&h, "omsi.data.layout");
+    let mut h = Harness::load_with(&dir, resizing_game(), &format!("omsi.data.layout = omsi.json.decode('{kept}')")).unwrap();
+    h.frame().unwrap();
+    let p = panel(&h, "omsihub");
+    assert_eq!((p["width"].as_f64().map(f64::round), p["height"].as_f64().map(f64::round), p["resizable"].as_bool()), (Some(462.0), Some(286.0), Some(true)));
+    // back to how it came
+    h.fire("key", &[json!("F10"), json!(true)]).unwrap();
+    h.fire("ui_click", &[json!("omsihub"), json!("hub_size_reset")]).unwrap();
+    let p = panel(&h, "omsihub");
+    assert_eq!((p["width"].as_f64(), p.get("height").is_none()), (Some(300.0), true));
+    assert!(h.state.borrow().ui_errors.is_empty(), "{:?}", h.state.borrow().ui_errors);
+    // the trip's card: resizable too
+    h.fire("trip_done", &[json!(1), json!("arrived"), json!(95.0), json!(88.0), json!(100.0)]).unwrap();
+    h.frame().unwrap();
+    let card = panel(&h, "omsihub_trip");
+    assert_eq!((card["resizable"].as_bool(), card["min_width"].as_f64(), card["width"].as_f64()), (Some(true), Some(320.0), Some(400.0)));
+}
+
+#[test]
+fn an_openomsi_that_does_not_resize_panels_gets_none_of_it() {
+    let dir = installed("no-resize");
+    bridge::write_assignment(&dir, &phone_off()).unwrap();
+    // (a size kept from a game that could: not given to one that cannot)
+    let before = "omsi.data.layout = { omsihub = { scale = 1, dx = 0, dy = 0, width = 420, height = 260 } }";
+    let mut h = Harness::load_with(&dir, GameState { ui_version: 5, ..game() }, before).unwrap();
+    h.frame().unwrap();
+    let p = panel(&h, "omsihub");
+    for k in ["resizable", "height", "min_width", "max_width", "min_height", "max_height"] {
+        assert!(p.get(k).is_none(), "{k}: {p}");
+    }
+    assert_eq!(p["width"].as_f64(), Some(300.0));
+    // the size row as before
+    h.fire("key", &[json!("F10"), json!(true)]).unwrap();
+    assert!(says(&h, "omsihub", "hub_size_up"));
+}

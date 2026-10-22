@@ -47,6 +47,17 @@ never changes their files.
   has the duty, a message to control and ending the duty, and closed stops are struck through on
   the navigator's map. An older openOMSI (0.3.37), or a navigator without its board, keeps the
   panels of before.
+- **Signing on with your pass** (the plugin 1.13.0): a company's duty is signed on for in the
+  game with your personnel number and code, unless you switch it off (Settings, "openOMSI and
+  OMSI 2"); your pass is shown there and on the duty's start, and a driver without one gets one.
+  In the phone a keypad takes the number, then the code (a wrong one is said and typed again),
+  then the duty order's Accept, all without F10; an older openOMSI keeps the company panel's
+  fields.
+- **Panels you size yourself**: with an openOMSI that lets panels be resized, the board, the
+  trip's card, the inbox, the on-time card, the duty strip and the company's panel are sized at
+  their edges and corners, and keep that size in later drives; the board lists as many stops as
+  its height holds. openOMSI's settings in Omsi-Hub gain the navigator's size, the navigator as a
+  widget, its 3D buildings and its route arrows, and its corner keeps where you dragged it.
 - **Windows blocking openOMSI** (Smart App Control, "os error 4551"): Omsi-Hub takes the
   "downloaded from the internet" mark off openOMSI's program and its libraries before it starts
   them, and where Windows still refuses it, says so and what can be done.

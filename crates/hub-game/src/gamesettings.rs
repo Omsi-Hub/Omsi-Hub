@@ -43,7 +43,8 @@ const fn number(min: f64, max: f64, step: f64, default: Option<f64>) -> Kind {
 }
 
 /// The groups, in the page's order.
-pub const GROUPS: [&str; 10] = ["Graphics", "Mirrors", "Screen and navigator", "Language", "Sound and radio", "Driving and controls", "Passengers and traffic", "Wheel and pedals", "Gamepad", "Force feedback"];
+pub const GROUPS: [&str; 10] =
+    ["Graphics", "Mirrors", "Screen and navigator", "Language", "Sound and radio", "Driving and controls", "Passengers and traffic", "Wheel and pedals", "Gamepad", "Force feedback"];
 
 /// The groups the Settings page shows with the game controllers (the tab "Controllers"), not
 /// among openOMSI's other settings.
@@ -94,12 +95,18 @@ pub const FIELDS: &[Field] = &[
     field("Screen and navigator", "ui_opacity", "Opacity of the game's panels", number(0.2, 1.0, 0.05, Some(0.85))),
     field("Screen and navigator", "notes", "Notes in the top left corner", Kind::Switch),
     field("Screen and navigator", "navigator", "Navigator", Kind::Switch),
+    // (where the player dragged it, `at x,y`, is openOMSI's too: kept, and offered as a choice
+    // while the file has it - `options_of`)
     field(
         "Screen and navigator",
         "navigator_corner",
         "Navigator's corner",
         Kind::Choice(&[("bottom-left", "Bottom left"), ("bottom-right", "Bottom right"), ("top-left", "Top left"), ("top-right", "Top right")]),
     ),
+    field("Screen and navigator", "nav_size", "Navigator size", number(0.6, 2.0, 0.05, Some(1.0))),
+    field("Screen and navigator", "nav_widget", "Navigator as a widget (dragged anywhere, sized at its corner)", Kind::Switch),
+    field("Screen and navigator", "nav_3d", "3D buildings on the navigator's map", Kind::Switch),
+    field("Screen and navigator", "nav_arrows", "Route arrows over the road (as in OMSI 2)", Kind::Switch),
     field("Screen and navigator", "nav_light", "Navigator in a light look", Kind::Switch),
     field("Screen and navigator", "nav_ai", "Other vehicles on the navigator", Kind::Switch),
     field("Screen and navigator", "nav_surface", "Water, land and rail on the navigator", Kind::Switch),
@@ -155,6 +162,29 @@ pub const FIELDS: &[Field] = &[
 /// The setting called `key`.
 pub fn field_of(key: &str) -> Option<&'static Field> {
     FIELDS.iter().find(|f| f.key == key)
+}
+
+/// The label of the navigator's place where the player dragged it (`navigator_corner = at x,y`).
+pub const DRAGGED: &str = "Where you dragged it";
+
+/// A `navigator_corner` of the form `at x,y`, where the player dragged the navigator to (its
+/// top-left corner as a share of the room the window leaves it across and down, as openOMSI's
+/// navigator reads it: `placed_at`).
+pub fn placed_at(value: &str) -> Option<(f64, f64)> {
+    let (x, y) = value.trim().strip_prefix("at")?.trim().split_once(',')?;
+    let (x, y) = (x.trim().parse::<f64>().ok()?, y.trim().parse::<f64>().ok()?);
+    (x.is_finite() && y.is_finite()).then(|| (x.clamp(0.0, 1.0), y.clamp(0.0, 1.0)))
+}
+
+/// The choices of `field` with `value` in the file: its own, and for the navigator's corner the
+/// place the player dragged it to while the file has one ([`DRAGGED`]).
+pub fn options_of(field: &Field, value: Option<&str>) -> Vec<(String, String)> {
+    let Kind::Choice(options) = field.kind else { return Vec::new() };
+    let mut out: Vec<(String, String)> = options.iter().map(|(v, l)| (v.to_string(), l.to_string())).collect();
+    if let Some(v) = value.filter(|v| field.key == "navigator_corner" && placed_at(v).is_some()) {
+        out.push((v.trim().to_string(), DRAGGED.to_string()));
+    }
+    out
 }
 
 /// Where openOMSI keeps its settings, for the home folder `home`.
@@ -216,6 +246,8 @@ pub fn checked(field: &Field, value: &str) -> Result<String, Refusal> {
             "1" | "0" => Ok(v.to_string()),
             _ => Err(bad()),
         },
+        // (the navigator's place where the player dragged it: as openOMSI wrote it)
+        Kind::Choice(_) if field.key == "navigator_corner" && placed_at(v).is_some() => Ok(v.to_string()),
         Kind::Choice(options) => options.iter().find(|(o, _)| *o == v).map(|(o, _)| o.to_string()).ok_or_else(bad),
         // (one line, as a `key=value` file holds it)
         Kind::Text { .. } => {
@@ -386,6 +418,32 @@ nav_light=1
         assert_eq!(checked(f("render_scale"), " 0.75 "), Ok("0.75".into()), "a line of text");
         assert!(checked(f("ctrl_off"), "a\nb").is_err());
         assert!(field_of("texture_memory").is_none() && field_of("version").is_none(), "old names and the file's own key are left alone");
+        // the navigator's size, as openOMSI clamps it
+        assert_eq!(checked(f("nav_size"), "1.33"), Ok("1.35".into()), "on its steps");
+        assert!(checked(f("nav_size"), "0.5").is_err() && checked(f("nav_size"), "2.1").is_err());
+        assert_eq!(checked(f("nav_widget"), "0"), Ok("0".into()));
+    }
+
+    #[test]
+    fn the_navigator_s_dragged_place_is_kept_and_offered() {
+        let f = field_of("navigator_corner").unwrap();
+        assert_eq!(placed_at("at 0.250,0.700"), Some((0.25, 0.7)));
+        assert_eq!(placed_at(" at 1.5 , -2 "), Some((1.0, 0.0)), "clamped, as the game reads it");
+        assert!(placed_at("bottom-left").is_none() && placed_at("at x,y").is_none() && placed_at("at 0.2").is_none());
+        // the four corners, and the dragged place while the file has one
+        assert_eq!(options_of(f, Some("bottom-left")).len(), 4);
+        assert_eq!(options_of(f, None).len(), 4);
+        let o = options_of(f, Some("at 0.250,0.700"));
+        assert_eq!(o.last(), Some(&("at 0.250,0.700".to_string(), DRAGGED.to_string())));
+        assert!(options_of(field_of("msaa").unwrap(), Some("at 0.1,0.1")).iter().all(|(v, _)| !v.starts_with("at")));
+        // chosen again: written as it is; a corner chosen: the corner
+        assert_eq!(checked(f, "at 0.250,0.700"), Ok("at 0.250,0.700".into()));
+        assert_eq!(checked(f, "top-right"), Ok("top-right".into()));
+        assert!(checked(f, "at nowhere").is_err() && checked(f, "middle").is_err());
+        assert!(checked(field_of("msaa").unwrap(), "at 0.1,0.1").is_err());
+        // (a change of another key leaves the game's own value alone)
+        let file = "navigator_corner=at 0.250,0.700\nmsaa=4\n";
+        assert_eq!(value(&with(file, "msaa", Some("8")), "navigator_corner"), Some("at 0.250,0.700"));
     }
 
     #[test]

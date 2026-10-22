@@ -20,7 +20,7 @@
 -- under its map (nav.lua and its tabs, phone_*.lua); elsewhere they are panels of their own.
 -- A game without the file functions gets the handshake and the reports in its log instead.
 
-local VERSION = "1.12.0"
+local VERSION = "1.13.0"
 local BRIDGE = 1
 local PANEL = "omsihub"
 
@@ -651,6 +651,9 @@ local function on_change(p, element, value)
   end
   if p == PANEL and signon.change(element, value) then panel() end
 end
+
+-- (a panel the player resized with the mouse, where the game can: its size kept)
+omsi.on("ui_resize", function(p, width, height) layout.resize(p, width, height) end)
 
 omsi.on("ui_change", function(p, element, value)
   local q = nav.route_change(p, element, value)

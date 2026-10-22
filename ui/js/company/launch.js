@@ -1,15 +1,17 @@
 // The company's duty launcher, as our game-drawn launcher's (`company/planning/duty_launch.rs`):
 // a duty of the company fixed by the planning - its day and times, its rows (sign on, the trips,
 // the breaks, sign off), the routes of its trips on the map, its bus and depot - and the
-// start: the weather is the player's to choose, or why it cannot start yet. In RosterFlow's
-// look (its own palette in either look).
+// start: the weather is the player's to choose, or why it cannot start yet, and the driver's
+// pass they sign on with in the game (unless signing on is switched off). In RosterFlow's look
+// (its own palette in either look).
 
 import { S, toast } from '../store.js';
 import { duty } from '../hub/drive.js';
+import { usePass } from '../hub/addon.js';
 import { RouteMap } from '../hub/routemap.js';
 import { dark } from '../hub/theme.js';
 import { mapColors } from '../steps/mapbehind.js';
-import { html, useEffect, act, cmd, useView, Icon, Mark, Select, inkOn, rgbOf } from './kit.js';
+import { html, useEffect, act, cmd, useView, Icon, Mark, Select, inkOn, rgbOf, tr } from './kit.js';
 import { openDutyCard } from './dutycard.js';
 
 /** The duty's route as the game-drawn launcher draws it here (`duty_launch::route_map`): the
@@ -111,6 +113,13 @@ function Together({ t }) {
     </div>`;
 }
 
+/** The driver's pass, to sign on with in the game (`nav_signon`, on unless switched off). */
+function Pass() {
+  const pass = usePass(S.settings?.nav_signon !== false);
+  if (!pass) return null;
+  return html`<p class="when pass"><${Icon} name="badge" size=${15} class="ic accent" /><b>${tr('Your pass: %{number} · code %{code}', pass)}</b></p>`;
+}
+
 /** The start (`duty_launch::start_card`): the weather and the start, or why it cannot start. */
 function Start({ s, fix, label }) {
   if (s.blocked) {
@@ -128,6 +137,7 @@ function Start({ s, fix, label }) {
     <span class="caps">${s.caps}</span>
     <div class="weather"><span class="dim">${s.weather_label}</span><${Select} value=${k} options=${s.weathers.map(([, n]) => n)} onChange=${(i) => act('launch_weather', { weather: s.weathers[i][0] })} style="flex:1" /></div>
     <p class="when"><${Icon} name="schedule" size=${15} class="ic accent" />${s.when}</p>
+    <${Pass} />
     <p class="fixed"><${Icon} name="lock" size=${14} class="ic faint" />${s.fixed}</p>
     <span class="grow"></span>
     ${s.together

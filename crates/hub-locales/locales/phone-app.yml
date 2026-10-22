@@ -1,6 +1,7 @@
 _version: 2
 # The phone in openOMSI's navigator on the app's side: its line in the openOMSI features
-# (crates/hub-game/src/compat.rs PHONE) and its switch on the Settings page (ui/js/hub/addon.js).
+# (crates/hub-game/src/compat.rs PHONE), its switches on the Settings page (ui/js/hub/addon.js) and
+# the driver's pass on the company duty's start (ui/js/company/launch.js).
 "Phone unit in the navigator":
   nl: "Telefoon in de navigator"
   de: "Telefon im Navigator"
@@ -22,3 +23,24 @@ _version: 2
   ru: "Рейс, остановки, ваша смена, сообщения и автобус под картой навигатора (openOMSI 0.3.38 или новее). Если выключено или openOMSI старше: панели на экране, как раньше."
   uk: "Рейс, зупинки, ваша зміна, повідомлення й автобус під картою навігатора (openOMSI 0.3.38 або новіший). Якщо вимкнено або openOMSI старіший: панелі на екрані, як раніше."
   pl: "Kurs, przystanki, twoja służba, wiadomości i autobus pod mapą nawigatora (openOMSI 0.3.38 lub nowszy). Wyłączone albo w starszym openOMSI: panele na ekranie jak dotąd."
+"Sign on with your personnel number and code":
+  nl: "Aanmelden met je personeelsnummer en code"
+  de: "Mit Personalnummer und Code anmelden"
+  fr: "Prendre son service avec son matricule et son code"
+  ru: "Вход на смену по табельному номеру и коду"
+  uk: "Вхід на зміну за табельним номером і кодом"
+  pl: "Zgłaszanie się numerem służbowym i kodem"
+"On a company's duty you sign on in the game before you drive: on the phone's keypad, or in the company's panel (F10) in an older openOMSI.":
+  nl: "Bij een dienst van een bedrijf meld je je in het spel aan voordat je rijdt: op het toetsenblok van de telefoon, of in het paneel van het bedrijf (F10) in een oudere openOMSI."
+  de: "Bei einem Dienst einer Firma meldest du dich im Spiel an, bevor du fährst: auf dem Tastenfeld des Telefons, oder im Feld der Firma (F10) in einem älteren openOMSI."
+  fr: "Pour un service d’une entreprise, vous prenez votre service dans le jeu avant de rouler : sur le clavier du téléphone, ou dans le panneau de l’entreprise (F10) dans un openOMSI plus ancien."
+  ru: "На смене компании вы входите в игре до начала поездки: на клавиатуре телефона или в панели компании (F10) в более старом openOMSI."
+  uk: "На зміні компанії ви входите в грі до початку поїздки: на клавіатурі телефона або в панелі компанії (F10) у старішому openOMSI."
+  pl: "Na służbie firmy zgłaszasz się w grze przed jazdą: na klawiaturze telefonu albo w panelu firmy (F10) w starszym openOMSI."
+"Your pass: %{number} · code %{code}":
+  nl: "Je dienstpas: %{number} · code %{code}"
+  de: "Dein Dienstausweis: %{number} · Code %{code}"
+  fr: "Votre carte de service : %{number} · code %{code}"
+  ru: "Ваш служебный пропуск: %{number} · код %{code}"
+  uk: "Ваша службова перепустка: %{number} · код %{code}"
+  pl: "Twoja legitymacja służbowa: %{number} · kod %{code}"

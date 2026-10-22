@@ -5,6 +5,7 @@ mod common;
 
 use common::*;
 use hub_game::bridge;
+use hub_plugin_harness::{GameState, Harness, Stop};
 use serde_json::json;
 
 #[test]
@@ -73,6 +74,35 @@ fn without_the_navigator_s_board_the_panels_come_back_after_a_grace_and_go_again
     h.state.borrow_mut().dock = Some((360.0, 420.0, 0.0, false));
     run(&mut h, 7);
     assert!(has_panel(&h, "omsihub"));
+    no_ui_errors(&h);
+}
+
+#[test]
+fn the_board_on_the_screen_lists_as_many_stops_as_the_height_the_player_gave_it() {
+    // (an openOMSI whose panels the player resizes, its navigator showing no board; a trip of ten
+    // stops)
+    let mut g = GameState { ui_version: 6, dock: None, ..docked_game() };
+    let names = ["Zoo", "Markt", "Rathaus", "Post", "Kirche", "Schule", "Park", "Bad", "Feld", "Hbf"];
+    g.trips[0].stops = names.iter().enumerate().map(|(k, n)| Stop { id: k as i64 + 1, name: n.to_string(), arr: 28_800.0 + 60.0 * k as f64, dep: 28_800.0 + 60.0 * k as f64 }).collect();
+    let (_, mut h) = start("board-height", Some(assignment()), g, 8);
+    let stops = |h: &Harness| find(h, "omsihub_board", |e| e["type"] == "stops").map_or(0, |e| e["stops"].as_array().unwrap().len());
+    let board = panel(&h, "omsihub_board");
+    assert_eq!((board["anchor"].as_str(), board["resizable"].as_bool()), (Some("left"), Some(true)));
+    assert_eq!(stops(&h), 4, "as before: the next four");
+    // made taller: all ten; made short: one
+    h.state.borrow_mut().resized.insert("omsihub_board".into(), (340.0, 600.0));
+    h.fire("ui_resize", &[json!("omsihub_board"), json!(340.0), json!(600.0)]).unwrap();
+    run(&mut h, 1);
+    assert_eq!(stops(&h), 10, "{}", panel(&h, "omsihub_board"));
+    assert_eq!(panel(&h, "omsihub_board")["height"].as_f64(), Some(600.0));
+    h.state.borrow_mut().resized.insert("omsihub_board".into(), (340.0, 190.0));
+    h.fire("ui_resize", &[json!("omsihub_board"), json!(340.0), json!(190.0)]).unwrap();
+    run(&mut h, 1);
+    assert_eq!(stops(&h), 1);
+    // the phone in the navigator is never resizable
+    h.state.borrow_mut().dock = Some((360.0, 420.0, 0.0, true));
+    run(&mut h, 1);
+    assert!(phone(&h).get("resizable").is_none());
     no_ui_errors(&h);
 }
 

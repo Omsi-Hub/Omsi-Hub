@@ -5,9 +5,11 @@
 -- judged (`career.evaluate`: a grade, its parts, the experience it earned, the fines) and, on a
 -- tab of its own, each stop with when it was due and when the bus came and left. It comes when
 -- the bus stands and stays some seconds of the game running; a click keeps it open until its
--- close button (or Enter, or Escape) puts it away.
+-- close button (or Enter, or Escape) puts it away. Where the game can, the player resizes it
+-- at its edges and corners, and it keeps that size (layout.lua).
 
 local career = require("career")
+local layout = require("layout")
 
 local M = {}
 
@@ -201,7 +203,7 @@ local function panel(s)
   add({ type = "text", size = 11, color = FAINT, text = (s.saved and tr("Saved to your service record") or tr("The trip could not be saved")) .. "  ·  " .. (s.pinned and tr("Enter or × to close") or tr("Click to keep it open")) })
   -- (the time it has left, as a line along its foot)
   if not s.pinned then add({ type = "bar", id = "left", height = 2, value = math.max(s.left / SHOW_FOR, 0), color = ink, background = "#00000000" }) end
-  omsi.ui.set(PANEL, { anchor = "top", x = 0, y = 70, width = 400, padding = 18, gap = 7, radius = 12, background = SHEET, font = "launcher", clickable = not s.pinned, grab = true, children = children })
+  omsi.ui.set(PANEL, layout.resizable(PANEL, { anchor = "top", x = 0, y = 70, width = 400, padding = 18, gap = 7, radius = 12, background = SHEET, font = "launcher", clickable = not s.pinned, grab = true, min_width = 320, max_width = 760, children = children }))
 end
 
 local function show(run, saved)

@@ -23,7 +23,7 @@
 //!
 //! Commands: `hub_profiles`, `hub_profile`, `hub_profile_create`, `hub_profile_delete`,
 //! `hub_profile_select`, `hub_profile_personnel` (the personnel number and code a driver signs
-//! on with, `make`: made now when there are none).
+//! on with - `name`, or the driver who drives -, `make`: made now when there are none).
 
 use crate::{arg, to_json, Answer};
 use hub_core::settings::Settings;
@@ -46,9 +46,10 @@ pub fn call(cmd: &str, args: &Value) -> Option<Answer> {
     })
 }
 
-/// A driver's personnel number and code (`make`: made now when there are none; else None).
+/// A driver's personnel number and code (`make`: made now when there are none; else None). No
+/// `name`: the driver who drives (the settings' `driver`), whose pass the assignment gives.
 fn personnel(args: &Value) -> Answer {
-    let name: String = arg(args, "name")?;
+    let name = arg::<Option<String>>(args, "name")?.map(|n| n.trim().to_string()).filter(|n| !n.is_empty()).unwrap_or_else(crate::launcher::driver);
     let make = arg::<Option<bool>>(args, "make")?.unwrap_or(false);
     Ok(json!(crate::addon::personnel_of(&name, make).map(|p| json!({ "number": p.number, "code": p.code }))))
 }

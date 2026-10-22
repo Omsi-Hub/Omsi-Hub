@@ -10,7 +10,8 @@
 -- In an openOMSI with the navigator's board (`omsi.ui.version` 3) the board is in the navigator,
 -- under its next-stop bar, as before: Shift+N and the handle on the bar show and hide it, and the
 -- navigator's own list of stops steps aside for it. An older openOMSI gets it as a panel of its
--- own on the left, which the player can move while the panels have the mouse (F10).
+-- own on the left, which the player can move while the panels have the mouse (F10) and, where the
+-- game lets panels be resized, make taller or shorter: it lists as many stops as its height holds.
 
 local career = require("career")
 local company = require("company")
@@ -20,6 +21,9 @@ local M = {}
 
 local PANEL = "omsihub_board"
 local AHEAD = 4
+-- (a board on the screen the player made taller or shorter: about this many points for its
+-- lines round the stops, and for each stop, at its size 100 %; this many stops at most)
+local TOP, STOP, MOST = 150, 26, 12
 -- Omsi-Hub's colours (the launcher's dark theme): the line's plate, punctuality as fills (a
 -- chip) and as letters, the advice's tint and ink, the texts
 local PLATE, ON_PLATE = "#FFD23F", "#1A1400"
@@ -229,8 +233,12 @@ function M.update(on, parts, assignment, boarded, screen)
       end
     end
   end
+  -- (on the screen at a height the player gave it: as many stops as that height holds)
+  local ahead = fit
+  local _, high, scale = layout.size(PANEL)
+  if not docks and high then ahead = math.max(math.min(math.floor((high - TOP * scale) / (STOP * scale)), MOST), 1) end
   local trips = omsi.duty.trips()
-  local children = M.rows(d, trips, omsi.duty.stops(), clock, fit, (tonumber(omsi.ui.version) or 0) < 3)
+  local children = M.rows(d, trips, omsi.duty.stops(), clock, ahead, (tonumber(omsi.ui.version) or 0) < 3, MOST)
   if docks then
     for _, x in ipairs(company.elements(parts or {}, assignment, d, trips, clock, boarded, fit > 1)) do children[#children + 1] = x end
     layout.set(PANEL, { anchor = "navigator", padding = 11, gap = 5, children = children })

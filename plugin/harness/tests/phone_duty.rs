@@ -364,9 +364,7 @@ fn the_sign_on_and_the_strip_s_forms_are_drawn_in_the_phone_s_look() {
     assert!(shows(&h, PHONE, "Not signed on") && shows(&h, PHONE, "Stadtbus Berlin"), "{}", phone(&h));
     in_the_phone_s_inks(&h, &light_inks, true);
     // the duty order, its table too
-    h.fire("ui_change", &[json!(PHONE), json!("signon_number"), json!("4711")]).unwrap();
-    h.fire("ui_change", &[json!(PHONE), json!("signon_code"), json!("1234")]).unwrap();
-    click(&h, "signon");
+    keys(&h, "4711k1234k");
     assert!(shows(&h, PHONE, "Duty assignment"), "{}", phone(&h));
     assert_eq!(find(&h, PHONE, |e| e["id"] == "accept").unwrap()["color"], "#FFD23F", "the action to take");
     in_the_phone_s_inks(&h, &light_inks, true);
@@ -388,6 +386,67 @@ fn the_sign_on_and_the_strip_s_forms_are_drawn_in_the_phone_s_look() {
     let a = Assignment { crew: Some(crew), personnel: pass, ..assignment() };
     let (_, h) = start_with("dark-forms", a, "", docked_game(), "", 3);
     in_the_phone_s_inks(&h, &["#F2F2F7", "#A1A1A8", "#6E6E73"], false);
+    no_ui_errors(&h);
+}
+
+/// The keys of the phone's keypad pressed: digits, `k` for OK, `<` for back.
+fn keys(h: &Harness, keys: &str) {
+    for k in keys.chars() {
+        let id = match k {
+            'k' => "duty_key_ok".to_string(),
+            '<' => "duty_key_back".to_string(),
+            d => format!("duty_key_{d}"),
+        };
+        click(h, &id);
+    }
+}
+
+/// What the keypad shows typed (the big text above the keys).
+fn typed(h: &Harness) -> String {
+    find(h, PHONE, |e| e["type"] == "text" && e["size"] == 24).map(|e| e["text"].as_str().unwrap_or("").to_string()).unwrap_or_default()
+}
+
+#[test]
+fn the_driver_signs_on_with_the_phone_s_keypad_without_f10() {
+    let pass = Some(bridge::Personnel { number: "4711".into(), code: "2580".into() });
+    let a = Assignment { personnel: pass, ..assignment() };
+    let (_, mut h) = start_with("keypad", a, "", docked_game(), "", 3);
+    // the Duty tab up, a keypad of twelve keys in rows of three, no text field to type into
+    assert_eq!(tabs(&h).unwrap().1, 3);
+    let rows: Vec<Value> = elements(&phone(&h)).into_iter().filter(|e| e["type"] == "row" && elements(e).iter().any(|k| k["id"].as_str().is_some_and(|i| i.starts_with("duty_key_")))).collect();
+    assert_eq!(rows.iter().map(|r| r["children"].as_array().unwrap().len()).collect::<Vec<_>>(), [3, 3, 3, 3], "{}", phone(&h));
+    assert_eq!(find(&h, PHONE, |e| e["id"] == "duty_key_ok").unwrap()["color"], "#FFD23F", "OK: the action to take");
+    assert!(!has_element(&h, PHONE, |e| e["type"] == "input"));
+    assert!(!shows(&h, PHONE, "F10"), "the keys take the mouse without F10: {}", phone(&h));
+    assert!(shows(&h, PHONE, "PERSONNEL NUMBER") && typed(&h) == "–");
+    assert!(h.state.borrow().started.is_empty(), "not before signing on");
+    // the number, then the code as dots; back takes a digit off
+    keys(&h, "47119<");
+    assert_eq!(typed(&h), "4711");
+    keys(&h, "k");
+    assert!(shows(&h, PHONE, "CODE"), "{}", phone(&h));
+    keys(&h, "13");
+    assert_eq!(typed(&h), "••");
+    // a wrong code: said, and both typed again
+    keys(&h, "k");
+    assert!(shows(&h, PHONE, "Not known here"), "{}", phone(&h));
+    assert!(shows(&h, PHONE, "PERSONNEL NUMBER") && typed(&h) == "–");
+    assert!(!shows(&h, PHONE, "Duty assignment"));
+    // (back on an empty code goes back to the number)
+    keys(&h, "4711k<");
+    assert_eq!(typed(&h), "4711");
+    // the right one: the duty order, accepted with the yellow button
+    keys(&h, "k2580k");
+    assert!(!shows(&h, PHONE, "Not known here"));
+    assert!(shows(&h, PHONE, "Duty assignment"), "{}", phone(&h));
+    assert_eq!(find(&h, PHONE, |e| e["id"] == "accept").unwrap()["color"], "#FFD23F");
+    assert!(!shows(&h, PHONE, "F10"));
+    click(&h, "accept");
+    run(&mut h, 2);
+    // at work: the duty taken (it starts by itself), the Duty tab's own rows
+    assert_eq!(h.state.borrow().started.len(), 1);
+    assert!(!has_element(&h, PHONE, |e| e["id"] == "duty_key_1"));
+    assert!(has_element(&h, PHONE, |e| e["id"] == "signoff"), "{}", phone(&h));
     no_ui_errors(&h);
 }
 

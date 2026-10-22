@@ -263,7 +263,9 @@ pub fn leg_of(text: &str) -> Option<bridge::Leg> {
 pub fn assignment_for(d: &Duty, company: Option<&CompanyPart>, settings: &Settings, issued: u64) -> Assignment {
     let on = |k: &str, default: bool| settings.other.get(k).and_then(Value::as_bool).unwrap_or(default);
     let driver = d.profile.clone().map(|p| p.trim().to_string()).filter(|p| !p.is_empty()).unwrap_or_else(crate::launcher::driver);
-    let personnel = company.filter(|_| on("nav_signon", false)).and_then(|_| personnel_of(&driver, true));
+    // (a company's duty is signed on for with the driver's pass unless the player switched it
+    // off, `nav_signon`; a driver without a pass gets one)
+    let personnel = company.filter(|_| on("nav_signon", true)).and_then(|_| personnel_of(&driver, true));
     let legs: Vec<bridge::Leg> = d.legs.iter().filter_map(|l| leg_of(l)).collect();
     let first = legs.first();
     let free = d.free_line.as_deref().map(str::trim).filter(|r| !r.is_empty()).map(str::to_string);
@@ -733,12 +735,13 @@ pub fn game_settings(home: &Path, running: bool) -> Value {
                 .iter()
                 .filter(|f| f.group == *g)
                 .map(|f| {
-                    let mut v = json!({ "key": f.key, "label": f.label, "value": gs::value(&text, f.key) });
+                    let value = gs::value(&text, f.key);
+                    let mut v = json!({ "key": f.key, "label": f.label, "value": value });
                     match f.kind {
                         Kind::Switch => v["kind"] = json!("switch"),
-                        Kind::Choice(options) => {
+                        Kind::Choice(_) => {
                             v["kind"] = json!("choice");
-                            v["options"] = json!(options);
+                            v["options"] = json!(gs::options_of(f, value));
                         }
                         Kind::Number { min, max, step, default } => {
                             v["kind"] = json!("number");
@@ -782,6 +785,15 @@ mod tests {
         assert_eq!(v["groups"][0]["title"], "Graphics");
         let group = |t: &str| v["groups"].as_array().unwrap().iter().find(|g| g["title"] == t).unwrap().clone();
         assert_eq!((group("Graphics")["controllers"].as_bool(), group("Force feedback")["controllers"].as_bool()), (Some(false), Some(true)));
+        // the navigator's size; its place where the player dragged it, a choice of its own
+        assert_eq!((field(&v, "nav_size")["min"].as_f64(), field(&v, "nav_size")["max"].as_f64(), field(&v, "nav_size")["default"].as_f64()), (Some(0.6), Some(2.0), Some(1.0)));
+        assert_eq!(field(&v, "navigator_corner")["options"].as_array().map(Vec::len), Some(4));
+        let p = hub_game::gamesettings::path(&home);
+        std::fs::write(&p, "navigator_corner=at 0.250,0.700\n").unwrap();
+        let v = game_settings(&home, false);
+        assert_eq!(field(&v, "navigator_corner")["value"], "at 0.250,0.700");
+        assert_eq!(field(&v, "navigator_corner")["options"][4], json!(["at 0.250,0.700", hub_game::gamesettings::DRAGGED]));
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     fn temp(tag: &str) -> PathBuf {
@@ -892,8 +904,20 @@ mod tests {
             },
             ..Default::default()
         };
+        // (the driver's pass made in the tests' own data folder)
+        crate::online::test_data_dir();
         let a = assignment_for(&d, Some(&part), &s, 9);
         assert_eq!((a.company.as_str(), a.duty.as_str(), a.sheet.len()), ("Stadtbus", "5 2 1", 1));
+        // signed on for with the driver's pass, made the first time and the same after; unless
+        // the player switched the sign-on off
+        let pass = a.personnel.clone().expect("the pass");
+        assert!(pass.number.len() == 6 && pass.code.len() == 4, "{pass:?}");
+        assert_eq!(assignment_for(&d, Some(&part), &s, 9).personnel, Some(pass.clone()));
+        assert_eq!(personnel_of("Luc", false), Some(pass));
+        let mut no = s.clone();
+        no.other.insert("nav_signon".into(), json!(false));
+        assert!(assignment_for(&d, Some(&part), &no, 9).personnel.is_none());
+        assert!(assignment_for(&d, None, &s, 9).personnel.is_none(), "a drive of the player's own: no sign-on");
         assert_eq!(a.ibis_codes.iter().map(|x| x.line.as_str()).collect::<Vec<_>>(), ["005"]);
         assert_eq!(a.crew.map(|c| (c.bus, c.strip)), Some((4, Some(true))));
     }

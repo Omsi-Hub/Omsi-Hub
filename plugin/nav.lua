@@ -10,7 +10,9 @@
 -- (dark or light: the inks of `phone_theme.lua`, the light ones when the assignment says
 -- `nav = { light = true }`); its background stays see-through, its buttons and tabs take the
 -- mouse without F10 (`grab`, openOMSI's ui version 5). A short room under the map (`room` below
--- 150 points) gets the slim phone: the status line and the one line that matters now.
+-- 150 points) gets the slim phone: the status line and the one line that matters now. The player
+-- sizes the phone with the navigator (openOMSI's `nav_size`, its corner): the panel is never
+-- resizable itself, and the entries its tabs list follow the room the navigator leaves (`fit_to`).
 --
 -- An openOMSI without the navigator's board (`omsi.ui.version` below 3 or no `omsi.ui.dock`),
 -- the phone switched off (`nav = { phone = false }`), a navigator that shows no board for 6 s

@@ -6,8 +6,9 @@
 -- one under way marked; the week's roster and the requests the company takes (a sick call, a
 -- swap, leave), each asked again before it goes; the strip's note and walk-around. The actions
 -- come before the lists (the room under the map cuts the panel's end off).
--- Its modes: a driver still to sign on, and the walk-around at sign-off. What other modules
--- draw (the sign-on, the strip's forms) is shown in the phone's look (phone_theme.adopt).
+-- Its modes: a driver still to sign on (the number and the code on a keypad, phone_signon.lua;
+-- the duty order after it), and the walk-around at sign-off. What other modules draw (the duty
+-- order, the strip's forms) is shown in the phone's look (phone_theme.adopt).
 --
 -- What it reads of the assignment, each optional: `ibis_codes` as a list of
 -- { trip, dep, line, route, dest, text } - the codes to type, found by the trip's departure
@@ -19,6 +20,7 @@
 -- { what = "swap", duty = <the day's swap>, with = 0 } (whoever will) or
 -- { what = "leave", from = date, ["until"] = date, reason = "personal" }.
 
+local keypad = require("phone_signon")
 local messages = require("messages")
 local signon = require("signon")
 local strip = require("duty_strip")
@@ -344,7 +346,17 @@ end
 
 -- signing on, and the walk-around at sign-off: the tab is about nothing else then
 function M.mode(ctx)
-  if ctx.hooks.duty_children and not signon.at_work() then return P.adopt(ctx.theme, ctx.hooks.duty_children()) end
+  if ctx.hooks.duty_children and not signon.at_work() then
+    local pad = keypad.rows(ctx)
+    if pad then return pad end
+    -- (the duty order: its Accept takes the mouse without F10 where the phone has `grab`)
+    local hint = ctx.tr("F10: use the panel with the mouse")
+    local out = {}
+    for _, e in ipairs(P.adopt(ctx.theme, ctx.hooks.duty_children())) do
+      if not (ctx.can.grab and e.text == hint) then out[#out + 1] = e end
+    end
+    return out
+  end
   if strip.form() == "check" then return P.adopt(ctx.theme, strip.tools()) end
   return nil
 end
@@ -373,6 +385,7 @@ end
 
 function M.click(ctx, id)
   if id:sub(1, 5) ~= "duty_" then return false end
+  if keypad.click(ctx, id) then return true end
   local w = id:sub(6)
   if LABEL[w] then
     if w == "sick" then

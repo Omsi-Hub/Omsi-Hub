@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 /// The plugin's name: its folder in the plugins folder.
 pub const NAME: &str = "omsihub";
 /// The plugin's version; `plugin/main.lua` says the same (a test keeps the two the same).
-pub const VERSION: &str = "1.12.0";
+pub const VERSION: &str = "1.13.0";
 /// The plugin's files.
 pub const FILES: &[(&str, &str)] = &[
     ("main.lua", include_str!("../../../plugin/main.lua")),
@@ -44,6 +44,8 @@ pub const FILES: &[(&str, &str)] = &[
     ("phone_ride.lua", include_str!("../../../plugin/phone_ride.lua")),
     ("phone_stops.lua", include_str!("../../../plugin/phone_stops.lua")),
     ("phone_duty.lua", include_str!("../../../plugin/phone_duty.lua")),
+    // (signing on with the phone's keypad)
+    ("phone_signon.lua", include_str!("../../../plugin/phone_signon.lua")),
     ("phone_msgs.lua", include_str!("../../../plugin/phone_msgs.lua")),
     ("phone_bus.lua", include_str!("../../../plugin/phone_bus.lua")),
     ("phone_summary.lua", include_str!("../../../plugin/phone_summary.lua")),
@@ -327,6 +329,8 @@ pub const TEXTS: &[&str] = &[
     "Ask to swap",
     "Leave request",
     "Sent to the company",
+    // phone_signon.lua
+    "OK",
     // phone_msgs.lua (and the layover messages.lua carries out)
     "Messages",
     "Inbox",
