@@ -47,6 +47,13 @@ never changes their files.
   has the duty, a message to control and ending the duty, and closed stops are struck through on
   the navigator's map. An older openOMSI (0.3.37), or a navigator without its board, keeps the
   panels of before.
+- **The phone in Omsi-Hub's look** (the plugin 1.14.0): its tabs are a row of buttons - the tab
+  shown in Omsi-Hub's blue with its name, the others their icon and a count where something
+  waits -, the next stop is a blue card with when the bus gets there as a pill and the trip's
+  progress under it, the stats are tiles (the delay's in the time's colour), the duty's trips are
+  rows with the line's yellow plate (the trip under way on a blue card, those done grey), each
+  message is a card of its own (an instruction to answer on a blue one), and the rail, the bars,
+  the checkboxes and the buttons that go on are Omsi-Hub's blue instead of yellow and grey.
 - **Signing on with your pass** (the plugin 1.13.0): a company's duty is signed on for in the
   game with your personnel number and code, unless you switch it off (Settings, "openOMSI and
   OMSI 2"); your pass is shown there and on the duty's start, and a driver without one gets one.

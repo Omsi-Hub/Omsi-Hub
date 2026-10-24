@@ -1,5 +1,6 @@
 -- Omsi-Hub's plugin: the phone's Ride tab (nav.lua) - the drive now: the stop the bus heads for,
--- large, with when it gets there, the one after it and how far along the trip it is; the
+-- large on a card of Omsi-Hub's blue, with when it gets there, the one after it and how far
+-- along the trip it is; the
 -- passengers, the speed and the delay; the lines that apply now - the gap to the bus ahead and
 -- how long to hold, a connection to wait for, a diversion, the control room's instruction
 -- waiting in Messages, the punctuality coach - and the trip's progress.
@@ -44,8 +45,8 @@ local function stats(ctx)
   } }
 end
 
--- the stop the bus heads for, large: its name; when the bus is there (off the timetable in the
--- time's colour) and in how many minutes; the one after it and stop 2/7
+-- the stop the bus heads for, large: its name, stop 2/7; when the bus is there (a pill, in the
+-- time's colour off the timetable) and in how many minutes; the one after it
 local function next_stop(ctx, served, now)
   local th, tr, d = ctx.theme, ctx.tr, ctx.duty
   local s = served[now]
@@ -56,22 +57,26 @@ local function next_stop(ctx, served, now)
   else
     local expected, ink = stops.expected(ctx, s)
     time = tr("arr %{time}", { time = expected or P.hhmm(s.arrival) })
-    color = ink or th.dim
+    color = ink
     left = (s.arrival or ctx.clock) + (ctx.delay or 0) - ctx.clock
   end
   local m = math.ceil(left / 60)
   local after = served[now + 1]
+  -- (off the timetable a pill of the time's colour with white text, as the status line's)
+  local timed = color == th.late or color == th.early
   return {
-    { type = "row", gap = 8, children = {
-      { type = "icon", name = "near_me", size = 18, color = th.accent },
-      { type = "text", text = s.name or "", size = 18, weight = "bold", color = th.ink, grow = true, wrap = false },
-    } },
     { type = "row", gap = 6, children = {
-      { type = "text", text = time, size = 13, weight = "medium", color = color, wrap = false },
-      { type = "text", text = "•  " .. (m > 0 and tr("in %{m} min", { m = m }) or tr("due now")), size = 13, color = th.dim, grow = true, wrap = false },
+      { type = "icon", name = "near_me", size = 14, color = th.accent },
+      { type = "text", text = P.caps(tr("Next stop")), size = 10.5, weight = "bold", color = th.accent, grow = true, wrap = false },
+      { type = "text", text = tr("stop %{i}/%{n}", { i = now, n = #served }), size = 11.5, weight = "medium", color = th.dim, wrap = false },
+    } },
+    { type = "text", text = s.name or "", size = 20, weight = "bold", color = th.ink, wrap = false },
+    { type = "row", gap = 8, children = {
+      { type = "badge", text = time, color = timed and color or th.chip, text_color = timed and "#FFFFFF" or th.ink, weight = "bold" },
+      { type = "text", text = m > 0 and tr("in %{m} min", { m = m }) or tr("due now"), size = 13, weight = "medium", color = th.ink, grow = true, wrap = false },
     } },
     { type = "text", size = 12, color = th.dim, wrap = false,
-      text = (after and tr("then %{stop}", { stop = after.name or "" }) or tr("terminus")) .. "  •  " .. tr("stop %{i}/%{n}", { i = now, n = #served }) },
+      text = after and tr("then %{stop}", { stop = after.name or "" }) or tr("terminus") },
   }
 end
 
@@ -79,9 +84,9 @@ end
 local function progress(ctx, served, now)
   local th = ctx.theme
   local done = (now or #served + 1) - 1
-  local bar = { type = "bar", value = done / math.max(#served, 1), height = 6, color = th.ink, background = th.track }
+  local bar = { type = "bar", value = done / math.max(#served, 1), height = 4, color = th.accent, background = th.track }
   if ctx.can.segments then
-    bar.segments = { { value = done, color = th.ink }, { value = #served - done, color = th.track } }
+    bar.segments = { { value = done, color = th.accent }, { value = #served - done, color = th.track } }
   end
   return bar
 end
@@ -104,11 +109,12 @@ local function instruction(ctx)
   return said.text
 end
 
--- a line that applies now: its icon and text (`one`: on one line, cut where it is longer)
+-- a line that applies now: its icon (in the accent: it points the way) and text (`one`: on
+-- one line, cut where it is longer)
 local function line(ctx, icon, text, extra, one)
   local th = ctx.theme
   local children = {
-    { type = "icon", name = icon, size = 16, color = th.dim },
+    { type = "icon", name = icon, size = 16, color = th.accent },
     { type = "text", text = text, size = 12.5, color = th.ink, grow = true, wrap = not one },
   }
   if extra then children[3] = extra end
@@ -202,13 +208,19 @@ function M.rows(ctx)
   local out = {}
   local served, now = stops.served(ctx)
   if now then
-    for _, e in ipairs(next_stop(ctx, served, now)) do out[#out + 1] = e end
+    -- (the stop ahead and the trip's progress on one card)
+    local card = next_stop(ctx, served, now)
+    if #served > 1 then
+      card[#card + 1] = { type = "space", size = 2 }
+      card[#card + 1] = progress(ctx, served, now)
+    end
+    P.card(out, th, ctx.can.box, card, th.primary, 3)
   elseif #served > 0 then
     out[#out + 1] = P.text(th, tr("At the terminus: %{stop}", { stop = served[#served].name or "" }), "ink", 15, "bold")
+    if #served > 1 then out[#out + 1] = progress(ctx, served, now) end
   end
   out[#out + 1] = stats(ctx)
   for _, e in ipairs(context(ctx)) do out[#out + 1] = e end
-  if #served > 1 then out[#out + 1] = progress(ctx, served, now) end
   return out
 end
 
@@ -221,20 +233,25 @@ local function break_clock(ctx)
   local length = math.max((after.departure or 0) - (this.arrival or 0), 1)
   local over = left < 0
   local ink = over and th.late or th.ink
-  local out = {
+  local out = {}
+  -- (the clock on a card: Omsi-Hub's blue, the time's red once the break is over)
+  P.card(out, th, ctx.can.box, {
     { type = "row", gap = 8, children = {
-      { type = "icon", name = "schedule", size = 18, color = over and th.late or th.dim },
+      { type = "icon", name = "schedule", size = 16, color = over and th.late or th.accent },
       { type = "text", text = over and tr("Break over") or tr("Break"), size = 13, weight = "bold", color = over and th.late or th.ink, grow = true },
       { type = "text", text = tr("until %{time}", { time = P.hhmm(after.departure) }), size = 12, color = th.dim, wrap = false },
     } },
     { type = "text", text = (over and "+" or "") .. P.mmss(math.abs(left)), size = 40, weight = "bold", align = "center", color = ink },
-    { type = "bar", value = math.min(math.max(1 - left / length, 0), 1), height = 6, color = over and th.late or th.ink, background = th.track },
+    { type = "bar", value = math.min(math.max(1 - left / length, 0), 1), height = 4, color = over and th.late or th.accent, background = th.track },
+  }, over and th.late or th.primary, 4)
+  local more = {
     { type = "row", gap = 7, children = {
       { type = "text", text = tr("Next %{time}", { time = P.hhmm(after.departure) }), size = 12.5, weight = "bold", color = th.ink },
       P.plate(th, after.line or "", tr),
       { type = "text", text = P.terminus(after.line, after.terminus), size = 12.5, color = th.ink, grow = true, wrap = false },
     } },
   }
+  for _, e in ipairs(more) do out[#out + 1] = e end
   if (after.line or "") ~= (this.line or "") and (after.line or "") ~= "" then
     out[#out + 1] = P.text(th, tr("Continue on line %{line}, tour %{tour}", { line = after.line, tour = d.tour or "" }), "ink", 12, "bold")
   end

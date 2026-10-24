@@ -36,9 +36,9 @@ fn the_ride_tab_shows_the_stop_ahead_large_the_three_stats_and_the_trip_s_progre
     let (_, h) = start("ride", Some(assignment()), g, 3);
     assert_eq!(tabs(&h).unwrap().1, 1);
     // the stop ahead large, when the bus is there and in how long, the one after it
-    assert!(has_element(&h, PHONE, |e| e["text"] == "Markt" && e["size"] == 18), "{}", phone(&h));
+    assert!(has_element(&h, PHONE, |e| e["text"] == "Markt" && e["size"] == 20), "{}", phone(&h));
     assert!(shows(&h, PHONE, "arr 08:05") && shows(&h, PHONE, "in 6 min"));
-    assert!(shows(&h, PHONE, "then Hbf  •  stop 2/3"));
+    assert!(shows(&h, PHONE, "then Hbf") && shows(&h, PHONE, "stop 2/3"));
     // passengers, km/h and the delay (42 s: on time, as on the navigator's map)
     assert_eq!(stat(&h, "PASSENGERS")["text"], "12");
     assert_eq!(stat(&h, "KM/H")["text"], "32");
@@ -149,7 +149,7 @@ fn the_stops_tab_is_a_rail_in_the_navigator_s_look_and_a_table_elsewhere() {
     choose_tab(&h, 2);
     assert!(!has_element(&h, PHONE, |e| e["type"] == "stops"));
     let table = find(&h, PHONE, |e| e["type"] == "table").expect("the table");
-    assert_eq!((table["rows"][0][1]["text"].as_str(), table["rows"][0][1]["color"].as_str()), (Some("Zoo"), Some("#1C1C1E")));
+    assert_eq!((table["rows"][0][1]["text"].as_str(), table["rows"][0][1]["color"].as_str()), (Some("Zoo"), Some("#1E1C22")));
     no_ui_errors(&h);
     // an openOMSI before the navigator's board: no phone, the board of before
     let (_, h) = start("stops-v2", Some(assignment()), old_game(), 2);
@@ -253,7 +253,7 @@ fn after_the_last_trip_the_duty_s_summary_and_its_totals_in_the_duty_end_report(
     assert!(shows(&h, PHONE, "Duty done"), "{}", phone(&h));
     // (the status line's chip: finished, in neutral ink - the time's colours are the time's)
     let chip = phone(&h)["children"][0]["children"][3].clone();
-    assert_eq!((chip["text"].as_str(), chip["text_color"].as_str()), (Some("Duty finished"), Some("#A1A1A8")));
+    assert_eq!((chip["text"].as_str(), chip["text_color"].as_str()), (Some("Duty finished"), Some("#959DB0")));
     assert_eq!(stat(&h, "TRIPS")["text"], "2");
     assert_eq!(stat(&h, "ON TIME")["text"], "100 %");
     assert_eq!(stat(&h, "PASSENGERS")["text"], "8");

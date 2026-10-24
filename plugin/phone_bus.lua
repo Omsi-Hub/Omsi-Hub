@@ -58,10 +58,10 @@ local function level(ctx)
   return math.min(litres / most, 1), "fuel"
 end
 
--- a line: its icon, its text and on the right a value
+-- a line: its icon (in the accent), its text and on the right a value
 local function line(th, icon, text, value)
   local children = {
-    { type = "icon", name = icon, size = 16, color = th.dim },
+    { type = "icon", name = icon, size = 16, color = th.accent },
     { type = "text", text = text, size = 13, color = th.ink, grow = true },
   }
   if value then children[3] = { type = "text", text = value, size = 13, weight = "bold", color = th.ink, wrap = false } end
@@ -75,9 +75,14 @@ local function fuel(ctx, out)
   if not left then return end
   local c = crew(ctx)
   local low = left < (c and tonumber(c.low_fuel) or LOW)
-  out[#out + 1] = line(th, kind == "charge" and "bolt" or "local_gas_station", kind == "charge" and tr("Charge") or tr("Fuel"), math.floor(left * 100 + 0.5) .. " %")
-  out[#out + 1] = { type = "bar", value = left, height = 6, color = th.ink, background = th.track }
-  if low then out[#out + 1] = P.text(th, kind == "charge" and tr("Return to the depot to charge") or tr("Return to the depot to refuel"), "ink", 12.5, "bold") end
+  -- (the tank on a card: the blue, the time's red when it runs low)
+  local tone = low and th.late or th.primary
+  local card = {
+    line(th, kind == "charge" and "bolt" or "local_gas_station", kind == "charge" and tr("Charge") or tr("Fuel"), math.floor(left * 100 + 0.5) .. " %"),
+    { type = "bar", value = left, height = 6, color = low and th.late or th.accent, background = th.track },
+  }
+  if low then card[#card + 1] = P.text(th, kind == "charge" and tr("Return to the depot to charge") or tr("Return to the depot to refuel"), "ink", 12.5, "bold") end
+  P.card(out, th, ctx.can.box, card, tone, 6)
 end
 
 -- the tickets sold and the money taken this session (nil: the game does not say)
@@ -95,7 +100,7 @@ local function damage(ctx, out)
   local n = type(d) == "table" and tonumber(d.crashes) or nil
   if not n or n <= 0 then return end
   local m = tonumber(d.repair_minutes)
-  out[#out + 1] = line(ctx.theme, "warning", ctx.tr("Collisions") .. " " .. math.floor(n), m and m > 0 and ctx.tr("repair %{m} min", { m = math.ceil(m) }) or nil)
+  P.card(out, ctx.theme, ctx.can.box, { line(ctx.theme, "warning", ctx.tr("Collisions") .. " " .. math.floor(n), m and m > 0 and ctx.tr("repair %{m} min", { m = math.ceil(m) }) or nil) }, ctx.theme.late)
 end
 
 -- the bus's open defects (the company's: `crew.defects`, each { part, label, text, since })
@@ -109,7 +114,7 @@ local function defects(ctx, out)
   for _, k in ipairs(type(c.checks) == "table" and c.checks or {}) do
     if type(k) == "table" and k[1] then names[k[1]] = k[2] end
   end
-  out[#out + 1] = P.label(th, ctx.tr("Open defects"))
+  out[#out + 1] = P.heading(th, ctx.tr("Open defects"))
   for k = 1, math.min(#list, DEFECTS) do
     local x = list[k]
     if type(x) == "table" then
@@ -128,7 +133,7 @@ local function notes(ctx, out)
   local th, tr = ctx.theme, ctx.tr
   local left = type(c.notes) == "table" and c.notes or {}
   if #left > 0 then
-    out[#out + 1] = P.label(th, tr("Notes for you"))
+    out[#out + 1] = P.heading(th, tr("Notes for you"))
     for k = 1, math.min(#left, NOTES) do out[#out + 1] = line(th, "description", cut(left[k], 300)) end
   end
   if #strip.children() == 0 then return end

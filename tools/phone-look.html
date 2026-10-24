@@ -1,0 +1,350 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Phone look</title>
+<!--
+  The phone's tabs as openOMSI draws them in the navigator's board, from the panels the plugin
+  sets (plugin/harness/tests/phone_look.rs writes them: `PHONE_LOOK=<file> cargo test -p
+  hub-plugin-harness --test phone_look -- --ignored`). Open this page and drop the file on it, or
+  set `window.LOOKS` (a list of { tab, light, panel }, or { name: list } to compare) before the
+  script runs. The drawing follows openOMSI's omsi-plugin-ui (lib.rs, nav.rs, widgets.rs): its
+  sizes, its default colours and how a row shares its width - near enough to judge a design by,
+  not to the pixel (the game's own fonts and its text measure differ a little).
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,400,0..1,0&display=block" rel="stylesheet">
+<style>
+  :root { --bg: #0a0f1a; --ink: #e8ebf2; --dim: #959db0; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.4 Inter, system-ui, sans-serif; }
+  header { padding: 16px; display: flex; gap: 16px; align-items: baseline; flex-wrap: wrap; }
+  header h1 { font-size: 18px; margin: 0; }
+  header p { margin: 0; color: var(--dim); }
+  .set { padding: 0 16px 24px; }
+  .set h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--dim); margin: 8px 0 12px; }
+  .grid { display: flex; flex-wrap: wrap; gap: 20px; }
+  figure { margin: 0; }
+  figcaption { color: var(--dim); font-size: 12px; margin-bottom: 6px; }
+  canvas { display: block; border-radius: 14px; }
+</style>
+</head>
+<body>
+<header><h1>Phone look</h1><p>Drop a phone-look JSON file on the page.</p></header>
+<main id="out"></main>
+<script>
+(() => {
+  const LINE = 1.3, BADGE_H = 20, BADGE_PX = 12, BADGE_PAD = 8, BUTTON_H = 34, BUTTON_PX = 14, BUTTON_PAD = 14,
+    BUTTON_ICON = 18, BUTTON_R = 8, BAR_W = 60, TABS_H = 30, CONTROL_PX = 14, CHECK = 18, CHECK_GAP = 8,
+    BOX_PAD = [12, 8], BOX_Y = 7, BOX_STRIPE = 3, BOX_R = 6, BOX_TINT = 0.14, STOP_ROW = 22, RAIL_X = 6, NAME_X = 19,
+    FIELD_H = 30, SLIDER_H = 24, CHART_W = 120, WIDTH = 360, SCALE = 2;
+  const INK = [236, 236, 236, 1], DARK_INK = [18, 14, 8, 1], ACCENT = [232, 160, 48, 1], TRACK = [62, 62, 62, 1],
+    DIVIDER = [52, 52, 52, 1], BUTTON = [44, 44, 44, 1], GREY = [142, 142, 142, 1],
+    RAIL_DONE = [74, 84, 98, 1], TEXT_NOW = [255, 255, 255, 1], TEXT_SOFT = [196, 202, 214, 1],
+    TEXT_DIM = [149, 157, 176, 1], TEXT_FAINT = [110, 118, 136, 1], TAG_FILL = [255, 255, 255, 0.1];
+  const CARD_DARK = [30, 30, 32, 0.94], CARD_LIGHT = [255, 255, 255, 0.94];
+  const WEIGHT = { regular: 400, medium: 500, bold: 700 };
+  // (an empty Lua table comes as {} in the JSON: a list all the same)
+  const list = (v) => (Array.isArray(v) ? v : []);
+  const measure = document.createElement('canvas').getContext('2d');
+
+  const hex = (s) => {
+    if (typeof s !== 'string' || !/^#([0-9a-f]{6}|[0-9a-f]{8})$/i.test(s)) return null;
+    const n = (i) => parseInt(s.slice(i, i + 2), 16);
+    return [n(1), n(3), n(5), s.length === 9 ? n(7) / 255 : 1];
+  };
+  const css = (c) => `rgba(${c[0]},${c[1]},${c[2]},${c[3]})`;
+  const alpha = (c, a) => [c[0], c[1], c[2], a];
+  const inkOn = (c) => ((0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2]) / 255 > 0.6 ? DARK_INK : INK);
+  const font = (px, wt) => `${WEIGHT[wt] || 400} ${px}px Inter`;
+  const width = (t, px, wt) => { measure.font = font(px, wt); return measure.measureText(t).width; };
+  const fit = (t, px, wt, max) => {
+    if (width(t, px, wt) <= max) return t;
+    const chars = [...t];
+    while (chars.length && width(chars.join('') + '…', px, wt) > max) chars.pop();
+    return chars.length ? chars.join('') + '…' : '';
+  };
+  const wrap = (t, px, wt, max) => {
+    const out = [];
+    for (const para of String(t).split('\n')) {
+      let line = '';
+      for (const word of para.split(/\s+/).filter(Boolean)) {
+        const next = line ? line + ' ' + word : word;
+        if (line && width(next, px, wt) > max) { out.push(line); line = word; } else line = next;
+      }
+      out.push(fit(line, px, wt, max));
+    }
+    return out;
+  };
+
+  // an element with the game's defaults
+  const norm = (e) => {
+    const n = { ...e, grow: !!e.grow, color: hex(e.color) };
+    if (e.type === 'text') { n.size = e.size ?? 14; n.weight = e.weight ?? 'regular'; n.wrap = e.wrap ?? true; n.align = e.align ?? 'left'; n.text = String(e.text ?? ''); }
+    if (e.type === 'icon') n.size = e.size ?? 20;
+    if (e.type === 'row') { n.gap = e.gap ?? 8; n.align = e.align ?? 'start'; }
+    if (e.type === 'box') n.gap = e.gap ?? 4;
+    if (e.type === 'bar') { n.height = e.height ?? 6; n.value = e.value ?? 0; }
+    if (e.type === 'badge') { n.weight = e.weight ?? 'medium'; n.text = String(e.text ?? ''); }
+    if (e.type === 'button') { n.text = String(e.text ?? ''); }
+    if (e.type === 'space') n.size = e.size ?? 8;
+    if (e.type === 'stops' || e.type === 'table') n.size = e.size ?? 13;
+    if (e.type === 'chart') n.height = e.height ?? 48;
+    n.children = list(e.children).filter((c) => c && c.visible !== false).map(norm);
+    for (const k of ['tabs', 'columns', 'rows', 'widths', 'aligns', 'stops', 'segments']) n[k] = list(e[k]);
+    n.rows = n.rows.map(list);
+    return n;
+  };
+
+  const textLines = (e, w) => (e.wrap ? wrap(e.text, e.size, e.weight, Math.max(w, 1)) : e.text.split('\n').map((l) => fit(l, e.size, e.weight, Math.max(w, 1))));
+  const buttonContent = (e) => { const t = width(e.text, BUTTON_PX, 'medium'); return e.icon ? (e.text ? BUTTON_ICON + 6 + t : BUTTON_ICON) : t; };
+
+  function natural(e) {
+    switch (e.type) {
+      case 'text': return Math.ceil(Math.max(...e.text.split('\n').map((l) => width(l, e.size, e.weight))));
+      case 'icon': return e.size;
+      case 'row': return e.children.reduce((s, c) => s + natural(c), 0) + e.gap * Math.max(e.children.length - 1, 0);
+      case 'bar': return BAR_W;
+      case 'badge': return Math.ceil(width(e.text, BADGE_PX, e.weight) + 2 * BADGE_PAD);
+      case 'divider': return 1;
+      case 'space': return e.size;
+      case 'button': return Math.ceil(buttonContent(e) + 2 * BUTTON_PAD);
+      case 'checkbox': return Math.ceil(CHECK + CHECK_GAP + width(e.text || '', CONTROL_PX, 'regular'));
+      case 'tabs': return Math.ceil((e.tabs || []).reduce((s, t) => s + width(t, CONTROL_PX, 'medium') + 24, 0));
+      case 'box': return Math.max(0, ...e.children.map(natural)) + BOX_STRIPE + BOX_PAD[0] + BOX_PAD[1];
+      case 'stops': { const k = e.size / 13; return Math.ceil(Math.max(0, ...(e.stops || []).map((s) => NAME_X * k + width(s.name || '', e.size, 'medium') + 2 * width('00:00', e.size * 12 / 13, 'bold') + 16 * k))); }
+      case 'chart': return CHART_W;
+      case 'table': return Math.ceil((e.columns || []).reduce((s, c) => s + width(c, e.size, 'bold') + 12, 0));
+      default: return 0;
+    }
+  }
+
+  function rowWidths(children, gap, w) {
+    const gaps = gap * Math.max(children.length - 1, 0);
+    const ws = children.map((c) => (c.grow ? 0 : natural(c)));
+    const room = w - gaps - ws.reduce((a, b) => a + b, 0);
+    const growing = children.filter((c) => c.grow).length;
+    if (room < 0) {
+      const shrinks = (c) => !['icon', 'space', 'divider'].includes(c.type);
+      const soft = children.reduce((s, c, i) => s + (shrinks(c) ? ws[i] : 0), 0);
+      if (soft > 0) { const k = Math.max((soft + room) / soft, 0); children.forEach((c, i) => { if (shrinks(c)) ws[i] *= k; }); }
+    } else if (growing > 0) children.forEach((c, i) => { if (c.grow) ws[i] = room / growing; });
+    return ws;
+  }
+
+  function height(e, w, inRow) {
+    switch (e.type) {
+      case 'text': return textLines(e, w).length * e.size * LINE;
+      case 'icon': return e.size;
+      case 'row': { const ws = rowWidths(e.children, e.gap, w); return Math.max(0, ...e.children.map((c, i) => height(c, ws[i], true))); }
+      case 'bar': return e.height;
+      case 'badge': return BADGE_H;
+      case 'button': return BUTTON_H;
+      case 'divider': return inRow ? 0 : 1;
+      case 'space': return inRow ? 0 : e.size;
+      case 'checkbox': return Math.max(CHECK, CONTROL_PX * LINE);
+      case 'slider': return SLIDER_H;
+      case 'input': return FIELD_H;
+      case 'tabs': return TABS_H;
+      case 'chart': return e.height;
+      case 'table': { const head = (e.columns || []).length ? e.size * LINE + 3 : 0; return head + (e.rows || []).length * e.size * LINE; }
+      case 'box': { const inner = Math.max(w - BOX_STRIPE - BOX_PAD[0] - BOX_PAD[1], 1); return e.children.reduce((s, c) => s + height(c, inner, false), 0) + e.gap * Math.max(e.children.length - 1, 0) + 2 * BOX_Y; }
+      case 'stops': return (e.stops || []).length * STOP_ROW * e.size / 13;
+      default: return 0;
+    }
+  }
+
+  function draw(g, panel, light) {
+    const P = { padding: panel.padding ?? 12, gap: panel.gap ?? 6, children: list(panel.children).filter((c) => c && c.visible !== false).map(norm) };
+    const w = WIDTH - 2 * P.padding;
+    const hs = P.children.map((c) => height(c, w, false));
+    const total = Math.ceil(P.padding * 2 + hs.reduce((a, b) => a + b, 0) + P.gap * Math.max(hs.length - 1, 0));
+    const cv = g.canvas;
+    cv.width = WIDTH * SCALE; cv.height = total * SCALE;
+    cv.style.width = WIDTH + 'px'; cv.style.height = total + 'px';
+    g.setTransform(SCALE, 0, 0, SCALE, 0, 0);
+    g.fillStyle = css(light ? CARD_LIGHT : CARD_DARK);
+    g.fillRect(0, 0, WIDTH, total);
+    const bg = hex(panel.background);
+    if (bg) { g.fillStyle = css(bg); g.fillRect(0, 0, WIDTH, total); }
+    const rounded = (x, y, rw, rh, r, c) => { g.fillStyle = css(c); g.beginPath(); g.roundRect(x, y, Math.max(rw, 0), Math.max(rh, 0), Math.max(Math.min(r, rw / 2, rh / 2), 0)); g.fill(); };
+    const cap = (px) => px * 0.727;
+    const base = (top, h, px) => top + (h + cap(px)) / 2;
+    const text = (t, px, wt, x, y, c) => { if (!t) return; g.font = font(px, wt); g.fillStyle = css(c); g.fillText(t, x, y); };
+    const icon = (name, cx, cy, size, c) => { g.font = `${size}px "Material Symbols Outlined"`; g.fillStyle = css(c); g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(name, cx, cy); g.textAlign = 'left'; g.textBaseline = 'alphabetic'; };
+
+    function emit(e, x, y, rw, rh, inRow) {
+      switch (e.type) {
+        case 'text': {
+          const lines = textLines(e, rw), lh = e.size * LINE, top = y + (rh - lh * lines.length) / 2, c = e.color || INK;
+          lines.forEach((l, k) => {
+            const lw = width(l, e.size, e.weight);
+            const lx = e.align === 'center' ? x + (rw - lw) / 2 : e.align === 'right' ? x + rw - lw : x;
+            text(l, e.size, e.weight, lx, base(top + k * lh, lh, e.size), c);
+          });
+          break;
+        }
+        case 'icon': icon(e.name, x + e.size / 2, y + rh / 2, e.size, e.color || INK); break;
+        case 'row': {
+          const ws = rowWidths(e.children, e.gap, rw);
+          const used = ws.reduce((a, b) => a + b, 0) + e.gap * Math.max(e.children.length - 1, 0);
+          const free = Math.max(rw - used, 0);
+          let cx = x, step = e.gap;
+          if (e.align === 'center') cx += free / 2; else if (e.align === 'end') cx += free;
+          else if (e.align === 'between' && e.children.length > 1) step = e.gap + free / (e.children.length - 1);
+          e.children.forEach((c, i) => {
+            const ch = height(c, ws[i], true);
+            if (ch === 0) emit(c, cx, y, ws[i], rh, true); else emit(c, cx, y + (rh - ch) / 2, ws[i], ch, true);
+            cx += ws[i] + step;
+          });
+          break;
+        }
+        case 'bar': {
+          const ty = y + (rh - e.height) / 2, track = hex(e.background) || TRACK;
+          rounded(x, ty, rw, e.height, e.height / 2, track);
+          const parts = (e.segments || []).filter((s) => s.value > 0);
+          const sum = parts.reduce((s, p) => s + p.value, 0);
+          if (sum > 0) {
+            const least = Math.min(e.height, rw / parts.length), spare = Math.max(rw - least * parts.length, 0);
+            let px = x;
+            parts.forEach((p, i) => { const pw = least + spare * p.value / sum; const d = i + 1 === parts.length ? x + rw - px : pw - 1; rounded(px, ty, d, e.height, Math.min(e.height / 2, d / 2), hex(p.color) || ACCENT); px += pw; });
+          } else if (e.value > 0) rounded(x, ty, Math.min(Math.max(rw * e.value, e.height), rw), e.height, e.height / 2, e.color || ACCENT);
+          break;
+        }
+        case 'badge': {
+          const bw = Math.min(natural(e), rw), by = y + (rh - BADGE_H) / 2, fill = e.color || ACCENT;
+          rounded(x, by, bw, BADGE_H, BADGE_H / 2, fill);
+          const t = fit(e.text, BADGE_PX, e.weight, bw - 2 * BADGE_PAD);
+          text(t, BADGE_PX, e.weight, x + (bw - width(t, BADGE_PX, e.weight)) / 2, base(by, BADGE_H, BADGE_PX), hex(e.text_color) || inkOn(fill));
+          break;
+        }
+        case 'divider': { const c = e.color || DIVIDER; g.fillStyle = css(c); if (inRow) g.fillRect(x + rw / 2 - 0.5, y, 1, rh); else g.fillRect(x, y + (rh - 1) / 2, rw, 1); break; }
+        case 'button': {
+          const by = y + (rh - BUTTON_H) / 2, fill = e.color || BUTTON, ink = e.color ? inkOn(fill) : INK;
+          rounded(x, by, rw, BUTTON_H, BUTTON_R, fill);
+          const room = Math.max(rw - 2 * BUTTON_PAD, 0), iw = e.icon ? BUTTON_ICON + (e.text ? 6 : 0) : 0;
+          const t = fit(e.text, BUTTON_PX, 'medium', Math.max(room - iw, 0));
+          const content = iw + width(t, BUTTON_PX, 'medium'), bx = x + (rw - content) / 2;
+          if (e.icon) icon(e.icon, bx + BUTTON_ICON / 2, by + BUTTON_H / 2, BUTTON_ICON, ink);
+          text(t, BUTTON_PX, 'medium', bx + iw, base(by, BUTTON_H, BUTTON_PX), ink);
+          break;
+        }
+        case 'checkbox': {
+          const by = y + (rh - CHECK) / 2, accent = e.color || ACCENT;
+          rounded(x, by, CHECK, CHECK, 4, e.checked ? accent : TRACK);
+          if (e.checked) icon('check', x + CHECK / 2, by + CHECK / 2, 14, inkOn(accent));
+          text(e.text || '', CONTROL_PX, 'regular', x + CHECK + CHECK_GAP, base(y, rh, CONTROL_PX), INK);
+          break;
+        }
+        case 'tabs': {
+          const accent = e.color || ACCENT, by = y + (rh - TABS_H) / 2, tabs = e.tabs || [], n = Math.max(tabs.length, 1), cw = rw / n;
+          rounded(x, by, rw, TABS_H, 8, TRACK);
+          tabs.forEach((t, i) => {
+            const on = i + 1 === (e.selected ?? 1), cx = x + cw * i;
+            if (on) rounded(cx + 2, by + 2, cw - 4, TABS_H - 4, 6, accent);
+            const f = fit(t, CONTROL_PX, 'medium', Math.max(cw - 12, 0));
+            text(f, CONTROL_PX, 'medium', cx + (cw - width(f, CONTROL_PX, 'medium')) / 2, base(by, TABS_H, CONTROL_PX), on ? inkOn(accent) : INK);
+          });
+          break;
+        }
+        case 'table': {
+          const cols = e.columns || [], rows = e.rows || [];
+          const n = Math.max(cols.length, ...rows.map((r) => r.length), 1);
+          const shares = [...Array(n)].map((_, i) => ((e.widths || [])[i] > 0 ? e.widths[i] : 1));
+          const sum = shares.reduce((a, b) => a + b, 0);
+          let acc = x; const xs = shares.map((s) => { const cw = rw * s / sum; const c = [acc, cw]; acc += cw; return c; });
+          const lh = e.size * LINE; let ty = y;
+          const line = (cells, ty, wt, ink) => cells.slice(0, n).forEach((cell, k) => {
+            const [cx, cw] = xs[k], t = fit(typeof cell === 'object' && cell ? String(cell.text ?? '') : String(cell ?? ''), e.size, wt, Math.max(cw - 6, 0));
+            const tw = width(t, e.size, wt), al = (e.aligns || [])[k] || 'left';
+            const tx = al === 'center' ? cx + (cw - tw) / 2 : al === 'right' ? cx + cw - tw - (k + 1 < n ? 6 : 0) : cx;
+            text(t, e.size, wt, tx, base(ty, lh, e.size), (typeof cell === 'object' && cell && hex(cell.color)) || ink);
+          });
+          if (cols.length) { line(cols, ty, 'bold', GREY); ty += lh + 1; g.fillStyle = css(DIVIDER); g.fillRect(x, ty, rw, 1); ty += 2; }
+          rows.forEach((r) => { line(r, ty, 'regular', e.color || INK); ty += lh; });
+          break;
+        }
+        case 'box': {
+          const tint = e.color || ACCENT;
+          rounded(x, y, rw, rh, BOX_R, alpha(tint, BOX_TINT));
+          rounded(x, y, BOX_STRIPE, rh, BOX_STRIPE / 2, tint);
+          const ix = x + BOX_STRIPE + BOX_PAD[0], iw = Math.max(x + rw - BOX_PAD[1] - ix, 1);
+          let cy = y + BOX_Y;
+          e.children.forEach((c, i) => { if (i) cy += e.gap; const ch = height(c, iw, false); emit(c, ix, cy, iw, ch, false); cy += ch; });
+          break;
+        }
+        case 'stops': {
+          const rail = e.color || ACCENT, k = e.size / 13, row = STOP_ROW * k, list = e.stops || [];
+          list.forEach((s, i) => {
+            const ry = y + i * row, sx = x + RAIL_X * k, cy = ry + row / 2, state = s.state || 'ahead';
+            const lineC = state === 'done' ? RAIL_DONE : rail;
+            g.fillStyle = css(lineC);
+            if (i > 0) g.fillRect(sx - 1.5 * k, ry, 3 * k, row / 2);
+            if (i + 1 < list.length) g.fillRect(sx - 1.5 * k, cy, 3 * k, row / 2);
+            const dot = (r, c) => rounded(sx - r, cy - r, 2 * r, 2 * r, r, c);
+            if (state === 'done') dot(4 * k, RAIL_DONE);
+            else if (state === 'now') { dot(9 * k, alpha(rail, 0.25)); dot(6 * k, rail); }
+            else { dot(4.5 * k, rail); dot(2.5 * k, [20, 26, 38, 1]); }
+            const tpx = 12 * k; let right = x + rw;
+            if (s.time) {
+              const [wt, c] = state === 'done' ? ['medium', TEXT_FAINT] : state === 'now' ? ['bold', rail] : ['medium', TEXT_DIM];
+              const tw = width(s.time, tpx, wt); text(s.time, tpx, wt, right - tw, base(ry, row, tpx), c); right -= tw + 8 * k;
+            }
+            if (s.expected) { const ew = width(s.expected, tpx, 'bold'); text(s.expected, tpx, 'bold', right - ew, base(ry, row, tpx), hex(s.expected_color) || TEXT_SOFT); right -= ew + 8 * k; }
+            if (s.tag) {
+              const px = 10 * k, tw = width(s.tag, px, 'medium') + 10 * k;
+              rounded(right - tw, cy - 8 * k, tw, 16 * k, 4 * k, TAG_FILL); text(s.tag, px, 'medium', right - tw + 5 * k, base(cy - 8 * k, 16 * k, px), TEXT_DIM); right -= tw + 8 * k;
+            }
+            const [px, wt, c] = state === 'done' ? [12.5 * k, 'regular', TEXT_FAINT] : state === 'now' ? [14 * k, 'bold', TEXT_NOW] : [13 * k, 'medium', TEXT_SOFT];
+            const nx = x + NAME_X * k;
+            text(fit(s.name || '', px, wt, Math.max(right - nx, 0)), px, wt, nx, base(ry, row, px), c);
+          });
+          break;
+        }
+        default: break;
+      }
+    }
+
+    let y = P.padding;
+    P.children.forEach((c, i) => { if (i) y += P.gap; emit(c, P.padding, y, w, hs[i], false); y += hs[i]; });
+  }
+
+  function show(looks) {
+    const out = document.getElementById('out');
+    out.innerHTML = '';
+    const sets = Array.isArray(looks) ? { '': looks } : looks;
+    for (const [name, list] of Object.entries(sets)) {
+      for (const light of [false, true]) {
+        const these = list.filter((l) => !!l.light === light);
+        if (!these.length) continue;
+        const set = document.createElement('section');
+        set.className = 'set';
+        set.innerHTML = `<h2>${name ? name + ' · ' : ''}${light ? 'light card' : 'dark card'}</h2><div class="grid"></div>`;
+        for (const l of these) {
+          const fig = document.createElement('figure');
+          fig.innerHTML = `<figcaption>${l.tab}</figcaption>`;
+          const cv = document.createElement('canvas');
+          fig.appendChild(cv);
+          set.querySelector('.grid').appendChild(fig);
+          draw(cv.getContext('2d'), l.panel, light);
+        }
+        out.appendChild(set);
+      }
+    }
+  }
+
+  const ready = Promise.all([
+    document.fonts.load('400 14px Inter'), document.fonts.load('500 14px Inter'), document.fonts.load('700 14px Inter'),
+    document.fonts.load('20px "Material Symbols Outlined"', 'navigation'),
+  ]).catch(() => {});
+  ready.then(() => { if (window.LOOKS) show(window.LOOKS); });
+  document.addEventListener('dragover', (e) => e.preventDefault());
+  document.addEventListener('drop', async (e) => {
+    e.preventDefault();
+    const f = e.dataTransfer.files[0];
+    if (f) { await ready; show(JSON.parse(await f.text())); }
+  });
+})();
+</script>
+</body>
+</html>

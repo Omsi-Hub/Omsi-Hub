@@ -46,7 +46,7 @@ function M.rows(ctx)
   local part = p.step == "code" and tr("Code") or tr("Personnel number")
   local out = {
     { type = "row", gap = 8, children = {
-      { type = "icon", name = "badge", size = 18, color = th.dim },
+      { type = "icon", name = "badge", size = 18, color = th.accent },
       { type = "text", text = tr("Not signed on"), size = 14, weight = "bold", color = th.ink, grow = true, wrap = false },
     } },
     P.text(th, tr("Duty %{duty}: line %{line}, tour %{tour}", { duty = a.duty or "", line = a.line or "", tour = a.tour or "" }), "dim", 12),

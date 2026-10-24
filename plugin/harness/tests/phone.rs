@@ -14,23 +14,29 @@ fn the_phone_is_docked_under_the_map_with_its_status_line_and_five_tabs() {
     let p = phone(&h);
     assert_eq!(p["anchor"], "navigator");
     assert_eq!(p["grab"], true, "its tabs and buttons without F10");
-    assert!(p.get("background").is_none(), "the navigator's card shows through");
+    assert!(p.get("background").is_none(), "the navigator's card shows through (a background of its own would be square in its rounded card)");
     // the status line: the trip's line badge, the terminus without its code, trip 1/2, the chip
     let status = p["children"][0].clone();
     let parts = status["children"].as_array().unwrap();
     assert_eq!((parts[0]["type"].as_str(), parts[0]["text"].as_str(), parts[0]["color"].as_str()), (Some("badge"), Some("10"), Some("#FFD23F")));
     assert_eq!(parts[1]["text"], "Hbf");
-    assert_eq!(parts[2]["text"], "1/2");
+    assert_eq!((parts[2]["type"].as_str(), parts[2]["text"].as_str()), (Some("badge"), Some("1/2")));
     // (42 s late is on time, as on the navigator's map: a pill of the time's colour, white text)
     assert_eq!((parts[3]["text"].as_str(), parts[3]["color"].as_str(), parts[3]["text_color"].as_str()), (Some("on time"), Some("#2FA84F"), Some("#FFFFFF")));
     let (names, selected) = tabs(&h).expect("the tabs");
-    assert_eq!(names, ["Ride", "Stops", "Duty", "Inbox", "Bus"]);
+    assert_eq!(names, TAB_IDS);
     assert_eq!(selected, 1);
+    // (the tab shown in Omsi-Hub's blue with its icon and name, the others their icon on the navy)
+    let ride = find(&h, PHONE, |e| e["id"] == "phone_tab_ride").unwrap();
+    assert_eq!((ride["text"].as_str(), ride["icon"].as_str(), ride["color"].as_str()), (Some("Ride"), Some("navigation"), Some("#2A75F7")));
+    let bus = find(&h, PHONE, |e| e["id"] == "phone_tab_bus").unwrap();
+    assert_eq!((bus["text"].as_str(), bus["icon"].as_str(), bus["color"].as_str()), (Some(""), Some("directions_bus"), Some("#2C3240")));
     // the board and the company's panel are in the phone, not panels of their own
     for id in ["omsihub_board", "omsihub", "omsihub_strip", "omsihub_ontime"] {
         assert!(!has_panel(&h, id), "{id}");
     }
-    assert!(has_element(&h, PHONE, |e| e["text"] == "Zoo" && e["size"] == 18), "the stop ahead on the Ride tab: {}", phone(&h));
+    assert!(has_element(&h, PHONE, |e| e["text"] == "Zoo" && e["size"] == 20), "the stop ahead on the Ride tab: {}", phone(&h));
+    assert!(has_element(&h, PHONE, |e| e["type"] == "box" && e["color"] == "#2A75F7" && elements(e).iter().any(|c| c["text"] == "Zoo")), "on its blue card: {}", phone(&h));
     no_ui_errors(&h);
     // the handshake says what this openOMSI offers
     let hello = bridge::read_hello(&dir).unwrap();
@@ -122,11 +128,12 @@ fn a_short_room_under_the_map_gives_the_slim_phone() {
 #[test]
 fn the_navigator_s_light_look_gets_dark_ink() {
     let (_, h) = start("dark", Some(assignment()), docked_game(), 2);
-    assert_eq!(phone(&h)["children"][0]["children"][1]["color"], "#F2F2F7");
+    assert_eq!(phone(&h)["children"][0]["children"][1]["color"], "#E8EBF2");
     let (_, h) = start("light", Some(light(assignment())), docked_game(), 2);
-    assert_eq!(phone(&h)["children"][0]["children"][1]["color"], "#1C1C1E");
-    // (the game draws the tabs on its own dark grey: the tab shown stands out light)
-    assert_eq!(find(&h, PHONE, |e| e["type"] == "tabs").unwrap()["color"], "#F2F2F7");
+    assert_eq!(phone(&h)["children"][0]["children"][1]["color"], "#1E1C22");
+    // (the tab shown in the blue on either card, the others light on the white one)
+    assert_eq!(find(&h, PHONE, |e| e["id"] == "phone_tab_ride").unwrap()["color"], "#2A75F7");
+    assert_eq!(find(&h, PHONE, |e| e["id"] == "phone_tab_stops").unwrap()["color"], "#EDE9E3");
     no_ui_errors(&h);
 }
 
@@ -144,7 +151,7 @@ fn a_tab_chosen_shows_its_content() {
     // Duty: the company's panel's elements and the duty's trips, the one under way marked
     choose_tab(&h, 3);
     assert!(shows(&h, PHONE, "Duty D-12"), "{}", phone(&h));
-    assert!(has_element(&h, PHONE, |e| e["type"] == "table" && e["rows"][0][0]["text"] == "›"));
+    assert!(trip_under_way(&h).is_some_and(|r| r[2]["text"] == "Hbf"), "{}", phone(&h));
     // Bus: the fuel, the passengers seated and standing
     choose_tab(&h, 5);
     assert!(has_element(&h, PHONE, |e| e["type"] == "bar" && e["value"] == 1.0), "{}", phone(&h));
@@ -165,7 +172,7 @@ fn the_control_room_s_instruction_opens_the_inbox_and_is_answered_there() {
     std::fs::write(dir.join("data").join("messages.json"), inbox.to_string()).unwrap();
     run(&mut h, 3);
     // a message come in: its count on the tab
-    assert_eq!(tabs(&h).unwrap().0[3], "Inbox 1");
+    assert_eq!(tabs(&h).unwrap().0[3], "messages 1");
     let inbox = json!({ "messages": [
         { "id": 7, "time": "08:05", "from": "Control", "text": "Turn back at Markt", "priority": "instruction", "state": "sent", "action": { "kind": "short_turn", "stop": "Markt" } },
         { "id": 6, "time": "08:01", "from": "Control", "text": "Good morning", "priority": "info", "state": "read" },
@@ -175,7 +182,7 @@ fn the_control_room_s_instruction_opens_the_inbox_and_is_answered_there() {
     assert!(toasted(&h, "Turn back at Markt"), "a card as it comes");
     assert!(!has_panel(&h, "omsihub_msgs"), "no inbox of its own");
     // the instruction brings the inbox up, read: no count
-    assert_eq!(tabs(&h).unwrap(), (vec!["Ride".into(), "Stops".into(), "Duty".into(), "Inbox".into(), "Bus".into()], 4));
+    assert_eq!(tabs(&h).unwrap(), (TAB_IDS.iter().map(|t| t.to_string()).collect(), 4));
     assert!(has_element(&h, PHONE, |e| e["id"] == "msg_accept_7"), "{}", phone(&h));
     click(&h, "msg_accept_7");
     let replies = std::fs::read_to_string(dir.join("data").join("replies.jsonl")).unwrap();
@@ -257,7 +264,7 @@ fn the_game_s_menu_hiding_the_board_flips_nothing_and_the_phone_takes_over_as_so
 }
 
 #[test]
-fn a_count_on_a_tab_with_a_long_name_stays_readable() {
+fn a_count_on_a_tab_shows_beside_its_icon_and_the_tab_shown_says_its_name() {
     let dir = installed("tab-count");
     bridge::write_assignment(&dir, &assignment()).unwrap();
     let texts = std::collections::BTreeMap::from([("Inbox".to_string(), "Posteingang".to_string())]);
@@ -272,10 +279,12 @@ fn a_count_on_a_tab_with_a_long_name_stays_readable() {
     ], "replies": [], "quick": [] });
     std::fs::write(dir.join("data").join("messages.json"), inbox.to_string()).unwrap();
     run(&mut h, 3);
-    let label = tabs(&h).unwrap().0[3].clone();
-    // (the name cut, not the count: the game cuts a tab's label at its end)
-    assert_eq!(label, "Poste… 3");
-    assert!(label.chars().count() <= 8);
+    // (a tab not shown is its icon: the count beside it, on the navy that stands out)
+    assert_eq!(tabs(&h).unwrap().0[3], "messages 3");
+    assert_eq!(find(&h, PHONE, |e| e["id"] == "phone_tab_messages").unwrap()["color"], "#2A3A5C");
+    // shown, it says its name in the player's language, whole
+    choose_tab(&h, 4);
+    assert_eq!(find(&h, PHONE, |e| e["id"] == "phone_tab_messages").unwrap()["text"], "Posteingang");
     no_ui_errors(&h);
 }
 

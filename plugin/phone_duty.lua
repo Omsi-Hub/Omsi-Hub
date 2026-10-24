@@ -2,8 +2,9 @@
 -- Omsi-Hub asks for it, starting the duty and signing off (main.lua's company panel), the duty
 -- strip in the phone's look (what is under way, the next break, relief or the duty's end with
 -- a countdown bar, today's changes: duty_strip.lua's own reckoning), the IBIS codes to type for
--- the trip and, where the game types them itself, a switch for that; the duty's trips, the
--- one under way marked; the week's roster and the requests the company takes (a sick call, a
+-- the trip and, where the game types them itself, a switch for that; the duty's trips (each its
+-- times, its line's plate and where it goes; the one under way on a card of Omsi-Hub's blue,
+-- those done grey); the week's roster and the requests the company takes (a sick call, a
 -- swap, leave), each asked again before it goes; the strip's note and walk-around. The actions
 -- come before the lists (the room under the map cuts the panel's end off).
 -- Its modes: a driver still to sign on (the number and the code on a keypad, phone_signon.lua;
@@ -77,8 +78,8 @@ local function ibis(ctx, out)
   local c = codes(ctx.assignment, ctx.k, ctx.trip)
   local auto = ctx.has("duty.set_auto_ibis") and ctx.hooks.ibis_auto ~= nil
   if not c and not auto then return end
-  out[#out + 1] = { type = "divider" }
-  out[#out + 1] = P.label(th, tr("IBIS"))
+  out[#out + 1] = { type = "divider", color = th.line }
+  out[#out + 1] = P.heading(th, tr("IBIS"))
   if c then
     out[#out + 1] = { type = "row", gap = 6, children = {
       P.stat(th, tr("Line"), tostring(c.line or "–"), nil, ctx.can.box),
@@ -107,7 +108,7 @@ local function strip_block(ctx, out)
   local now = (ctx.clock or 0) / 60
   local plan = strip.plan(now)
   if not plan then return false end
-  out[#out + 1] = { type = "divider" }
+  out[#out + 1] = { type = "divider", color = th.line }
   out[#out + 1] = P.text(th, plan.piece, "ink", 13, "medium")
   local first = plan.next[1]
   if first then
@@ -115,14 +116,14 @@ local function strip_block(ctx, out)
     local at = first.now and first.to or first.from
     local where = (first.at or "") ~= "" and (first.at .. " • ") or ""
     out[#out + 1] = { type = "row", gap = 8, children = {
-      { type = "icon", name = icon, size = 18, color = th.ink },
-      { type = "text", text = P.caps(tr(label)), size = 10.5, weight = "medium", color = th.dim, grow = true, wrap = false },
+      { type = "icon", name = icon, size = 18, color = th.accent },
+      { type = "text", text = P.caps(tr(label)), size = 10.5, weight = "bold", color = th.dim, grow = true, wrap = false },
       { type = "text", text = until_text(tr, at - now), size = 15, weight = "bold", color = th.ink, wrap = false },
     } }
     out[#out + 1] = P.text(th, where .. (first.now and tr("now, until %{time}", { time = P.hhmm(first.to * 60) }) or P.hhmm(at * 60)), "dim", 12)
     local span = at - plan.since
     local value = span > 0 and math.min(math.max((now - plan.since) / span, 0), 1) or 1
-    out[#out + 1] = { type = "bar", value = value, height = 4, color = th.ink, background = th.track }
+    out[#out + 1] = { type = "bar", value = value, height = 4, color = th.accent, background = th.track }
   end
   for i = 2, #plan.next do
     local e = plan.next[i]
@@ -140,41 +141,41 @@ end
 
 -- --- the trips -----------------------------------------------------------------------------------
 
+-- a trip of the duty as a row: when it leaves, its line's plate (`wide`: as wide as the
+-- widest of the list's), where it goes and when it gets there - the one under way bold, those
+-- done grey
+local function trip_row(th, tr, t, wide, done, now)
+  return { type = "row", gap = 8, children = {
+    { type = "text", text = P.hhmm(t.departure), size = 13, weight = now and "bold" or "medium", color = done and th.faint or (now and th.ink or th.dim), wrap = false },
+    P.plate(th, t.line or "", tr, wide, done),
+    { type = "text", text = P.terminus(t.line, t.terminus), size = 13, weight = now and "bold" or "regular", color = done and th.faint or th.ink, grow = true, wrap = false },
+    { type = "text", text = P.hhmm(t.arrival), size = 12, weight = "medium", color = done and th.faint or th.dim, wrap = false },
+  } }
+end
+
 -- the duty's trips: done, under way, to come (from the one before the trip under way, as many
--- as there is room for)
+-- as there is room for), the one under way on a card
 local function trip_list(ctx, out)
   local th, tr, d = ctx.theme, ctx.tr, ctx.duty
-  out[#out + 1] = { type = "divider" }
+  out[#out + 1] = { type = "divider", color = th.line }
+  out[#out + 1] = P.heading(th, tr("Trips"))
   if #ctx.trips == 0 then
     out[#out + 1] = P.text(th, tr("No trips yet: start your duty"), "dim")
     return
   end
   local most = math.max(ctx.fit or M.fit[1], 2)
   local first = math.max(1, math.min((d and d.trip or 1) - 1, #ctx.trips - most + 1))
-  local rows = {}
-  for k = first, math.min(#ctx.trips, first + most - 1) do
-    local t = ctx.trips[k]
+  local last = math.min(#ctx.trips, first + most - 1)
+  local wide = 0
+  for k = first, last do wide = math.max(wide, utf8.len(ctx.trips[k].line or "") or 0) end
+  for k = first, last do
     local done = d and (k < d.trip or (k == d.trip and d.trip_done))
     local now = d and k == d.trip and not d.trip_done
-    local ink = done and th.faint or (now and th.ink or th.dim)
-    rows[#rows + 1] = {
-      { text = done and "•" or (now and "›" or tostring(k)), color = ink },
-      { text = t.line or "", color = ink },
-      { text = P.hhmm(t.departure), color = ink },
-      { text = P.terminus(t.line, t.terminus), color = ink },
-      { text = P.hhmm(t.arrival), color = ink },
-    }
+    local row = trip_row(th, tr, ctx.trips[k], wide, done, now)
+    if now then P.card(out, th, ctx.can.box, { row }, th.primary) else out[#out + 1] = row end
   end
-  local more = #ctx.trips - (first + #rows - 1)
-  if more > 0 then rows[#rows + 1] = { { text = "", color = th.faint }, { text = "", color = th.faint }, { text = "+" .. more, color = th.faint }, { text = "", color = th.faint }, { text = "", color = th.faint } } end
-  if not ctx.can.box then
-    -- (an openOMSI before coloured cells writes a cell's table as nothing: plain texts there)
-    for _, r in ipairs(rows) do
-      for i, cell in ipairs(r) do r[i] = cell.text end
-    end
-  end
-  out[#out + 1] = { type = "table", columns = { "", tr("Line"), tr("Dep."), "", tr("Arr.") }, widths = { 0.08, 0.14, 0.16, 0.46, 0.16 },
-    aligns = { "center", "left", "left", "left", "right" }, rows = rows, size = 12.5, color = th.ink }
+  local more = #ctx.trips - last
+  if more > 0 then out[#out + 1] = P.text(th, "+" .. more, "faint", 12, "medium") end
 end
 
 -- --- the week and the requests -----------------------------------------------------------------
@@ -225,8 +226,8 @@ local function roster(ctx, out)
   local th, tr = ctx.theme, ctx.tr
   local w = week(ctx)
   if #w == 0 then return end
-  out[#out + 1] = { type = "divider" }
-  out[#out + 1] = P.label(th, tr("This week"))
+  out[#out + 1] = { type = "divider", color = th.line }
+  out[#out + 1] = P.heading(th, tr("This week"))
   local rows = {}
   for _, r in ipairs(w) do
     local ink = r.now == true and th.ink or th.dim
@@ -294,7 +295,7 @@ local function requests(ctx, out)
     end
   end
   if #buttons == 0 then return end
-  out[#out + 1] = { type = "divider" }
+  out[#out + 1] = { type = "divider", color = th.line }
   for i = 1, #buttons, 2 do out[#out + 1] = { type = "row", gap = 6, children = { buttons[i], buttons[i + 1] } } end
   for _, text in ipairs(asked) do out[#out + 1] = P.text(th, "• " .. text, "dim", 12) end
 end
@@ -311,7 +312,7 @@ local function head(ctx, out)
   local th, tr, a = ctx.theme, ctx.tr, ctx.assignment
   if not (a and (a.duty or "") ~= "") then return end
   out[#out + 1] = { type = "row", gap = 8, children = {
-    { type = "icon", name = "badge", size = 18, color = th.dim },
+    { type = "icon", name = "badge", size = 18, color = th.accent },
     { type = "text", text = tr("Duty %{duty}: line %{line}, tour %{tour}", { duty = a.duty, line = a.line or "", tour = a.tour or "" }), size = 13, weight = "bold", color = th.ink, grow = true },
   } }
   -- (not again once the duty has ended)
@@ -328,7 +329,7 @@ function M.rows(ctx)
   -- (the duty ended meanwhile: nothing left to end)
   if pending and pending.what == "end" and not ctx.duty then pending = nil end
   if pending then
-    out[#out + 1] = { type = "divider" }
+    out[#out + 1] = { type = "divider", color = ctx.theme.line }
     confirm(ctx, out)
   end
   if strip.form() == "note" then tools(ctx, out) end

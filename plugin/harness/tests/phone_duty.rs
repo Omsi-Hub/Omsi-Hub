@@ -87,8 +87,8 @@ fn the_duty_tab_shows_the_strip_the_trips_and_the_ibis_codes() {
     assert!((bar["value"].as_f64().unwrap() - 0.25).abs() < 1e-6, "{bar}");
     assert!(shows(&h, PHONE, "End of duty") && shows(&h, PHONE, "Extra duty: D-14 at 15:00"));
     assert!(!has_panel(&h, "omsihub_strip"));
-    // the duty's trips, the one under way marked; the IBIS codes of this trip
-    assert!(has_element(&h, PHONE, |e| e["type"] == "table" && e["rows"][0][0]["text"] == "›"));
+    // the duty's trips, the one under way on its blue card; the IBIS codes of this trip
+    assert!(trip_under_way(&h).is_some(), "{}", phone(&h));
     for code in ["30701", "02", "1234"] {
         assert!(has_element(&h, PHONE, |e| e["type"] == "text" && e["text"] == code && e["size"] == 22), "{code}: {}", phone(&h));
     }
@@ -210,11 +210,11 @@ fn an_instruction_is_accepted_or_declined_on_the_messages_tab_and_control_is_tol
     // the instructions bring the tab up; the urgent one says so by its icon, not a colour
     assert_eq!(tabs(&h).unwrap().1, 4);
     let urgent = find(&h, PHONE, |e| e["type"] == "icon" && e["name"] == "warning").expect("the urgent one's icon");
-    assert_eq!(urgent["color"], "#F2F2F7");
+    assert_eq!(urgent["color"], "#E8EBF2");
     let accept = find(&h, PHONE, |e| e["id"] == "msg_accept_8").unwrap();
     let decline = find(&h, PHONE, |e| e["id"] == "msg_decline_8").unwrap();
-    assert_eq!((accept["text"].as_str(), accept["color"].as_str()), (Some("Accept"), Some("#FFD23F")));
-    assert_eq!((decline["text"].as_str(), decline["color"].as_str()), (Some("Can't"), Some("#48484A")));
+    assert_eq!((accept["text"].as_str(), accept["color"].as_str()), (Some("Accept"), Some("#2A75F7")));
+    assert_eq!((decline["text"].as_str(), decline["color"].as_str()), (Some("Can't"), Some("#2C3240")));
     click(&h, "msg_decline_9");
     click(&h, "msg_accept_8");
     // a quick report to control
@@ -335,7 +335,7 @@ fn an_openomsi_without_pause_menu_lines_is_left_alone() {
 
 /// Every text, icon and table of the phone in the inks of the light card (or the dark one), and
 /// its checkboxes as the light card needs them: no label of their own (the game writes it in
-/// light ink whatever its colour), the box in the indigo.
+/// light ink whatever its colour), the box in Omsi-Hub's blue.
 fn in_the_phone_s_inks(h: &Harness, inks: &[&str], light: bool) {
     for e in elements(&phone(h)) {
         let t = e["type"].as_str().unwrap_or("");
@@ -344,7 +344,7 @@ fn in_the_phone_s_inks(h: &Harness, inks: &[&str], light: bool) {
             assert!(inks.contains(&c), "{c}: {e}\n{}", phone(h));
         }
         if t == "checkbox" {
-            assert_eq!(e["color"], "#4A5BD6", "{e}");
+            assert_eq!(e["color"], "#2A75F7", "{e}");
             if light {
                 assert_eq!(e["text"], "", "{e}");
             }
@@ -358,7 +358,8 @@ fn the_sign_on_and_the_strip_s_forms_are_drawn_in_the_phone_s_look() {
     let pass = Some(bridge::Personnel { number: "4711".into(), code: "1234".into() });
     let a = light(Assignment { crew: Some(crew.clone()), personnel: pass.clone(), ..assignment() });
     let (_, h) = start_with("light-forms", a, "", docked_game(), "", 3);
-    let light_inks = ["#1C1C1E", "#6E6E73", "#A1A1A8"];
+    // (the ink, dim, faint and the accent that points the way)
+    let light_inks = ["#1E1C22", "#645F62", "#86807E", "#2A75F7"];
     // signing on: the Duty tab, the company and the pass in dark ink on the white card
     assert_eq!(tabs(&h).unwrap().1, 3);
     assert!(shows(&h, PHONE, "Not signed on") && shows(&h, PHONE, "Stadtbus Berlin"), "{}", phone(&h));
@@ -366,14 +367,14 @@ fn the_sign_on_and_the_strip_s_forms_are_drawn_in_the_phone_s_look() {
     // the duty order, its table too
     keys(&h, "4711k1234k");
     assert!(shows(&h, PHONE, "Duty assignment"), "{}", phone(&h));
-    assert_eq!(find(&h, PHONE, |e| e["id"] == "accept").unwrap()["color"], "#FFD23F", "the action to take");
+    assert_eq!(find(&h, PHONE, |e| e["id"] == "accept").unwrap()["color"], "#2A75F7", "the action to take");
     in_the_phone_s_inks(&h, &light_inks, true);
     click(&h, "accept");
     // the walk-around: each part's name a text of its own beside its box
     choose_tab(&h, 3);
     click(&h, "strip_check");
     assert!(has_element(&h, PHONE, |e| e["type"] == "checkbox" && e["id"] == "strip_chk_doors"), "{}", phone(&h));
-    assert!(has_element(&h, PHONE, |e| e["type"] == "text" && e["text"] == "Doors" && e["color"] == "#1C1C1E"));
+    assert!(has_element(&h, PHONE, |e| e["type"] == "text" && e["text"] == "Doors" && e["color"] == "#1E1C22"));
     in_the_phone_s_inks(&h, &light_inks, true);
     click(&h, "strip_chk_ok");
     // the note form and the IBIS switch
@@ -385,7 +386,7 @@ fn the_sign_on_and_the_strip_s_forms_are_drawn_in_the_phone_s_look() {
     // the dark card: the labels on the boxes, but no orange, red or amber
     let a = Assignment { crew: Some(crew), personnel: pass, ..assignment() };
     let (_, h) = start_with("dark-forms", a, "", docked_game(), "", 3);
-    in_the_phone_s_inks(&h, &["#F2F2F7", "#A1A1A8", "#6E6E73"], false);
+    in_the_phone_s_inks(&h, &["#E8EBF2", "#959DB0", "#60687A", "#4888F8"], false);
     no_ui_errors(&h);
 }
 
@@ -415,7 +416,7 @@ fn the_driver_signs_on_with_the_phone_s_keypad_without_f10() {
     assert_eq!(tabs(&h).unwrap().1, 3);
     let rows: Vec<Value> = elements(&phone(&h)).into_iter().filter(|e| e["type"] == "row" && elements(e).iter().any(|k| k["id"].as_str().is_some_and(|i| i.starts_with("duty_key_")))).collect();
     assert_eq!(rows.iter().map(|r| r["children"].as_array().unwrap().len()).collect::<Vec<_>>(), [3, 3, 3, 3], "{}", phone(&h));
-    assert_eq!(find(&h, PHONE, |e| e["id"] == "duty_key_ok").unwrap()["color"], "#FFD23F", "OK: the action to take");
+    assert_eq!(find(&h, PHONE, |e| e["id"] == "duty_key_ok").unwrap()["color"], "#2A75F7", "OK: the action to take");
     assert!(!has_element(&h, PHONE, |e| e["type"] == "input"));
     assert!(!shows(&h, PHONE, "F10"), "the keys take the mouse without F10: {}", phone(&h));
     assert!(shows(&h, PHONE, "PERSONNEL NUMBER") && typed(&h) == "–");
@@ -439,7 +440,7 @@ fn the_driver_signs_on_with_the_phone_s_keypad_without_f10() {
     keys(&h, "k2580k");
     assert!(!shows(&h, PHONE, "Not known here"));
     assert!(shows(&h, PHONE, "Duty assignment"), "{}", phone(&h));
-    assert_eq!(find(&h, PHONE, |e| e["id"] == "accept").unwrap()["color"], "#FFD23F");
+    assert_eq!(find(&h, PHONE, |e| e["id"] == "accept").unwrap()["color"], "#2A75F7");
     assert!(!shows(&h, PHONE, "F10"));
     click(&h, "accept");
     run(&mut h, 2);
@@ -560,7 +561,7 @@ fn the_actions_come_before_the_lists_and_their_labels_have_the_width() {
     for id in ["duty_sick", "duty_swap", "duty_leave"] {
         assert!(find(&h, PHONE, |e| e["id"] == id).unwrap().get("icon").is_none(), "{id}");
     }
-    assert!(all.iter().filter(|e| e["type"] == "row").all(|r| r["children"].as_array().unwrap().iter().filter(|c| c["type"] == "button").count() <= 2));
+    assert!(all.iter().filter(|e| e["type"] == "row" && e["id"] != "phone_tab").all(|r| r["children"].as_array().unwrap().iter().filter(|c| c["type"] == "button").count() <= 2));
     // the quick reports first on the Messages tab, without icons
     write_inbox(
         &dir,

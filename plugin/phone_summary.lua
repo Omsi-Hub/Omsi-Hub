@@ -106,10 +106,10 @@ end
 
 -- --- the cards --------------------------------------------------------------------------------
 
--- the grade's five stars, those earned in the ink
+-- the grade's five stars, those earned in gold
 local function stars(th, n)
   local row = { type = "row", gap = 1, grow = true, children = {} }
-  for i = 1, 5 do row.children[i] = { type = "icon", name = "star", size = 13, color = i <= (n or 0) and th.ink or th.faint } end
+  for i = 1, 5 do row.children[i] = { type = "icon", name = "star", size = 13, color = i <= (n or 0) and th.badge or th.faint } end
   return row
 end
 
@@ -123,7 +123,7 @@ local function trip_card(ctx, r)
   local e, run = r.judged or {}, r.run
   local out = {
     { type = "row", gap = 8, children = {
-      { type = "icon", name = "sports_score", size = 18, color = th.ink },
+      { type = "icon", name = "sports_score", size = 18, color = th.accent },
       { type = "text", text = tr("Trip done"), size = 15, weight = "bold", color = th.ink, grow = true, wrap = false },
       { type = "text", text = tostring(e.score or 0) .. " / 100", size = 15, weight = "bold", color = th.ink, wrap = false },
     } },
@@ -150,7 +150,7 @@ local function duty_card(ctx)
   local word = t.score and career.grade(t.score) or nil
   local out = {
     { type = "row", gap = 8, children = {
-      { type = "icon", name = "flag", size = 18, color = th.ink },
+      { type = "icon", name = "flag", size = 18, color = th.accent },
       { type = "text", text = tr("Duty done"), size = 15, weight = "bold", color = th.ink, grow = true, wrap = false },
       word and grade(ctx, word) or nil,
     } },
@@ -209,7 +209,7 @@ function M.slim(ctx)
     return nil
   end
   local row = { type = "row", gap = 6, children = {
-    { type = "icon", name = icon, size = 16, color = th.ink },
+    { type = "icon", name = icon, size = 16, color = th.accent },
     { type = "text", text = text, size = 12.5, weight = "bold", color = th.ink, grow = true, wrap = false },
     { type = "text", text = value, size = 13, weight = "bold", color = th.ink, wrap = false },
   } }

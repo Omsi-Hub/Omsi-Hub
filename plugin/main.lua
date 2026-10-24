@@ -20,7 +20,7 @@
 -- under its map (nav.lua and its tabs, phone_*.lua); elsewhere they are panels of their own.
 -- A game without the file functions gets the handshake and the reports in its log instead.
 
-local VERSION = "1.13.0"
+local VERSION = "1.14.0"
 local BRIDGE = 1
 local PANEL = "omsihub"
 

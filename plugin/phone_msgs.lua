@@ -1,10 +1,11 @@
 -- Omsi-Hub's plugin: the phone's Messages tab (nav.lua) - the quick reports to control, then the
--- control room's messages, newest first, answered here, in the phone's look (messages.lua keeps
--- the inbox, sends the answers and carries the instructions out; a new message shows its count
--- on the tab). How urgent a message is, its icon says, not a colour; an instruction has Accept
--- (yellow, the action) and Can't (grey). A message shown here, on the screen, is told read to
--- Omsi-Hub. Its mode: an instruction waiting for the driver's answer. The slim phone has no
--- inbox: the inbox's own panel is there then (nav.lua).
+-- control room's messages, newest first, each on a card, answered here, in the phone's look
+-- (messages.lua keeps the inbox, sends the answers and carries the instructions out; a new
+-- message shows its count on the tab). An instruction waiting for an answer is on a card of
+-- Omsi-Hub's blue with Accept (the blue, the action) and Can't (grey), the others on the tile's;
+-- how urgent a message is, its icon and its bold text say, not a colour (red is the time's). A
+-- message shown here, on the screen, is told read to Omsi-Hub. Its mode: an instruction waiting for the driver's answer.
+-- The slim phone has no inbox: the inbox's own panel is there then (nav.lua).
 
 local messages = require("messages")
 local P = require("phone_theme")
@@ -47,27 +48,32 @@ local function inbox(ctx, looked)
   out[#out + 1] = { type = "button", id = "msg_quick", text = v.quick_open and tr("Hide") or tr("Report to control"), icon = v.quick_open and "expand_less" or "campaign", color = th.secondary }
   if v.quick_open then pairs_of(th, v.quick, "msg_q_", out) end
   if #v.messages == 0 then
-    out[#out + 1] = { type = "divider" }
+    out[#out + 1] = { type = "divider", color = th.line }
     out[#out + 1] = P.text(th, tr("No messages"), "dim")
   end
   for _, m in ipairs(v.messages) do
-    out[#out + 1] = { type = "divider" }
-    out[#out + 1] = { type = "row", gap = 6, children = {
-      { type = "icon", name = m.icon, size = 16, color = th.ink },
-      { type = "text", text = m.time .. "  •  " .. m.from, size = 12, color = th.dim, grow = true, wrap = false },
-      { type = "text", text = m.state, size = 12, color = th.dim, wrap = false },
-    } }
-    out[#out + 1] = P.text(th, m.text, "ink", 14, m.priority == "urgent" and "bold" or "regular")
-    if m.reply ~= "" then out[#out + 1] = P.text(th, "↳ " .. m.reply, "dim", 12) end
-    if m.outcome ~= "" then out[#out + 1] = P.text(th, m.outcome, "dim", 12) end
+    local urgent = m.priority == "urgent"
+    local tone = m.waiting and th.primary or th.tile
+    local card = {
+      { type = "row", gap = 6, children = {
+        { type = "icon", name = m.icon, size = 16, color = urgent and th.ink or (m.waiting and th.accent or th.dim) },
+        { type = "text", text = m.time .. "  •  " .. m.from, size = 12, weight = "medium", color = th.dim, grow = true, wrap = false },
+        { type = "text", text = m.state, size = 12, color = th.dim, wrap = false },
+      } },
+      P.text(th, m.text, "ink", 14, (urgent or m.waiting) and "bold" or "regular"),
+    }
+    if m.reply ~= "" then card[#card + 1] = P.text(th, "↳ " .. m.reply, "dim", 12) end
+    if m.outcome ~= "" then card[#card + 1] = P.text(th, m.outcome, "dim", 12) end
     if m.waiting then
-      out[#out + 1] = { type = "row", gap = 6, children = {
+      card[#card + 1] = { type = "row", gap = 6, children = {
         { type = "button", id = "msg_accept_" .. m.id, text = tr("Accept"), icon = "check", color = th.primary, grow = true },
         { type = "button", id = "msg_decline_" .. m.id, text = tr("Can't"), icon = "close", color = th.neutral, grow = true },
       } }
     elseif m.replies then
-      pairs_of(th, v.replies, "msg_reply_" .. m.id .. "_", out)
+      pairs_of(th, v.replies, "msg_reply_" .. m.id .. "_", card)
     end
+    if not ctx.can.box then out[#out + 1] = { type = "divider", color = th.line } end
+    P.card(out, th, ctx.can.box, card, tone, 6)
   end
   -- (looked at: read, for the control room)
   if looked then messages.shown() end

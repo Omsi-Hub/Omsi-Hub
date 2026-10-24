@@ -2,7 +2,8 @@
 -- part docked under its map (`anchor = "navigator"`): the map, the route, the next turn, the
 -- clock and the next stop's card are the navigator's own; under them a status line (the trip's
 -- line badge, where it goes, trip 3/8, how it stands against the timetable) and the tabs Ride,
--- Stops, Duty, Messages and Bus. Each tab is a module of its own (phone_*.lua, the registry
+-- Stops, Duty, Messages and Bus (a row of buttons: the tab shown in Omsi-Hub's blue with its
+-- name, the others their icon, and a count where one has it). Each tab is a module of its own (phone_*.lua, the registry
 -- below); this one builds what they share once a second (`ctx`), draws the status line and the
 -- tabs, and hands the clicks to them.
 --
@@ -45,7 +46,7 @@
 --   tr(text, vars)     the plugin's texts in the player's language
 --   theme              the inks (phone_theme.lua: ink, dim, faint, line, field, track, chip,
 --                      badge, badge_ink, late, on_time, early, primary, secondary, neutral,
---                      tab_on, accent, light)
+--                      tab_on, tab_off, accent, tile, light)
 --   assignment         what Omsi-Hub gave (assignment.lua), nil on a drive of the player's own
 --   hooks              main.lua's: duty_children(), parts(), boarded(), send(file, tag, value,
 --                      append), report(kind, fields), issued(), say(text, title, icon, seconds)
@@ -90,7 +91,7 @@ local M = {}
 
 local PANEL = "omsihub_nav"
 M.PANEL = PANEL
--- (the tabs element's id)
+-- (the tabs' row; each tab's button is this, "_" and the tab's id: "phone_tab_ride")
 local TABS_ID = "phone_tab"
 
 -- the tabs, in their order on the phone (the last in brackets: `require` gives two values)
@@ -106,8 +107,6 @@ local SLIM_ORDER = { "ride", "duty", "stops", "bus" }
 local SLIM = 150
 local GRACE = 6
 local PADDING, GAP = 10, 6
--- (a tab with a count: about this many letters fit on it, the count's too)
-local TAB_LETTERS = 8
 
 local tr = function(t) return t end
 local hooks = {}
@@ -257,33 +256,34 @@ local function status_line(c)
   end
   local text, color = chip(c)
   -- (a time is a pill of its colour with white text, as the navigator's own delay pill; the rest
-  -- is dim text on the faint chip)
+  -- is dim text on the faint chip, as the trip's number is)
   local timed = color == th.late or color == th.on_time or color == th.early
   return { type = "row", gap = 8, children = {
     P.plate(th, c.line, tr),
-    { type = "text", text = c.terminus, size = 14, weight = "bold", color = th.ink, grow = true, wrap = false },
-    { type = "text", text = string.format("%d/%d", c.k or 0, #c.trips), size = 12, weight = "medium", color = th.dim, wrap = false },
+    { type = "text", text = c.terminus, size = 15, weight = "bold", color = th.ink, grow = true, wrap = false },
+    { type = "badge", text = string.format("%d/%d", c.k or 0, #c.trips), color = th.chip, text_color = th.dim },
     { type = "badge", text = text, color = timed and color or th.chip, text_color = timed and "#FFFFFF" or color, weight = "bold" },
   } }
 end
 
--- the tabs: each one's name, a count on it where it has one (not on the tab shown)
+-- the tabs: a button each - the one shown in the blue with its icon and name, taking the width
+-- the others leave; the others their icon, and a count where one has it (in the navy that
+-- stands out: something waits there)
 local function tabs(c, selected)
-  local names = {}
+  local th = c.theme
+  local row = { type = "row", id = TABS_ID, gap = 6, children = {} }
   for k, t in ipairs(TABS) do
-    local name = tr(t.tab or t.title)
     local b = t.badge and t.badge(c) or nil
-    if b and b ~= 0 and b ~= "" and k ~= selected then
-      -- (the name cut where the two do not fit: the count is what the driver looks for)
-      local count = tostring(b)
-      local most = TAB_LETTERS - 1 - #count
-      local n = utf8.len(name)
-      if n and n > most and most > 1 then name = name:sub(1, utf8.offset(name, most) - 1) .. "…" end
-      name = name .. " " .. count
+    local count = b and b ~= 0 and b ~= "" and tostring(b) or nil
+    local e = { type = "button", id = TABS_ID .. "_" .. t.id, icon = t.icon, text = "", color = th.tab_off }
+    if k == selected then
+      e.text, e.color, e.grow = tr(t.tab or t.title), th.tab_on, true
+    elseif count then
+      e.text, e.color = count, th.secondary
     end
-    names[k] = name
+    row.children[k] = e
   end
-  return { type = "tabs", id = TABS_ID, tabs = names, selected = selected, color = c.theme.tab_on }
+  return row
 end
 
 -- --- the phone, every second ----------------------------------------------------------------------
@@ -432,6 +432,11 @@ end
 function M.route(p, element)
   if p ~= PANEL then return p end
   local e = element or ""
+  local tab = e:match("^" .. TABS_ID .. "_(.+)$")
+  if tab and BY_ID[tab] then
+    M.show(tab)
+    return nil
+  end
   local c = ctx or context()
   local shown_tab = TABS[BY_ID[omsi.data.nav_tab]]
   if shown_tab.click and shown_tab.click(c, e) then return nil end
@@ -441,14 +446,9 @@ function M.route(p, element)
   return owner(e)
 end
 
--- a change on the phone: a tab chosen, or what a tab module or another module takes
+-- a change on the phone: what a tab module or another module takes
 function M.route_change(p, element, value)
   if p ~= PANEL then return p end
-  if element == TABS_ID then
-    local t = TABS[tonumber(value) or 0]
-    if t then M.show(t.id) end
-    return nil
-  end
   local c = ctx or context()
   for _, t in ipairs(TABS) do
     if t.change and t.change(c, element or "", value) then return nil end

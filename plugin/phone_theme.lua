@@ -1,11 +1,14 @@
 -- Omsi-Hub's plugin: the phone's look (nav.lua and its tabs, phone_*.lua) - one set of inks for
 -- the navigator's dark card and one for its light one, and the few ways the phone writes things.
 --
--- Colour means one thing each: time only in late / on time / early (the navigator's own colours
--- and its line of ±59 s, so the phone and the map never disagree); the line's yellow badge for
--- what the trip is; yellow for the action to take, indigo for another one, grey to decline;
--- everything else neutral ink. The navigator draws its card under the phone (dark rgb(30,30,32)
--- or white): the phone's own panel stays see-through, and every text says its ink.
+-- Omsi-Hub's own look (ui/css/hub.css): its blue for what is chosen and for the action to take
+-- (the tab shown, the next stop's card, the rail, the trip's progress, the buttons that go on),
+-- its navy for the other buttons and the tiles, its inks for the texts. Colour means one thing
+-- each besides: time only in late / on time / early (the navigator's own colours and its line of
+-- ±59 s, so the phone and the map never disagree); the line's yellow plate for what the trip is.
+-- The navigator draws its card under the phone (dark rgb(30,30,32) or white, its corners
+-- rounded): the phone's own panel stays see-through - a background of its own would be square -
+-- and every text, tile and button says its colour.
 
 local M = {}
 
@@ -14,28 +17,29 @@ M.ON_TIME = 59
 
 local DARK = {
   light = false,
-  ink = "#F2F2F7", dim = "#A1A1A8", faint = "#6E6E73",
-  -- hairlines, a field's faint fill, a bar's track, the time chip's fill
-  line = "#3A3A3C", field = "#FFFFFF14", track = "#FFFFFF1F", chip = "#FFFFFF1A",
-  -- the line's badge and its ink
+  ink = "#E8EBF2", dim = "#959DB0", faint = "#60687A",
+  -- hairlines, a field's faint fill, a bar's track, a chip's fill
+  line = "#343B4A", field = "#FFFFFF14", track = "#FFFFFF1F", chip = "#FFFFFF1A",
+  -- the line's plate and its ink
   badge = "#FFD23F", badge_ink = "#1A1400",
   -- time: late, on time, early
   late = "#FF453A", on_time = "#2FA84F", early = "#2F7CF6",
-  -- buttons: the action to take (the game inks it dark), another one (light ink), decline
-  primary = "#FFD23F", secondary = "#4A5BD6", neutral = "#48484A",
-  -- the tab shown (the game inks it), the next stop's accent
-  tab_on = "#F2F2F7", accent = "#FFD23F",
+  -- buttons: the action to take, another one, decline (each with light ink on it)
+  primary = "#2A75F7", secondary = "#2A3A5C", neutral = "#2C3240",
+  -- the tab shown and the others; the accent (the rail, the next stop, icons that point the
+  -- way); the tiles' colour (a stat, a note: tinted by the game, a stripe of it on the left)
+  tab_on = "#2A75F7", tab_off = "#2C3240", accent = "#4888F8", tile = "#5B7BB5",
 }
 
 local LIGHT = {
   light = true,
-  ink = "#1C1C1E", dim = "#6E6E73", faint = "#A1A1A8",
-  line = "#D1D1D6", field = "#0000000D", track = "#0000001A", chip = "#0000000F",
+  ink = "#1E1C22", dim = "#645F62", faint = "#86807E",
+  line = "#E5E0D9", field = "#0000000D", track = "#0000001A", chip = "#0000000F",
   badge = "#FFD23F", badge_ink = "#1A1400",
   late = "#FF453A", on_time = "#2FA84F", early = "#2F7CF6",
-  primary = "#FFD23F", secondary = "#4A5BD6", neutral = "#E5E5EA",
-  -- (the game draws the tabs on its own dark grey on either card: the tab shown light there too)
-  tab_on = "#F2F2F7", accent = "#FFD23F",
+  -- (a light fill: the game inks it dark)
+  primary = "#2A75F7", secondary = "#DCE6FB", neutral = "#EDE9E3",
+  tab_on = "#2A75F7", tab_off = "#EDE9E3", accent = "#2A75F7", tile = "#2A75F7",
 }
 
 -- the inks for the navigator's light card (`light`) or its dark one
@@ -114,10 +118,33 @@ end
 
 -- --- elements ------------------------------------------------------------------------------------
 
--- the line's badge (an empty run: a faint tag saying so; `tr` the plugin's texts)
-function M.plate(theme, line, tr)
-  if (line or "") ~= "" then return { type = "badge", text = line, color = theme.badge, text_color = theme.badge_ink, weight = "bold" } end
-  return { type = "badge", text = (tr or tostring)("Empty run"), color = theme.chip, text_color = theme.dim }
+-- the line's plate (an empty run: a faint tag saying so; `tr` the plugin's texts). `wide`: as
+-- wide as a plate of that many characters (a list's plates line up); `muted`: a trip done, its
+-- plate grey.
+function M.plate(theme, line, tr, wide, muted)
+  if (line or "") == "" then return { type = "badge", text = (tr or tostring)("Empty run"), color = theme.chip, text_color = theme.dim } end
+  local text = line
+  local short = (wide or 0) - (utf8.len(line) or #line)
+  -- (a space is about half a digit wide: two of them for each character missing, round it)
+  if short > 0 then text = string.rep(" ", short) .. line .. string.rep(" ", short) end
+  if muted then return { type = "badge", text = text, color = theme.chip, text_color = theme.dim, weight = "bold" } end
+  return { type = "badge", text = text, color = theme.badge, text_color = theme.badge_ink, weight = "bold" }
+end
+
+-- a card added to `out`: `children` in a box tinted with `color` (the theme's tile unless
+-- said), a stripe of it on the left; in an openOMSI without boxes (`boxes` false) the
+-- elements on their own
+function M.card(out, theme, boxes, children, color, gap)
+  if not boxes then
+    for _, e in ipairs(children) do out[#out + 1] = e end
+    return
+  end
+  out[#out + 1] = { type = "box", color = color or theme.tile, gap = gap or 4, children = children }
+end
+
+-- a list's heading: a small dim label in capitals
+function M.heading(theme, text)
+  return { type = "text", text = M.caps(text), size = 10.5, weight = "bold", color = theme.dim, wrap = false }
 end
 
 -- a text in the theme's ink (`ink`: "ink", "dim" or "faint", or a colour), size 13 unless said
@@ -131,23 +158,24 @@ function M.label(theme, text)
 end
 
 -- a stat: its big number over its label (`color`: the number's own, else the ink). A tile in
--- an openOMSI with boxes (`boxes`), the two texts on their own else.
+-- an openOMSI with boxes (`boxes`): tinted with the number's colour where it has one (the
+-- delay: late, on time, early), the theme's tile else; the two texts on their own without.
 function M.stat(theme, label, value, color, boxes)
   local children = {
     { type = "text", text = value or "", size = 22, weight = "bold", color = color or theme.ink, wrap = false },
     M.label(theme, label),
   }
-  if boxes then return { type = "box", color = theme.faint, grow = true, gap = 0, children = children } end
+  if boxes then return { type = "box", color = color or theme.tile, grow = true, gap = 0, children = children } end
   return { type = "row", grow = true, gap = 6, children = { children[1], children[2] } }
 end
 
--- a checkbox (`e`: its element) in the theme: its box in the indigo, never the game's amber;
--- on the light card its label a text of its own beside it (the game writes a checkbox's label
--- in its light ink whatever its colour)
+-- a checkbox (`e`: its element) in the theme: its box in Omsi-Hub's blue, never the game's
+-- amber; on the light card its label a text of its own beside it (the game writes a checkbox's
+-- label in its light ink whatever its colour)
 function M.check(theme, e)
   local box = {}
   for k, v in pairs(e) do box[k] = v end
-  box.color = theme.secondary
+  box.color = theme.primary
   if not theme.light or (e.text or "") == "" then return box end
   box.text, box.visible = "", nil
   return { type = "row", gap = 8, visible = e.visible, children = {
@@ -163,7 +191,8 @@ local PRIMARY = { signon = true, accept = true, start = true, strip_note_send = 
 
 -- another module's elements (the company's panel, the sign-on, the strip's note and
 -- walk-around) in the phone's look: copies, their texts, icons and tables in the theme's inks,
--- their buttons in its fills, their checkboxes as `check` draws them
+-- their buttons in its fills, their boxes and bars in its tile and accent, their checkboxes as
+-- `check` draws them
 function M.adopt(theme, list)
   local out = {}
   for _, e in ipairs(list or {}) do
@@ -182,6 +211,9 @@ function M.adopt(theme, list)
         end
       elseif t == "button" and c.color == nil then
         c.color = PRIMARY[c.id or ""] and theme.primary or theme.neutral
+      elseif (t == "box" or t == "bar") and (c.color == nil or ADOPT[c.color]) then
+        -- (the game's amber, their orange: Omsi-Hub's tile, its blue for a bar)
+        c.color = t == "box" and theme.tile or theme.accent
       end
       if t ~= "checkbox" and type(c.children) == "table" then c.children = M.adopt(theme, c.children) end
       out[#out + 1] = c

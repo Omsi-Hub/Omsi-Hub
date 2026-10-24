@@ -139,14 +139,39 @@ pub fn shows(h: &Harness, id: &str, part: &str) -> bool {
 
 /// The phone's tabs element: the names on the tabs and the one chosen (from 1).
 pub fn tabs(h: &Harness) -> Option<(Vec<String>, i64)> {
-    let t = find(h, PHONE, |e| e["type"] == "tabs")?;
-    let names = t["tabs"].as_array().unwrap().iter().map(|n| n.as_str().unwrap().to_string()).collect();
-    Some((names, t["selected"].as_i64().unwrap_or(1)))
+    let row = find(h, PHONE, |e| e["type"] == "row" && e["id"] == "phone_tab")?;
+    let buttons = row["children"].as_array().unwrap();
+    let mut names = Vec::new();
+    let mut selected = 0;
+    for (k, b) in buttons.iter().enumerate() {
+        let id = b["id"].as_str().unwrap().strip_prefix("phone_tab_").unwrap().to_string();
+        let text = b["text"].as_str().unwrap_or("");
+        // (the tab shown grows and says its name; another says its count, where it has one)
+        if b["grow"] == true {
+            selected = k as i64 + 1;
+            names.push(id);
+        } else if text.is_empty() {
+            names.push(id);
+        } else {
+            names.push(format!("{id} {text}"));
+        }
+    }
+    Some((names, selected))
 }
+
+/// The Duty tab's trip under way: its row's elements (departure, plate, terminus, arrival), on
+/// its blue card.
+pub fn trip_under_way(h: &Harness) -> Option<Vec<Value>> {
+    let card = find(h, PHONE, |e| e["type"] == "box" && e["color"] == "#2A75F7" && e["children"][0]["type"] == "row" && e["children"][0]["children"][1]["type"] == "badge")?;
+    card["children"][0]["children"].as_array().cloned()
+}
+
+/// The tabs' ids in their order on the phone.
+pub const TAB_IDS: [&str; 5] = ["ride", "stops", "duty", "messages", "bus"];
 
 /// The player chooses the phone's tab `n` (from 1), or clicks its element `element`.
 pub fn choose_tab(h: &Harness, n: i64) {
-    h.fire("ui_change", &[json!(PHONE), json!("phone_tab"), json!(n)]).unwrap();
+    click(h, &format!("phone_tab_{}", TAB_IDS[n as usize - 1]));
 }
 
 pub fn click(h: &Harness, element: &str) {
