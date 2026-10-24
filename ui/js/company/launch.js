@@ -113,9 +113,9 @@ function Together({ t }) {
     </div>`;
 }
 
-/** The driver's pass, to sign on with in the game (`nav_signon`, on unless switched off). */
+/** The driver's pass, to sign on with in the game: a company's duty always asks for it. */
 function Pass() {
-  const pass = usePass(S.settings?.nav_signon !== false);
+  const pass = usePass(true);
   if (!pass) return null;
   return html`<p class="when pass"><${Icon} name="badge" size=${15} class="ic accent" /><b>${tr('Your pass: %{number} · code %{code}', pass)}</b></p>`;
 }

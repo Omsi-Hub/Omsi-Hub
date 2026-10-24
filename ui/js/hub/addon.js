@@ -6,9 +6,9 @@
 // Omsi-Hub plugin switched on or off there, or taken out (`addon_state`, `addon_enable`,
 // `addon_remove`; the folders' checks are `hub_setup_openomsi` and `hub_setup_omsi2`), and the
 // phone in openOMSI's navigator switched on or off (`nav_phone`, given to the plugin with
-// every drive), and signing on for a company's duty with the driver's pass (`nav_signon`, on
-// unless switched off): the pass's number and code beside it (`hub_profile_personnel`, made for
-// a driver who has none).
+// every drive), and the driver's pass to sign on with, which a company's duty always asks for
+// (a drive of the player's own never does): its number and code (`hub_profile_personnel`, made
+// for a driver who has none).
 
 import { html, useEffect, useState } from '../../vendor/preact-htm.js';
 import { call, openPath, pickFolder } from '../api.js';
@@ -33,7 +33,7 @@ const FROM = {
 /** The tab's one row: the folder, the game in it, the compatibility, the plugin. */
 export function AddonPanel() {
   const [s, setS] = useState(null);
-  const pass = usePass(S.settings?.nav_signon !== false);
+  const pass = usePass(true);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const run = (cmd, args) => {
@@ -113,10 +113,7 @@ export function AddonPanel() {
           <span class="grow"><${Switch} checked=${S.settings?.nav_phone !== false} label="Phone unit in the navigator" onChange=${(on) => saveSettings({ nav_phone: on })} /></span>
         </div>
         <p class="muted small" style="margin:4px 0 0">${tr("The ride, the stops, your duty, the messages and the bus under the navigator's map (openOMSI 0.3.38 or newer). Off, or in an older openOMSI: the panels on the screen as before.")}</p>
-        <div class="row wrap" style="gap:12px;align-items:center;margin-top:12px">
-          <span class="grow"><${Switch} checked=${S.settings?.nav_signon !== false} label="Sign on with your personnel number and code" onChange=${(on) => saveSettings({ nav_signon: on })} /></span>
-        </div>
-        <p class="muted small" style="margin:4px 0 0">${tr("On a company's duty you sign on in the game before you drive: on the phone's keypad, or in the company's panel (F10) in an older openOMSI.")}</p>
+        <p class="muted small" style="margin:12px 0 0">${tr("On a company's duty you sign on in the game before you drive: on the phone's keypad, or in the company's panel (F10) in an older openOMSI.")}</p>
         ${pass && html`<p class="small" id="addon-pass" style="margin:4px 0 0"><${Icon} name="badge" size=${16} /> <b>${tr('Your pass: %{number} · code %{code}', pass)}</b></p>`}`}
       <p class="muted small" style="margin:4px 0 0;word-break:break-all">${tr('Plugins folder: %{dir}', { dir: inst.plugins_dir || '-' })}</p>
       ${s.assigned && html`<p class="muted small" id="addon-assigned" style="margin:4px 0 0">${s.assigned.company

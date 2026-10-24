@@ -54,9 +54,10 @@ never changes their files.
   rows with the line's yellow plate (the trip under way on a blue card, those done grey), each
   message is a card of its own (an instruction to answer on a blue one), and the rail, the bars,
   the checkboxes and the buttons that go on are Omsi-Hub's blue instead of yellow and grey.
-- **Signing on with your pass** (the plugin 1.13.0): a company's duty is signed on for in the
-  game with your personnel number and code, unless you switch it off (Settings, "openOMSI and
-  OMSI 2"); your pass is shown there and on the duty's start, and a driver without one gets one.
+- **Signing on with your pass** (the plugin 1.13.0): a company's duty is always signed on for in
+  the game with your personnel number and code - there is no switch to leave it out - and a
+  drive of your own never is; your pass is shown in Settings, "openOMSI and OMSI 2", and on the
+  duty's start, and a driver without one gets one.
   In the phone a keypad takes the number, then the code (a wrong one is said and typed again),
   then the duty order's Accept, all without F10; an older openOMSI keeps the company panel's
   fields.
