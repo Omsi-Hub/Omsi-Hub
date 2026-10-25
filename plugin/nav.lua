@@ -56,7 +56,7 @@
 --   tr(text, vars)     the plugin's texts in the player's language
 --   theme              the inks (phone_theme.lua: ink, dim, faint, line, field, track, chip,
 --                      badge, badge_ink, late, on_time, early, primary, secondary, neutral,
---                      tab_on, tab_off, accent, tile, light)
+--                      tab_on, tab_off, accent, tile, card, light)
 --   assignment         what Omsi-Hub gave (assignment.lua), nil on a drive of the player's own
 --   hooks              main.lua's: duty_children(), parts(), boarded(), send(file, tag, value,
 --                      append), report(kind, fields), issued(), say(text, title, icon, seconds)
@@ -355,6 +355,9 @@ end
 local function set()
   -- (the whole frame where the game has it; an older one lays it out under the map)
   local panel = { anchor = "navigator", frame = true, padding = PADDING, gap = GAP, children = M.children() }
+  -- (in the whole frame the navigator's card in Omsi-Hub's panel colour - the navigator paints
+  -- it, rounded; under the map the panel stays see-through, a square of its own would show)
+  if size.frame then panel.background = theme().card end
   if version() >= 5 then panel.grab = true end
   layout.set(PANEL, panel)
 end

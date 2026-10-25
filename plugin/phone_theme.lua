@@ -8,7 +8,8 @@
 -- ±59 s, so the phone and the map never disagree); the line's yellow plate for what the trip is.
 -- The navigator draws its card under the phone (dark rgb(30,30,32) or white, its corners
 -- rounded): the phone's own panel stays see-through - a background of its own would be square -
--- and every text, tile and button says its colour.
+-- and every text, tile and button says its colour. In the navigator's whole frame the navigator
+-- paints its card in the phone's `card` (Omsi-Hub's panel colour), rounded as ever.
 
 local M = {}
 
@@ -29,6 +30,8 @@ local DARK = {
   -- the tab shown and the others; the accent (the rail, the next stop, icons that point the
   -- way); the tiles' colour (a stat, a note: tinted by the game, a stripe of it on the left)
   tab_on = "#2A75F7", tab_off = "#2C3240", accent = "#4888F8", tile = "#5B7BB5",
+  -- the navigator's card in its whole frame: Omsi-Hub's panel
+  card = "#141A26",
 }
 
 local LIGHT = {
@@ -40,6 +43,7 @@ local LIGHT = {
   -- (a light fill: the game inks it dark)
   primary = "#2A75F7", secondary = "#DCE6FB", neutral = "#EDE9E3",
   tab_on = "#2A75F7", tab_off = "#EDE9E3", accent = "#2A75F7", tile = "#2A75F7",
+  card = "#FFFEFC",
 }
 
 -- the inks for the navigator's light card (`light`) or its dark one

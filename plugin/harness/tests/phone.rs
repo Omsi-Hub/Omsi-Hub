@@ -360,6 +360,8 @@ fn where_the_game_has_the_whole_frame_the_phone_is_the_whole_navigator() {
     assert_eq!(children[1]["id"], "phone_tab", "the status line, then the tabs: {p}");
     assert_eq!((children[2]["type"].as_str(), children[2]["height"].as_f64()), (Some("map"), Some(210.0)), "{p}");
     assert!(shows(&h, PHONE, "Zoo"), "the stop ahead under the map: {p}");
+    // (the navigator's card in Omsi-Hub's panel colour: the navigator paints it, rounded)
+    assert_eq!(p["background"], "#141A26");
     for n in [2, 3, 4, 5] {
         choose_tab(&h, n);
         run(&mut h, 1);
@@ -373,5 +375,10 @@ fn where_the_game_has_the_whole_frame_the_phone_is_the_whole_navigator() {
     let (_, h) = start("no-frame", Some(assignment()), docked_game(), 3);
     assert_eq!(phone(&h)["frame"], true);
     assert!(!has_element(&h, PHONE, |e| e["type"] == "map"), "{}", phone(&h));
+    assert!(phone(&h).get("background").is_none(), "under the map see-through: a square of its own would show");
     no_ui_errors(&h);
+    // the light card: Omsi-Hub's light panel
+    let g = hub_plugin_harness::GameState { frame: true, ..docked_game() };
+    let (_, h) = start("frame-light", Some(light(assignment())), g, 3);
+    assert_eq!(phone(&h)["background"], "#FFFEFC");
 }

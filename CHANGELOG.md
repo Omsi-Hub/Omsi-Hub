@@ -57,7 +57,8 @@ never changes their files.
 - **The phone as the whole navigator** (the plugin 1.15.0): with an openOMSI that lets a panel
   fill the navigator's frame (openOMSI-org/openOMSI#3277), the phone is the navigator - the
   status line and the tabs at its top, the navigator's map with its next turn under them on the
-  Ride tab, and the Stops, Duty, Inbox and Bus tabs the whole navigator for themselves. The
+  Ride tab, and the Stops, Duty, Inbox and Bus tabs the whole navigator for themselves, all on
+  Omsi-Hub's navy (white on the light look) with the navigator's rounded corners. The
   navigator is moved, sized and put away as before. An openOMSI without it keeps the phone under
   the map.
 - **Signing on with your pass** (the plugin 1.13.0): a company's duty is always signed on for in
