@@ -54,6 +54,12 @@ never changes their files.
   rows with the line's yellow plate (the trip under way on a blue card, those done grey), each
   message is a card of its own (an instruction to answer on a blue one), and the rail, the bars,
   the checkboxes and the buttons that go on are Omsi-Hub's blue instead of yellow and grey.
+- **The phone as the whole navigator** (the plugin 1.15.0): with an openOMSI that lets a panel
+  fill the navigator's frame (openOMSI-org/openOMSI#3277), the phone is the navigator - the
+  status line and the tabs at its top, the navigator's map with its next turn under them on the
+  Ride tab, and the Stops, Duty, Inbox and Bus tabs the whole navigator for themselves. The
+  navigator is moved, sized and put away as before. An openOMSI without it keeps the phone under
+  the map.
 - **Signing on with your pass** (the plugin 1.13.0): a company's duty is always signed on for in
   the game with your personnel number and code - there is no switch to leave it out - and a
   drive of your own never is; your pass is shown in Settings, "openOMSI and OMSI 2", and on the

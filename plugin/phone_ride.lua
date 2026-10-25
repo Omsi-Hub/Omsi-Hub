@@ -19,6 +19,8 @@ local M = {}
 M.id = "ride"
 M.title = "Ride"
 M.icon = "navigation"
+-- (in the navigator's whole frame: its map over the drive)
+M.map = true
 -- (the lines that apply now: as many as the room has room for)
 M.fit = { 3, 4 }
 

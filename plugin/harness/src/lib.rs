@@ -143,6 +143,10 @@ pub struct GameState {
     /// is refused then, as openOMSI's `UiState::set_focus` refuses it.
     pub game_menu: bool,
     pub hidden: bool,
+    /// The game lets a navigator panel fill the navigator's whole frame (`frame = true`, the
+    /// `map` element: openOMSI's ui version 6 of openOMSI-org/openOMSI): `omsi.ui.dock` then
+    /// says with a fifth value whether the plugin's panel there has the whole frame.
+    pub frame: bool,
 }
 
 /// A line of the pause menu: its id, label and icon (`omsi.ui.set_menu_item`).
@@ -194,6 +198,7 @@ impl Default for GameState {
             menu: None,
             game_menu: false,
             hidden: false,
+            frame: false,
         }
     }
 }
@@ -478,9 +483,17 @@ fn api(lua: &Lua, state: &Rc<RefCell<GameState>>, plugin_dir: &Path) -> mlua::Re
     let version = state.borrow().ui_version;
     ui.set("version", version)?;
     if version >= 3 {
-        f!(ui, "dock", |l, s, _a: ()| match s.borrow().dock {
-            Some(d) => d.into_lua_multi(l),
-            None => Ok(mlua::MultiValue::new()),
+        f!(ui, "dock", |l, s, _a: ()| {
+            let s = s.borrow();
+            match s.dock {
+                // (a game with the whole frame says whether the panel in it has it)
+                Some(d) if s.frame => {
+                    let whole = s.panels.values().any(|p| p["anchor"] == "navigator" && p["frame"] == true);
+                    (d.0, d.1, d.2, d.3, whole).into_lua_multi(l)
+                }
+                Some(d) => d.into_lua_multi(l),
+                None => Ok(mlua::MultiValue::new()),
+            }
         });
     }
     // (a panel the game's parser refuses is not shown: false and why, as the game answers)
@@ -733,7 +746,8 @@ pub fn check_panel(t: &Value, version: i64) -> Result<(), String> {
     for k in ["background", "accent"] {
         r.color(k)?;
     }
-    for k in ["visible", "clickable", "draggable", "grab"] {
+    // (`frame`: a game that does not know it leaves it alone)
+    for k in ["visible", "clickable", "draggable", "grab", "frame"] {
         r.boolean(k)?;
     }
     // (resizing: version 6; an older game skips the keys)
@@ -944,6 +958,11 @@ impl Check<'_> {
                 self.number("size")?;
             }
             "divider" => {}
+            // (the navigator's map in its whole frame; a game without it skips the element)
+            "map" => {
+                self.number("height")?;
+                self.boolean("cards")?;
+            }
             "space" => self.number("size")?,
             "button" => {
                 needs_id("button")?;

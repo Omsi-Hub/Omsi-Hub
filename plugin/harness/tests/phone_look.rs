@@ -43,9 +43,11 @@ fn game() -> hub_plugin_harness::GameState {
 fn the_phone_s_tabs_written_out() {
     let out = std::env::var("PHONE_LOOK").unwrap_or_else(|_| "target/phone-look.json".into());
     let mut looks = Vec::new();
-    for light_card in [false, true] {
+    // (the board under the map on the dark and the light card, and the whole frame)
+    for (light_card, frame) in [(false, false), (true, false), (false, true)] {
         let a = if light_card { light(assignment()) } else { assignment() };
-        let (dir, mut h) = start(if light_card { "look-light" } else { "look-dark" }, Some(a), game(), 2);
+        let tag = if frame { "look-frame" } else if light_card { "look-light" } else { "look-dark" };
+        let (dir, mut h) = start(tag, Some(a), hub_plugin_harness::GameState { frame, ..game() }, 2);
         {
             let mut s = h.state.borrow_mut();
             s.clock = 9.0 * 3600.0 + 12.0 * 60.0;
@@ -65,7 +67,7 @@ fn the_phone_s_tabs_written_out() {
         for (n, tab) in ["ride", "stops", "duty", "messages", "bus"].iter().enumerate() {
             choose_tab(&h, n as i64 + 1);
             run(&mut h, 1);
-            looks.push(json!({ "tab": tab, "light": light_card, "panel": phone(&h) }));
+            looks.push(json!({ "tab": tab, "light": light_card, "frame": frame, "panel": phone(&h) }));
         }
         no_ui_errors(&h);
     }

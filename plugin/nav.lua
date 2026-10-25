@@ -3,9 +3,17 @@
 -- clock and the next stop's card are the navigator's own; under them a status line (the trip's
 -- line badge, where it goes, trip 3/8, how it stands against the timetable) and the tabs Ride,
 -- Stops, Duty, Messages and Bus (a row of buttons: the tab shown in Omsi-Hub's blue with its
--- name, the others their icon, and a count where one has it). Each tab is a module of its own (phone_*.lua, the registry
--- below); this one builds what they share once a second (`ctx`), draws the status line and the
--- tabs, and hands the clicks to them.
+-- name, the others their icon, and a count where one has it). Each tab is a module of its own
+-- (phone_*.lua, the registry below); this one builds what they share once a second (`ctx`),
+-- draws the status line and the tabs, and hands the clicks to them.
+--
+-- Where openOMSI lets a panel fill the navigator's whole frame (`frame = true`, its ui version
+-- 6: `omsi.ui.dock()` says so with a fifth value), the phone is the whole navigator: the status
+-- line and the tabs at its top, the navigator's map only on the tabs that want it (`M.map`: the
+-- Ride tab, under the tabs, with the navigator's own cards over it - the next turn, the clock),
+-- and the other tabs the whole frame for themselves. The panel asks for the frame always: an
+-- openOMSI that does not know it lays it out under the map as before and leaves the map
+-- element out.
 --
 -- The panel is laid out 360 points wide at the navigator's scale, on the navigator's own card
 -- (dark or light: the inks of `phone_theme.lua`, the light ones when the assignment says
@@ -29,6 +37,8 @@
 --   M.title            its name in English ("Ride"); the shell puts it through tr()
 --   M.tab              (optional) a shorter name for the tab itself, where the title is long
 --   M.icon             a Material Symbols icon of the game's ("navigation", "forum", ...)
+--   M.map              (optional) true: in the navigator's whole frame the tab shows the
+--                      navigator's map at the top of its content
 --   M.fit              (optional) { start, most }: how many entries of a list it shows at
 --                      first and at most; the shell fits `ctx.fit` to the room by the height
 --                      the panel came out
@@ -65,7 +75,9 @@
 --   delay              seconds late (early below 0)
 --   speed              km/h
 --   passengers, seated, standing   on board now (omsi.bus.passengers)
---   room, height, width   the room under the map, the height the panel came to, 360 (points)
+--   room, height, width   the room under the map (in the whole frame: the frame's), the height
+--                      the panel came to, 360 (points)
+--   frame              the phone fills the navigator's whole frame (openOMSI's ui version 6)
 --   slim               room below 150 points: the slim phone
 --   fit                the entries the tab shown may list (its M.fit, fitted to the room)
 --   tab                the id of the tab shown
@@ -107,6 +119,9 @@ local SLIM_ORDER = { "ride", "duty", "stops", "bus" }
 local SLIM = 150
 local GRACE = 6
 local PADDING, GAP = 10, 6
+-- (the navigator's map in the whole frame, points high: a little lower than its own 288, so the
+-- tab's content keeps room under it)
+local MAP_H = 210
 
 local tr = function(t) return t end
 local hooks = {}
@@ -155,11 +170,12 @@ local function docks()
   return not (type(nav) == "table" and nav.phone == false)
 end
 
--- the board under the navigator's map: width, room, height, whether it is this plugin's
+-- the board under the navigator's map (or its whole frame): width, room, height, whether it
+-- is this plugin's, whether it is the whole frame
 local function dock()
-  local w, room, h, mine = omsi.ui.dock()
+  local w, room, h, mine, frame = omsi.ui.dock()
   if not w then return nil end
-  return w, tonumber(room) or 0, tonumber(h) or 0, mine ~= false
+  return w, tonumber(room) or 0, tonumber(h) or 0, mine ~= false, frame == true
 end
 
 local function theme()
@@ -223,7 +239,7 @@ local function context()
     k = k, trip = trip, line = trip and trip.line or "", terminus = trip and P.terminus(trip.line, trip.terminus) or "",
     delay = d and tonumber(d.delay) or nil, speed = has("speed") and tonumber(omsi.speed()) or 0,
     passengers = tonumber(total), seated = tonumber(seated), standing = tonumber(standing),
-    room = room, height = size.height, width = 360, slim = room ~= nil and room < SLIM,
+    room = room, height = size.height, width = 360, slim = room ~= nil and room < SLIM, frame = size.frame == true,
     fit = fit[tab], tab = tab, unread = messages.unseen(), wants = messages.wants(), at_work = signon.at_work(),
     show = M.show,
   }
@@ -330,12 +346,15 @@ function M.children()
   local k = BY_ID[c.tab]
   children[#children + 1] = tabs(c, k)
   local t = TABS[k]
+  -- (the whole frame: the navigator's map where the tab wants it, under the tabs)
+  if c.frame and t.map then children[#children + 1] = { type = "map", height = MAP_H } end
   for _, e in ipairs(modes[t.id] or t.rows(c) or {}) do children[#children + 1] = e end
   return children
 end
 
 local function set()
-  local panel = { anchor = "navigator", padding = PADDING, gap = GAP, children = M.children() }
+  -- (the whole frame where the game has it; an older one lays it out under the map)
+  local panel = { anchor = "navigator", frame = true, padding = PADDING, gap = GAP, children = M.children() }
   if version() >= 5 then panel.grab = true end
   layout.set(PANEL, panel)
 end
@@ -351,9 +370,9 @@ end
 -- the entries the shown tab lists: as many as there is room for, found from how tall the panel
 -- came out. An entry added that did not fit is not added again for less room than it took (a
 -- line that wraps is taller than the margin).
-local function fit_to(room, h)
+local function fit_to(room, h, frame)
   if room ~= size.room then need = {} end
-  size = { room = room, height = h }
+  size = { room = room, height = h, frame = frame }
   local t = TABS[BY_ID[omsi.data.nav_tab]]
   if not (t.fit and h > 0 and room > 0) then return end
   local id = t.id
@@ -381,10 +400,10 @@ function M.update(wanted)
     shown, docked, away = false, false, 0
     return false
   end
-  local w, room, h, mine = dock()
+  local w, room, h, mine, frame = dock()
   if w and mine then
     away = 0
-    fit_to(room, h)
+    fit_to(room, h, frame)
   elseif not menu_open() then
     -- (no board: the navigator is off, Shift+N put it away, another plugin has it or the city
     -- map is open; asked for still, so that it comes as soon as the board is there again)
@@ -405,10 +424,10 @@ end
 -- own panel and the board on the screen go then).
 function M.poll()
   if not shown or docked then return false end
-  local w, room, h, mine = dock()
+  local w, room, h, mine, frame = dock()
   if not (w and mine) then return false end
   away, docked = 0, true
-  size = { room = room, height = h }
+  size = { room = room, height = h, frame = frame }
   hand_over(true)
   set()
   return true

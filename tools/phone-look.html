@@ -90,6 +90,7 @@
     if (e.type === 'space') n.size = e.size ?? 8;
     if (e.type === 'stops' || e.type === 'table') n.size = e.size ?? 13;
     if (e.type === 'chart') n.height = e.height ?? 48;
+    if (e.type === 'map') { n.height = e.height ?? 0; n.cards = e.cards ?? true; }
     n.children = list(e.children).filter((c) => c && c.visible !== false).map(norm);
     for (const k of ['tabs', 'columns', 'rows', 'widths', 'aligns', 'stops', 'segments']) n[k] = list(e[k]);
     n.rows = n.rows.map(list);
@@ -150,6 +151,7 @@
       case 'table': { const head = (e.columns || []).length ? e.size * LINE + 3 : 0; return head + (e.rows || []).length * e.size * LINE; }
       case 'box': { const inner = Math.max(w - BOX_STRIPE - BOX_PAD[0] - BOX_PAD[1], 1); return e.children.reduce((s, c) => s + height(c, inner, false), 0) + e.gap * Math.max(e.children.length - 1, 0) + 2 * BOX_Y; }
       case 'stops': return (e.stops || []).length * STOP_ROW * e.size / 13;
+      case 'map': return e.height > 0 ? e.height : Math.round(w * 0.8);
       default: return 0;
     }
   }
@@ -273,6 +275,19 @@
           e.children.forEach((c, i) => { if (i) cy += e.gap; const ch = height(c, iw, false); emit(c, ix, cy, iw, ch, false); cy += ch; });
           break;
         }
+        case 'map': {
+          // (the navigator's map, a stand-in: land, a few streets, the route and the bus)
+          g.save();
+          g.beginPath(); g.roundRect(x, y, rw, rh, 10); g.clip();
+          g.fillStyle = light ? '#E8EAE5' : '#22272E'; g.fillRect(x, y, rw, rh);
+          g.strokeStyle = light ? '#FFFFFF' : '#3A414C'; g.lineWidth = 6;
+          for (const [a, b, c, d] of [[0, 0.7, 1, 0.45], [0.25, 1, 0.55, 0], [0.7, 1, 0.9, 0.1]]) { g.beginPath(); g.moveTo(x + a * rw, y + b * rh); g.lineTo(x + c * rw, y + d * rh); g.stroke(); }
+          g.strokeStyle = '#2A75F7'; g.lineWidth = 7; g.beginPath(); g.moveTo(x + 0.4 * rw, y + rh); g.lineTo(x + 0.47 * rw, y + 0.52 * rh); g.lineTo(x + 0.8 * rw, y + 0.4 * rh); g.stroke();
+          rounded(x + 0.42 * rw - 7, y + 0.8 * rh - 7, 14, 14, 7, [255, 255, 255, 1]);
+          if (e.cards) { rounded(x + 8, y + 8, 120, 34, 10, [28, 30, 33, 0.95]); text('↱ 300 m', 13, 'bold', x + 18, y + 30, [255, 255, 255, 1]); }
+          g.restore();
+          break;
+        }
         case 'stops': {
           const rail = e.color || ACCENT, k = e.size / 13, row = STOP_ROW * k, list = e.stops || [];
           list.forEach((s, i) => {
@@ -314,12 +329,12 @@
     out.innerHTML = '';
     const sets = Array.isArray(looks) ? { '': looks } : looks;
     for (const [name, list] of Object.entries(sets)) {
-      for (const light of [false, true]) {
-        const these = list.filter((l) => !!l.light === light);
+      for (const [light, frame] of [[false, false], [true, false], [false, true], [true, true]]) {
+        const these = list.filter((l) => !!l.light === light && !!l.frame === frame);
         if (!these.length) continue;
         const set = document.createElement('section');
         set.className = 'set';
-        set.innerHTML = `<h2>${name ? name + ' · ' : ''}${light ? 'light card' : 'dark card'}</h2><div class="grid"></div>`;
+        set.innerHTML = `<h2>${name ? name + ' · ' : ''}${light ? 'light card' : 'dark card'}${frame ? ' · whole frame' : ''}</h2><div class="grid"></div>`;
         for (const l of these) {
           const fig = document.createElement('figure');
           fig.innerHTML = `<figcaption>${l.tab}</figcaption>`;

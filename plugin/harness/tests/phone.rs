@@ -347,3 +347,31 @@ fn every_icon_the_plugin_names_is_one_the_game_has() {
     }
     assert!(missing.is_empty(), "icons the game has not: {missing:?}");
 }
+
+#[test]
+fn where_the_game_has_the_whole_frame_the_phone_is_the_whole_navigator() {
+    // an openOMSI that lets a panel fill the navigator's frame: the Ride tab with the map
+    // under the tabs, the other tabs the whole frame for themselves
+    let g = hub_plugin_harness::GameState { frame: true, ..docked_game() };
+    let (_, mut h) = start("frame", Some(assignment()), g, 3);
+    let p = phone(&h);
+    assert_eq!((p["anchor"].as_str(), p["frame"].as_bool()), (Some("navigator"), Some(true)));
+    let children = p["children"].as_array().unwrap();
+    assert_eq!(children[1]["id"], "phone_tab", "the status line, then the tabs: {p}");
+    assert_eq!((children[2]["type"].as_str(), children[2]["height"].as_f64()), (Some("map"), Some(210.0)), "{p}");
+    assert!(shows(&h, PHONE, "Zoo"), "the stop ahead under the map: {p}");
+    for n in [2, 3, 4, 5] {
+        choose_tab(&h, n);
+        run(&mut h, 1);
+        assert!(!has_element(&h, PHONE, |e| e["type"] == "map"), "tab {n}: {}", phone(&h));
+    }
+    choose_tab(&h, 1);
+    assert!(has_element(&h, PHONE, |e| e["type"] == "map"));
+    no_ui_errors(&h);
+    // a game without it: the panel asks for the frame all the same (a key it leaves alone),
+    // gets the board under the map, and no map element goes with it
+    let (_, h) = start("no-frame", Some(assignment()), docked_game(), 3);
+    assert_eq!(phone(&h)["frame"], true);
+    assert!(!has_element(&h, PHONE, |e| e["type"] == "map"), "{}", phone(&h));
+    no_ui_errors(&h);
+}
