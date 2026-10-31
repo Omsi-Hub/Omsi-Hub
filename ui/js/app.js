@@ -7,12 +7,12 @@ import { call } from './api.js';
 import { setLanguage } from './i18n.js';
 import { PAGES } from './pages/index.js';
 import { MigrateOffer } from './setup.js';
-import { set, useStore } from './store.js';
+import { set, toast, useStore } from './store.js';
 import { startDrive, watchGame } from './hub/drive.js';
 import { HubShell } from './hub/hub.js';
 import { BusyCard } from './hub/busy.js';
 import { Welcome, welcomeFirstRun } from './hub/welcome.js';
-import { Icon } from './hub/bits.js';
+import { Icon, tr } from './hub/bits.js';
 
 /** The selftest's run (the app opens the page with `?selftest`). */
 const SELFTEST = !!window.__OMSIHUB_SELFTEST__ || new URLSearchParams(location.search).has('selftest');
@@ -67,6 +67,14 @@ async function start() {
     throw e;
   });
   await setLanguage(b.settings.language);
+  // (the page crashed and the app loaded it anew: `reload_after_crash` of main.rs)
+  if (new URLSearchParams(location.search).has('recovered')) {
+    history.replaceState(null, '', location.pathname);
+    toast(tr('The window crashed and was loaded again. If it happens again: update the graphics driver and Microsoft Edge (it draws this window), and turn off overlays such as MSI Afterburner.'), 'error', 15000);
+  } else if (window.__OMSIHUB_SAFE_GRAPHICS_NOTICE__) {
+    // (the crash that turned safe graphics on started the app anew: the same `main.rs`)
+    toast(tr('The window crashed again, so Omsi-Hub started anew without the graphics card (safe graphics). 3D views may be slower. Settings › General turns it off again.'), 'info', 20000);
+  }
   watchGame();
   if (SELFTEST) (await import('./selftest.js')).run();
 }

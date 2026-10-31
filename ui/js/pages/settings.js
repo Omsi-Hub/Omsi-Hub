@@ -3,7 +3,7 @@
 
 import { html, useState } from '../../vendor/preact-htm.js';
 import { useLang } from '../i18n.js';
-import { S, useStore } from '../store.js';
+import { S, toast, useStore } from '../store.js';
 import { saveSettings } from '../hub/drive.js';
 import { Button, Seg, Slider, Switch, tr } from '../hub/bits.js';
 import { LANGUAGE_NAMES, SETTINGS_TABS } from '../hub/settings-extra.js';
@@ -13,7 +13,9 @@ function Row({ row, s }) {
   const value = s.settings?.[row.key];
   if (row.when && !row.when(s.settings || {})) return null;
   if (row.type === 'custom') return row.view();
-  if (row.type === 'toggle') return html`<div class="setting-row full"><${Switch} checked=${!!value} label=${row.label} onChange=${(on) => saveSettings({ [row.key]: on })} /></div>`;
+  if (row.type === 'toggle') {
+    return html`<div class="setting-row full"><${Switch} checked=${!!value} label=${row.label} title=${row.title} onChange=${(on) => (saveSettings({ [row.key]: on }), row.note && toast(tr(row.note)))} /></div>`;
+  }
   if (row.type === 'slider') {
     return html`<div class="setting-row full"><${Slider} label=${row.label} value=${value ?? row.def} min=${row.min} max=${row.max} step=${row.step} format=${row.format}
       onChange=${(v) => saveSettings({ [row.key]: row.store ? row.store(v) : v })} /></div>`;

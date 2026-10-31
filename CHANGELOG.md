@@ -61,6 +61,11 @@ The app does not update a test build: install the next version yourself.
   openOMSI's 50 ms, so it switched the plugin off and nothing of the drive reached Omsi-Hub.
   The plugin (1.16.2) now does one of those at a time, reads the map's lines once, and sends
   the devices' screens with less work ten times a second.
+- **A window that crashes ("This page is having a problem", STATUS_BREAKPOINT) comes back**:
+  instead of leaving the error page, Omsi-Hub loads the window again and says what helps (a new
+  graphics driver and Microsoft Edge, overlays off). After a second crash within a week it
+  starts again with **safe graphics**: the window drawn without the graphics card, where 3D
+  views may be slower. Settings › General has the switch to turn it on or off yourself.
 
 ## 1.1.1
 

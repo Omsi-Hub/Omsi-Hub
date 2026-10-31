@@ -8,7 +8,8 @@
 // bus models' categories and regions the company goes by. Every change is saved at once
 // (`saveSettings`).
 //
-// A row is `{ type, key, label, … }`: `toggle`, `slider` (`min`, `max`, `step`, `format`,
+// A row is `{ type, key, label, … }`: `toggle` (`title` its tooltip, `note` said once it is
+// changed), `slider` (`min`, `max`, `step`, `format`,
 // `store`), `select` (`options` [value, label]), `button` (`patch()` returns the settings to
 // change, or does something itself), or `custom` (`view()` draws it).
 
@@ -40,6 +41,9 @@ export const SETTINGS_TABS = [
           { type: 'toggle', key: 'animations', label: 'Animations' },
           { type: 'select', key: 'accent', label: 'Accent colour', options: PRESETS.map(([name, c]) => [hexOf(c), name]) },
           { type: 'toggle', key: 'dark_mode', label: 'Dark mode' },
+          // (the window without the graphics card, for a driver that crashes it: `main.rs`'s
+          // `safe_graphics`, which a second crash turns on by itself)
+          { type: 'toggle', key: 'safe_graphics', label: 'Safe graphics', title: 'The window is drawn without the graphics card: for a window that crashes ("This page is having a problem"). 3D views may be slower.', note: 'Safe graphics: takes effect when Omsi-Hub starts again.' },
           // (the stops on the maps as the bus stop signs of a country: `stopsigns.js`)
           { type: 'select', key: 'stop_style', label: 'Bus stop signs', options: STOP_SIGNS },
           // (the live dashboard's speeds and distances: kept, and read by it, but there was no

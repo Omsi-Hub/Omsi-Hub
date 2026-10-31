@@ -282,6 +282,99 @@ fn sniff(b: &[u8]) -> &'static str {
     }
 }
 
+/// The window drawn without the graphics card (Settings › General, `safe_graphics` among the
+/// settings' other fields): WebView2 started with `--disable-gpu` besides wry's own arguments -
+/// for a graphics driver that crashes the page (ticket #80). The 3D views then draw as they do
+/// where the page has no WebGL2. True only once the player or a second crash turned it on.
+const SAFE_GRAPHICS: &str = "safe_graphics";
+/// The page's renderer crashes counted toward `SAFE_GRAPHICS` (how many, the last when), and
+/// how many within `CRASH_DAYS` days of each other turn it on.
+#[cfg(windows)]
+const RENDERER_CRASHES: &str = "renderer_crashes";
+#[cfg(windows)]
+const CRASHES_TO_SAFE: u64 = 2;
+#[cfg(windows)]
+const CRASH_DAYS: u64 = 7;
+/// Set for the app started anew by a crash that turned safe graphics on: the page says so.
+const SAFE_NOTICE_ENV: &str = "OMSIHUB_SAFE_GRAPHICS_NOTICE";
+/// wry's own arguments for WebView2, which `additional_browser_args` replaces.
+const WRY_BROWSER_ARGS: &str = "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection";
+
+fn safe_graphics() -> bool {
+    hub_core::settings::Settings::load().other.get(SAFE_GRAPHICS).and_then(Value::as_bool) == Some(true)
+}
+
+/// A renderer crash counted at `now`: true when it turned safe graphics on - the second within
+/// `CRASH_DAYS` days, the window drawn with the graphics card, and the player never chose.
+#[cfg(windows)]
+fn crash_counted(now: u64, running_safe: bool) -> bool {
+    let mut s = hub_core::settings::Settings::load();
+    let [n, last] = s.other.get(RENDERER_CRASHES).and_then(|v| serde_json::from_value::<[u64; 2]>(v.clone()).ok()).unwrap_or_default();
+    let n = if now.saturating_sub(last) <= CRASH_DAYS * 86_400 { n + 1 } else { 1 };
+    s.other.insert(RENDERER_CRASHES.into(), serde_json::json!([n, now]));
+    let turn_on = !running_safe && n >= CRASHES_TO_SAFE && !s.other.contains_key(SAFE_GRAPHICS);
+    if turn_on {
+        s.other.insert(SAFE_GRAPHICS.into(), Value::Bool(true));
+    }
+    if let Err(e) = s.save() {
+        hub_core::log_line(&format!("page: the crash could not be written into the settings: {e}"));
+        return false;
+    }
+    turn_on
+}
+
+/// The page's renderer crashed (WebView2's "This page is having a problem", STATUS_BREAKPOINT
+/// and the like - ticket #80): written to the log and the page loaded anew with `?recovered`,
+/// which says so in the corner (`app.js`), rather than the dead error page left in the window.
+/// A crash within a minute of the last is left as it is, so that a page that crashes as it
+/// starts does not load forever. The crash that turns safe graphics on (`crash_counted`)
+/// starts the app anew instead, without the graphics card.
+#[cfg(windows)]
+fn reload_after_crash(window: &tauri::WebviewWindow, running_safe: bool) {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use webview2_com::Microsoft::Web::WebView2::Win32::*;
+    use windows_core::{Interface, HSTRING, PCWSTR, PWSTR};
+    static LAST: AtomicU64 = AtomicU64::new(0);
+    let app = window.app_handle().clone();
+    let _ = window.with_webview(move |wv| unsafe {
+        let Ok(core) = wv.controller().CoreWebView2() else { return };
+        let handler = webview2_com::ProcessFailedEventHandler::create(Box::new(move |sender, args| {
+            let (Some(core), Some(args)) = (sender, args) else { return Ok(()) };
+            let mut kind = COREWEBVIEW2_PROCESS_FAILED_KIND::default();
+            args.ProcessFailedKind(&mut kind)?;
+            // (only the page's own renderer: WebView2 starts a GPU process anew itself, and a
+            // hung page comes back or crashes)
+            if kind != COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_EXITED {
+                return Ok(());
+            }
+            let mut code = 0i32;
+            if let Ok(more) = args.cast::<ICoreWebView2ProcessFailedEventArgs2>() {
+                let _ = more.ExitCode(&mut code);
+            }
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+            if crash_counted(now, running_safe) {
+                hub_core::log_line(&format!("page: the renderer crashed (exit code {code:#010x}) again: safe graphics turned on, the app starts anew without the graphics card"));
+                std::env::set_var(SAFE_NOTICE_ENV, "1");
+                app.request_restart();
+                return Ok(());
+            }
+            let again = now.saturating_sub(LAST.swap(now, Ordering::Relaxed)) < 60;
+            hub_core::log_line(&format!("page: the renderer crashed (exit code {code:#010x}), {}", if again { "again within a minute: left on the error page" } else { "the page loaded anew" }));
+            if again {
+                return Ok(());
+            }
+            let mut source = PWSTR::null();
+            core.Source(&mut source)?;
+            let url = webview2_com::take_pwstr(source);
+            let page = url.split(['?', '#']).next().unwrap_or(&url);
+            let to = HSTRING::from(format!("{page}?recovered"));
+            core.Navigate(PCWSTR(to.as_ptr()))
+        }));
+        let mut token = 0i64;
+        let _ = core.add_ProcessFailed(&handler, &mut token);
+    });
+}
+
 fn main() {
     let selftest = std::env::var_os(SELFTEST_ENV).is_some_and(|v| !v.is_empty() && v != "0");
     // (the selftest on the fixtures: a data folder of its own unless one is given, and the old
@@ -335,7 +428,19 @@ fn main() {
                     handle.exit(2);
                 });
             }
-            w.build()?;
+            let safe = safe_graphics();
+            if safe {
+                w = w.additional_browser_args(&format!("{WRY_BROWSER_ARGS} --disable-gpu"));
+                hub_core::log_line("page: safe graphics, the window drawn without the graphics card");
+            }
+            // (started anew by the crash that turned it on: said once, `app.js`)
+            if std::env::var_os(SAFE_NOTICE_ENV).is_some() {
+                std::env::remove_var(SAFE_NOTICE_ENV);
+                w = w.initialization_script("window.__OMSIHUB_SAFE_GRAPHICS_NOTICE__ = true;");
+            }
+            let _window = w.build()?;
+            #[cfg(windows)]
+            reload_after_crash(&_window, safe);
             // (a build without the signing key's public half installs nothing itself)
             if !updater_pubkey(app.handle()).is_empty() {
                 hub_api::update::set_installer(Arc::new(Updates(app.handle().clone())));
