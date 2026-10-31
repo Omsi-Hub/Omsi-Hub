@@ -1,10 +1,10 @@
 // The start (the drive's "Mode" step), as our game-drawn launcher's (`flow::step_mode`): the
 // logo over the greeting, the ways to drive as tiles with a photo each - a work shift, a tour,
-// a free drive, and the bus company beside them - and under them the driver's service record
-// and the ways to everything else. The glass card is as tall as what is on it; what does not
+// a free drive, and the bus company beside them, each badge in the logo's line - and under
+// them the driver's service record and the ways to everything else. The glass card is as tall as what is on it; what does not
 // fit scrolls inside it (`hub-card-in`), under the card's rim, which stays where the card is.
 
-import { html } from '../../vendor/preact-htm.js';
+import { html, useEffect, useRef, useState } from '../../vendor/preact-htm.js';
 import { useStore } from '../store.js';
 import { choose } from './drive.js';
 import { Icon, tr, hoursText } from './bits.js';
@@ -29,6 +29,38 @@ function greeting(name) {
   const h = new Date().getHours();
   const key = h >= 5 && h <= 11 ? 'Good morning %{name}' : h >= 12 && h <= 17 ? 'Good afternoon %{name}' : 'Good evening %{name}';
   return tr(key, { name });
+}
+
+/** The ring round a tile's badge (its radius), as the logo's round its bus. */
+const LOOP_R = 27;
+
+/** A tile's badge in the logo's line (`mark.svg`): the ring round it, open below on the right,
+ * its foot running on as the line to the tile's far side, drawn to the tile's width. Chosen or
+ * under the mouse it lights from the ring's open end round to the line's end, a ball of light
+ * running along it, and the ball keeps running it (hub.css, `.hub-mode-go`). */
+function ModeLine({ icon }) {
+  const ref = useRef(null);
+  const [w, setW] = useState(0);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return undefined;
+    const ro = new ResizeObserver(() => setW(el.clientWidth));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const c = LOOP_R + 4;
+  const a = (35 * Math.PI) / 180;
+  const foot = c + LOOP_R;
+  const end = Math.max(c + 1, w - 8);
+  const d = `M${(c + LOOP_R * Math.cos(a)).toFixed(2)} ${(c + LOOP_R * Math.sin(a)).toFixed(2)} A${LOOP_R} ${LOOP_R} 0 1 0 ${c} ${foot} L${end} ${foot}`;
+  return html`<span class="hub-mode-go" ref=${ref} style=${`--hub-loop: path("${d}")`}>
+    ${w > 0 && html`<svg viewBox=${`0 0 ${w} ${2 * c}`} aria-hidden="true">
+      <path class="track" d=${d} />
+      <path class="lit" d=${d} pathLength="100" />
+      <circle class="end" cx=${end} cy=${foot} r="4.5" />
+    </svg><i class="ball"></i>`}
+    <span class="hub-mode-badge"><${Icon} name=${icon} size=${20} /></span>
+  </span>`;
 }
 
 /** The way to drive chosen now (0 a tour, 1 a shift, 2 free). */
@@ -70,7 +102,7 @@ export function Home() {
         ${MODES.map(([kind, title, icon, picture, text]) => html`<button type="button" class=${'hub-mode' + (kind === on ? ' on' : '')} data-mode=${kind} onClick=${() => pick(kind)}>
           <span class="photo" style=${`background-image:url("img/hub/${picture}.jpg")`}></span>
           <span class="hub-mode-what">
-            <span class="hub-mode-badge"><${Icon} name=${icon} size=${21} /></span>
+            <${ModeLine} icon=${icon} />
             <b>${tr(title)}</b>
             <p>${tr(text)}</p>
           </span>
