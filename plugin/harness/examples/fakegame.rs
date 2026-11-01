@@ -39,18 +39,18 @@ impl Source for Game {
     fn route(&self, _map: &str, _date: &str, _trip: &str) -> Option<Vec<[f64; 2]>> {
         Some(ROUTE.to_vec())
     }
-    fn roads(&self, _map: &str, _date: &str, at: [f64; 2], r: f64) -> Vec<(f64, Vec<[f64; 2]>)> {
+    fn roads(&self, _map: &str, _date: &str, at: [f64; 2], r: f64) -> Vec<hub_companion::Road> {
         // a grid of streets every 300 m
         let mut out = Vec::new();
         let (x0, x1, y0, y1) = (at[0] - r, at[0] + r, at[1] - r, at[1] + r);
         let mut v = (x0 / 300.0).floor() * 300.0;
         while v <= x1 {
-            out.push((10.0, vec![[v, y0], [v, y1]]));
+            out.push(hub_companion::Road { width: 10.0, points: vec![[v, y0], [v, y1]], lanes: vec![(2.5, 1, 2), (-2.5, -1, 2)] });
             v += 300.0;
         }
         let mut v = (y0 / 300.0).floor() * 300.0;
         while v <= y1 {
-            out.push((10.0, vec![[x0, v], [x1, v]]));
+            out.push(hub_companion::Road { width: 10.0, points: vec![[x0, v], [x1, v]], lanes: vec![(2.5, 1, 2), (-2.5, -1, 2)] });
             v += 300.0;
         }
         out

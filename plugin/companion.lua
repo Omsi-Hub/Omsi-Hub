@@ -22,6 +22,7 @@
 
 local json = require("hubjson")
 local start = require("start")
+local watch = require("watch")
 
 local M = {}
 
@@ -222,8 +223,18 @@ local function bus()
   if fn("bus.passengers") then b.passengers = num(omsi.bus.passengers()) end
   if fn("bus.doors_open") then b.doors_open = omsi.bus.doors_open() end
   if fn("bus.stop_requested") then b.stop_requested = omsi.bus.stop_requested() end
-  -- the speed limit of the lane it drives on (for the phone's navigator)
+  -- the speed limit of the lane it drives on (for the phone's navigator; the watch's lane, a
+  -- little farther off it, where the game's own has none)
   if fn("map.speed_limit") then b.limit = num(omsi.map.speed_limit()) end
+  b.limit = b.limit or num(watch.limit())
+  -- a speed camera on the lane ahead (within 250 m), and the last offence the watch saw: a red
+  -- light, a speed camera's flash (numbered: the phone says each once)
+  local cam = watch.camera_ahead()
+  if cam and cam <= 250 then b.camera = num(cam) end
+  if watch.last then
+    local o = watch.last
+    b.offence = { n = o.n, kind = o.kind, speed = num(o.speed), limit = num(o.limit), fine = num(o.fine) }
+  end
   -- the traffic light the bus comes to, and how it shows (for the phone's navigator)
   if fn("traffic.light_ahead") then
     local l = omsi.traffic.light_ahead(150)

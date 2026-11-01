@@ -126,6 +126,8 @@ once after every answer (and backs off 2 s → 10 s after errors). `after` omitt
     "name": "MAN Lion's City", "number": "2604",
     "x": 1180.2, "y": -64.0, "heading": 92.0, "speed": 32.5,
     "limit": 50,                   // the speed limit of the lane it drives on (km/h), null off the lanes
+    "camera": 120,                 // a speed camera on the lane ahead (m, within 250 m), null without
+    "offence": { "n": 3, "kind": "speeding", "speed": 63, "limit": 50, "fine": 3000 },  // the last offence the drive watch saw (numbered; "red_light" or "speeding", fine in cents), null before any
     "doors_open": false, "stop_requested": true, "passengers": 23,
     "light": { "aspect": "red", "change_in": 7.5, "distance": 42.0 }  // the traffic light ahead (within 150 m): "red" | "red_yellow" | "green" | "green_yellow" | "yellow" | "dark", null without
   },

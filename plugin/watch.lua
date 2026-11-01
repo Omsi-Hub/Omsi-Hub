@@ -53,8 +53,22 @@ local function euros(cents)
   return string.format("€%d", career.round(cents / 100))
 end
 
+-- the last offence (numbered, for the companion app to say it once), the lane's limit and how far
+-- off its speed camera is
+M.last = nil
+
+function M.limit()
+  return lane and lane.limit or nil
+end
+
+function M.camera_ahead()
+  if not (lane and lane.camera) or lane.flashed then return nil end
+  return math.max(lane.camera - lane.along, 0)
+end
+
 local function offence(o)
   keep("offence", o)
+  M.last = { n = (M.last and M.last.n or 0) + 1, kind = o.kind, speed = o.speed, limit = o.limit, fine = o.fine }
   if o.kind == "red_light" then
     notify("traffic", tr("Red light"), tr("You crossed the stop line on red · fine %{amount}", { amount = euros(o.fine) }))
   else

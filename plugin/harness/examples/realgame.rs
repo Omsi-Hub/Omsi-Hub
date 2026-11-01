@@ -39,7 +39,7 @@ impl Source for Game {
     fn route(&self, _map: &str, _date: &str, _trip: &str) -> Option<Vec<[f64; 2]>> {
         None
     }
-    fn roads(&self, _map: &str, _date: &str, _at: [f64; 2], _r: f64) -> Vec<(f64, Vec<[f64; 2]>)> {
+    fn roads(&self, _map: &str, _date: &str, _at: [f64; 2], _r: f64) -> Vec<hub_companion::Road> {
         Vec::new()
     }
     fn world_of(&self, _map: &str, _tile: [i64; 2], _local: [f64; 2]) -> Option<[f64; 2]> {
