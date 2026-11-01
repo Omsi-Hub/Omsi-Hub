@@ -188,7 +188,7 @@ app shows what it has and hides the rest.
 | Request | Answer |
 | --- | --- |
 | `GET /api/route` | the trip's route: `{v, pts: [[x, y], …], stops: [{name, x, y}]}` (`v` = `nav.route_v`) |
-| `GET /api/roads?x=&y=&r=` | the roads within `r` m (≤ 2000) of a point: `{roads: [{w, pts: [[x, y], …]}], water: [], green: []}` |
+| `GET /api/roads?x=&y=&r=` | the roads within `r` m (≤ 2000) of a point: `{roads: [{w, pts: [[x, y], …]}], water: [], green: [], names: [{name, x, y, angle}], entries: [{name, x, y}]}` - `names`: the streets' names as openOMSI's navigator says them (each name sign's name carried along its road every 220 m; `angle`: the way the road runs, degrees anticlockwise from east), `entries`: the map's entry points |
 | `GET /api/lines` | the map's lines and tours, for `take_duty`: `{lines: [{name, tours: [{number, today}]}]}` |
 | `GET /api/pos?after=<n>` | where the bus is, thirty places a second: `{pos: [{n, t, x, y, heading, speed}, …]}`, those after the `n`-th (without `after`: the latest), at once when there is one, else within 2 s (`pos: []`) |
 | `GET /api/ground/<i>/<j>` | the game's picture of the map in the square of 500 m whose lower corner is at `i`·500, `j`·500 (the app's coordinates): binary, see below; 404 when the add-on has none of this map |
