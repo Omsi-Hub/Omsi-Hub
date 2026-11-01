@@ -102,7 +102,13 @@ struct GroundCache {
     map: String,
     ground: Option<Arc<ground::Ground>>,
     squares: HashMap<(i64, i64), Arc<Vec<u8>>>,
+    /// When the file was last tried (none there yet, or half written: the game makes it as its
+    /// navigator first draws the map).
+    tried: Option<Instant>,
 }
+
+/// How long a map without a picture is not looked for again.
+const GROUND_RETRY: Duration = Duration::from_secs(5);
 
 /// Squares kept packed: what a phone's map shows around the bus, and more.
 const SQUARES_KEPT: usize = 48;
@@ -381,9 +387,15 @@ impl Shared {
     /// `off`.
     fn ground_square(&self, map: &str, off: [f64; 2], si: i64, sj: i64) -> Option<Arc<Vec<u8>>> {
         let mut g = self.ground.lock().unwrap_or_else(|e| e.into_inner());
-        if g.map != map || g.ground.as_ref().is_some_and(|x| x.stale()) {
+        let again = match &g.ground {
+            Some(x) => x.stale(),
+            // (not there when last looked for: the game may have written it since)
+            None => g.tried.is_none_or(|t| t.elapsed() > GROUND_RETRY),
+        };
+        if g.map != map || again {
             // (read once a map: a second or so for a big one, the other squares waiting)
-            *g = GroundCache { map: map.to_string(), ground: ground::cache_file(map).and_then(|f| ground::Ground::open(&f)).map(Arc::new), squares: HashMap::new() };
+            let ground = ground::cache_file(map).and_then(|f| ground::Ground::open(&f)).map(Arc::new);
+            *g = GroundCache { map: map.to_string(), ground, squares: HashMap::new(), tried: Some(Instant::now()) };
         }
         if let Some(b) = g.squares.get(&(si, sj)) {
             return Some(b.clone());
