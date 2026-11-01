@@ -137,6 +137,13 @@ pub enum Route {
     },
     /// `GET /api/lines`: the map's lines and tours, for taking a duty from the phone.
     Lines,
+    /// `GET /api/ground/<i>/<j>`: the game's picture of the map in the square of
+    /// [`crate::ground::SQUARE`] metres with its lower corner at `i`, `j` squares (the app's
+    /// coordinates), packed (`crate::ground`).
+    Ground(i64, i64),
+    /// `GET /api/traffic`: what else is on the road - the AI vehicles, the timetable's buses
+    /// with their line, the other players - as the plugin last wrote it.
+    Traffic,
     /// `GET /api/device/<id>`: a device's screen, its form (`crate::devices`).
     Device(String),
     /// `GET /api/texture/<id>`: a picture of a form, as a PNG.
@@ -157,7 +164,20 @@ pub enum Route {
 impl Route {
     /// Whether the route wants a paired device's key.
     pub fn needs_key(&self) -> bool {
-        matches!(self, Route::State(_) | Route::Pos(_) | Route::Do | Route::Route | Route::Roads { .. } | Route::Lines | Route::Device(_) | Route::Texture(_) | Route::Screen(..))
+        matches!(
+            self,
+            Route::State(_)
+                | Route::Pos(_)
+                | Route::Do
+                | Route::Route
+                | Route::Roads { .. }
+                | Route::Lines
+                | Route::Ground(..)
+                | Route::Traffic
+                | Route::Device(_)
+                | Route::Texture(_)
+                | Route::Screen(..)
+        )
     }
 }
 
@@ -176,6 +196,7 @@ pub fn route(r: &Request) -> Route {
         "/api/route" => wants(get, Route::Route),
         "/api/pos" => wants(get, Route::Pos(r.query("after").and_then(|v| v.parse::<u64>().ok()))),
         "/api/lines" => wants(get, Route::Lines),
+        "/api/traffic" => wants(get, Route::Traffic),
         "/api/roads" => {
             let f = |name: &str| r.query(name).and_then(|v| v.parse::<f64>().ok()).filter(|v| v.is_finite());
             // (a place on a map: within a few thousand kilometres of its origin)
@@ -186,7 +207,11 @@ pub fn route(r: &Request) -> Route {
         p => {
             // (an id of a form or a picture: 20 hex characters, never a path)
             let id = |prefix: &str| p.strip_prefix(prefix).filter(|id| crate::devices::id_ok(id)).map(str::to_string);
-            if let Some(id) = id("/api/device/") {
+            // (a square of the map: two whole numbers, not far out)
+            let square = p.strip_prefix("/api/ground/").and_then(|s| s.split_once('/')).and_then(|(i, j)| Some((i.parse::<i64>().ok()?, j.parse::<i64>().ok()?)));
+            if let Some((i, j)) = square.filter(|(i, j)| i.abs() < 100_000 && j.abs() < 100_000) {
+                wants(get, Route::Ground(i, j))
+            } else if let Some(id) = id("/api/device/") {
                 wants(get, Route::Device(id))
             } else if let Some(id) = id("/api/texture/") {
                 wants(get, Route::Texture(id))
@@ -417,6 +442,12 @@ mod tests {
         assert_eq!(route(&req("GET /api/roads?x=-120.5&y=3000 HTTP/1.1\r\n\r\n")), Route::Roads { x: -120.5, y: 3000.0, r: 1000.0 });
         assert_eq!(route(&req("GET /api/roads?x=1&y=2&r=99999 HTTP/1.1\r\n\r\n")), Route::Roads { x: 1.0, y: 2.0, r: 2000.0 });
         assert_eq!(route(&req("GET /api/roads?x=NaN&y=1 HTTP/1.1\r\n\r\n")), Route::NotFound);
+        assert_eq!(route(&req("GET /api/ground/-3/12 HTTP/1.1\r\n\r\n")), Route::Ground(-3, 12));
+        assert!(route(&req("GET /api/ground/-3/12 HTTP/1.1\r\n\r\n")).needs_key());
+        assert_eq!(route(&req("GET /api/ground/1/x HTTP/1.1\r\n\r\n")), Route::NotFound);
+        assert_eq!(route(&req("GET /api/ground/1/2/3 HTTP/1.1\r\n\r\n")), Route::NotFound);
+        assert_eq!(route(&req("GET /api/ground/999999/0 HTTP/1.1\r\n\r\n")), Route::NotFound);
+        assert_eq!(route(&req("GET /api/traffic HTTP/1.1\r\n\r\n")), Route::Traffic);
         assert_eq!(route(&req("GET /api/device/0123456789abcdef0123 HTTP/1.1\r\n\r\n")), Route::Device("0123456789abcdef0123".into()));
         assert_eq!(route(&req("GET /api/screen/0123456789abcdef0123?after=4 HTTP/1.1\r\n\r\n")), Route::Screen("0123456789abcdef0123".into(), Some(4)));
         assert_eq!(route(&req("GET /api/texture/zzzzzzzzzzzzzzzzzzzz HTTP/1.1\r\n\r\n")), Route::NotFound);

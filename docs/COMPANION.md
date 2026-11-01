@@ -191,8 +191,34 @@ app shows what it has and hides the rest.
 | `GET /api/roads?x=&y=&r=` | the roads within `r` m (≤ 2000) of a point: `{roads: [{w, pts: [[x, y], …]}], water: [], green: []}` |
 | `GET /api/lines` | the map's lines and tours, for `take_duty`: `{lines: [{name, tours: [{number, today}]}]}` |
 | `GET /api/pos?after=<n>` | where the bus is, thirty places a second: `{pos: [{n, t, x, y, heading, speed}, …]}`, those after the `n`-th (without `after`: the latest), at once when there is one, else within 2 s (`pos: []`) |
+| `GET /api/ground/<i>/<j>` | the game's picture of the map in the square of 500 m whose lower corner is at `i`·500, `j`·500 (the app's coordinates): binary, see below; 404 when the add-on has none of this map |
+| `GET /api/traffic` | what else is on the road, as the plugin last wrote it (every 2 s): `{at, vehicles: [{id, x, y, heading, kind}], buses: [{id, x, y, heading, line, tour, trip, terminus, delay, number, at_stop}], players: [{name, x, y, heading}]}` |
 
 The app fetches roads in tiles of 1000 m and keeps them; `w` is the road's width in metres.
+
+**The ground** is openOMSI's own picture of the map, the one its navigator draws. The game
+makes it from the map's tiles once and keeps it in `~/.openomsi/cache/mapgen/<map>.bin`
+(`OMML` version 19). The add-on reads that file. A map the game has not drawn yet, or a cache of
+another version, has no ground (404), and the app draws the roads alone.
+
+A square's answer is little-endian. Positions are `i16` in sixteenths of a metre from the
+square's lower corner; a triangle reaching out of its square still fits.
+
+```
+"OHG1"  u16 units a metre (16)  u16 classes (13)
+13 ×   u32 n, n triangles of 3 × (i16 x, i16 y)
+           land: grass, forest, field, paved, sand, water;
+           paving: road, foot, area, green, inner; paint: white, amber
+u32 n   houses:  u16 points, points × (i16 x, i16 y) (anticlockwise),
+                 u16 roof triangles, × 3 u16 (indices into the outline),
+                 u16 height in decimetres, u8 flags (1: open - a roof on posts, no walls)
+u32 n   trees:   i16 x, i16 y, i16 the crown's radius
+u32 n   lines:   u8 class (0 rail, 1 tram, 2 river, 3 road edge, 4 area edge),
+                 u16 width (sixteenths of a metre), u16 points, points × (i16 x, i16 y)
+```
+
+Each triangle, house and tree is in the square its middle is in. A line comes with every square
+it passes, by the stretch of it there.
 
 The bus on the map moves every frame of the screen: the app asks `/api/pos` again as soon as it
 has its answer (at most about twenty times a second, a few places to each) and plays the places

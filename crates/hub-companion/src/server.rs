@@ -9,6 +9,7 @@
 //! happens on a thread of its own or the connection's, never under the lock.
 
 use crate::devices::{self, Board, Screen};
+use crate::ground;
 use crate::heard::{Heard, Paged};
 use crate::http::{self, Command, Request, Response, Route};
 use crate::nav::{self, Tracker};
@@ -90,7 +91,21 @@ pub struct Shared {
     start: Instant,
     /// Finds the devices' pictures (and keeps what it found a few seconds).
     pub finder: Finder,
+    /// The game's picture of the map the bus is on (`crate::ground`), and the squares of it
+    /// packed lately.
+    ground: Mutex<GroundCache>,
 }
+
+/// The map's ground as read for one map (None: no picture of it this server can read).
+#[derive(Default)]
+struct GroundCache {
+    map: String,
+    ground: Option<Arc<ground::Ground>>,
+    squares: HashMap<(i64, i64), Arc<Vec<u8>>>,
+}
+
+/// Squares kept packed: what a phone's map shows around the bus, and more.
+const SQUARES_KEPT: usize = 48;
 
 impl Shared {
     pub fn new(cfg: Config, source: Arc<dyn Source>, code: String, sid: u64) -> Shared {
@@ -113,7 +128,17 @@ impl Shared {
             board: Board::default(),
             stopped: false,
         };
-        Shared { inner: Mutex::new(inner), news: Condvar::new(), pos: Mutex::default(), pos_news: Condvar::new(), source, cfg, start: Instant::now(), finder: Finder::default() }
+        Shared {
+            inner: Mutex::new(inner),
+            news: Condvar::new(),
+            pos: Mutex::default(),
+            pos_news: Condvar::new(),
+            source,
+            cfg,
+            start: Instant::now(),
+            finder: Finder::default(),
+            ground: Mutex::default(),
+        }
     }
 
     pub fn lock(&self) -> MutexGuard<'_, Inner> {
@@ -349,6 +374,28 @@ impl Shared {
         }
         i.board.take(made);
         self.refresh(&mut i);
+    }
+
+    /// A square of the map's ground, packed (`crate::ground`): `si`, `sj` count squares in the
+    /// app's coordinates, the game's: the map's metres (the tiles' as the cache has them) moved by
+    /// `off`.
+    fn ground_square(&self, map: &str, off: [f64; 2], si: i64, sj: i64) -> Option<Arc<Vec<u8>>> {
+        let mut g = self.ground.lock().unwrap_or_else(|e| e.into_inner());
+        if g.map != map || g.ground.as_ref().is_some_and(|x| x.stale()) {
+            // (read once a map: a second or so for a big one, the other squares waiting)
+            *g = GroundCache { map: map.to_string(), ground: ground::cache_file(map).and_then(|f| ground::Ground::open(&f)).map(Arc::new), squares: HashMap::new() };
+        }
+        if let Some(b) = g.squares.get(&(si, sj)) {
+            return Some(b.clone());
+        }
+        let ground = g.ground.clone()?;
+        let corner = [si as f64 * ground::SQUARE - off[0] - ground.origin[0], sj as f64 * ground::SQUARE - off[1] - ground.origin[1]];
+        let b = Arc::new(ground.square(corner)?);
+        if g.squares.len() >= SQUARES_KEPT {
+            g.squares.clear();
+        }
+        g.squares.insert((si, sj), b.clone());
+        Some(b)
     }
 
     /// The game's coordinates less the add-on's map metres, from the place the plugin gave with
@@ -615,6 +662,27 @@ pub fn handle(req: &Request, shared: &Arc<Shared>) -> Response {
                 .map(|(w, pts)| json!({ "w": r1(w), "pts": pts.iter().map(|p| [r1(p[0] + off[0]), r1(p[1] + off[1])]).collect::<Vec<_>>() }))
                 .collect();
             Response::json(&json!({ "roads": roads, "water": [], "green": [] }))
+        }
+        Route::Ground(si, sj) => {
+            let (map, off, reference) = {
+                let i = shared.lock();
+                (i.heard.get("map").and_then(Value::as_str).unwrap_or("").to_string(), i.routing.off, i.heard.get("ref").cloned())
+            };
+            if map.is_empty() {
+                return Response::error(404, "not_found");
+            }
+            let off = off.or_else(|| reference.and_then(|r| shared.offset(&map, &r))).unwrap_or([0.0, 0.0]);
+            match shared.ground_square(&map, off, si, sj) {
+                Some(b) => Response::new(200, "application/octet-stream", b.to_vec()),
+                None => Response::error(404, "not_found"),
+            }
+        }
+        Route::Traffic => {
+            let dir = shared.lock().plugin_dir.clone();
+            match dir.and_then(|d| hub_game::bridge::read_traffic(&d)) {
+                Some(t) => Response::json(&json!({ "at": t.at, "vehicles": t.vehicles, "buses": t.buses, "players": t.players })),
+                None => Response::json(&json!({ "vehicles": [], "buses": [], "players": [] })),
+            }
         }
         Route::Lines => {
             let i = shared.lock();

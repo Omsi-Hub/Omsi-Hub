@@ -24,6 +24,7 @@
 //! fake one.
 
 pub mod devices;
+pub mod ground;
 pub mod heard;
 pub mod http;
 pub mod nav;
