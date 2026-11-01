@@ -447,5 +447,22 @@ mod tests {
         let t = std::time::Instant::now();
         let b = g.square(corner).unwrap();
         println!("a square in {:?}: {} KB", t.elapsed(), b.len() / 1024);
+        // (for the app's mock server: `HUB_GROUND_DUMP=<dir>` writes the squares around the one
+        // with the most houses as <i>_<j>.bin, i from -3 to 2 and j from -3 to 3 about it)
+        let Some(dir) = std::env::var_os("HUB_GROUND_DUMP").map(PathBuf::from) else { return };
+        let mut count: std::collections::HashMap<(i64, i64), usize> = std::collections::HashMap::new();
+        for h in &g.houses {
+            let p = h.outline[0];
+            *count.entry(((p[0] as f64 / SQUARE).floor() as i64, (p[1] as f64 / SQUARE).floor() as i64)).or_default() += 1;
+        }
+        let (&(ci, cj), _) = count.iter().max_by_key(|(_, n)| **n).unwrap();
+        std::fs::create_dir_all(&dir).unwrap();
+        for i in -3..=2 {
+            for j in -3..=3 {
+                let corner = [(ci + i) as f64 * SQUARE, (cj + j) as f64 * SQUARE];
+                std::fs::write(dir.join(format!("{i}_{j}.bin")), g.square(corner).unwrap()).unwrap();
+            }
+        }
+        println!("dumped about square {ci},{cj} to {dir:?}");
     }
 }
