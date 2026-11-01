@@ -433,4 +433,92 @@ mod tests {
         s.other.insert(PORT.into(), json!(50000));
         assert_eq!(setting_port(&s), 50000);
     }
+
+    /// The game's own picture of a real map (openOMSI's cache, `hub_companion::ground`) lies
+    /// under the add-on's own reading of its roads, to the metre: the phone's houses stand where
+    /// the game has them, beside the route and the bus. Real content only (the OMSI 2 the add-on
+    /// is set to, and a cache the game wrote): `cargo test -p hub-api --release -- --ignored
+    /// ground_lies`.
+    #[test]
+    #[ignore]
+    fn the_games_ground_lies_under_the_roads() {
+        use hub_companion::ground::{cache_file, Ground, SQUARE, UNITS};
+        let map = "maps/Ahlheim 5/global.cfg";
+        let (Some(global), Some(file)) = (global_of(map), cache_file(map).filter(|f| f.is_file())) else { return };
+        let g = Ground::open(&file).expect("the game's cache");
+        // a place among the houses (the map's metres)
+        let h = &g.houses[g.houses.len() / 3];
+        let at = [h.outline[0][0] as f64 + g.origin[0], h.outline[0][1] as f64 + g.origin[1]];
+        let roads = crate::content::mapview::roads_near(&map_name(map), &global, "", at, 300.0);
+        let pts: Vec<[f64; 2]> = roads.iter().flat_map(|(_, p)| p.iter().copied()).filter(|p| (p[0] - at[0]).hypot(p[1] - at[1]) < 300.0).collect();
+        assert!(pts.len() > 50, "roads near {at:?}: {}", pts.len());
+        // the paving of the squares about it (carriageways, pavements, yards, the streets'
+        // middle), laid on a grid of half metres
+        const CELL: f64 = 0.5;
+        let lo = [at[0] - 750.0, at[1] - 750.0];
+        let n = (1500.0 / CELL) as usize;
+        let mut paved = vec![false; n * n];
+        let sq = [((at[0] - g.origin[0]) / SQUARE).floor() * SQUARE, ((at[1] - g.origin[1]) / SQUARE).floor() * SQUARE];
+        let side = |p: [f64; 2], q: [f64; 2], r: [f64; 2]| (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0]);
+        for di in -1..=1 {
+            for dj in -1..=1 {
+                let corner = [sq[0] + di as f64 * SQUARE, sq[1] + dj as f64 * SQUARE];
+                let b = g.square(corner).unwrap();
+                let cw = [corner[0] + g.origin[0], corner[1] + g.origin[1]];
+                let mut k = 8;
+                for class in 0..13 {
+                    let count = u32::from_le_bytes(b[k..k + 4].try_into().unwrap()) as usize;
+                    k += 4;
+                    if [6, 7, 8, 10].contains(&class) {
+                        for t in 0..count {
+                            let v = |i: usize| {
+                                let at = k + t * 12 + i * 4;
+                                let q = |o: usize| i16::from_le_bytes([b[at + o], b[at + o + 1]]) as f64 / UNITS;
+                                [cw[0] + q(0), cw[1] + q(2)]
+                            };
+                            let (a, bb, c) = (v(0), v(1), v(2));
+                            let x0 = ((a[0].min(bb[0]).min(c[0]) - lo[0]) / CELL).floor().max(0.0) as usize;
+                            let x1 = ((a[0].max(bb[0]).max(c[0]) - lo[0]) / CELL).ceil().clamp(0.0, n as f64 - 1.0) as usize;
+                            let y0 = ((a[1].min(bb[1]).min(c[1]) - lo[1]) / CELL).floor().max(0.0) as usize;
+                            let y1 = ((a[1].max(bb[1]).max(c[1]) - lo[1]) / CELL).ceil().clamp(0.0, n as f64 - 1.0) as usize;
+                            for y in y0..=y1 {
+                                for x in x0..=x1 {
+                                    let p = [lo[0] + (x as f64 + 0.5) * CELL, lo[1] + (y as f64 + 0.5) * CELL];
+                                    let (s1, s2, s3) = (side(a, bb, p), side(bb, c, p), side(c, a, p));
+                                    if (s1 >= 0.0 && s2 >= 0.0 && s3 >= 0.0) || (s1 <= 0.0 && s2 <= 0.0 && s3 <= 0.0) {
+                                        paved[y * n + x] = true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    k += count * 12;
+                }
+            }
+        }
+        // how many of the roads' points lie on the paving with the ground moved by (dx, dy)
+        let on = |dx: f64, dy: f64| {
+            let hit = pts
+                .iter()
+                .filter(|p| {
+                    let (x, y) = (((p[0] - dx - lo[0]) / CELL).floor() as isize, ((p[1] - dy - lo[1]) / CELL).floor() as isize);
+                    x >= 0 && y >= 0 && (x as usize) < n && (y as usize) < n && paved[y as usize * n + x as usize]
+                })
+                .count();
+            hit as f64 / pts.len() as f64
+        };
+        let here = on(0.0, 0.0);
+        let mut best = (0.0, 0.0, here);
+        for dy in -40..=40 {
+            for dx in -40..=40 {
+                let s = on(dx as f64 * 0.5, dy as f64 * 0.5);
+                if s > best.2 + 1e-9 {
+                    best = (dx as f64 * 0.5, dy as f64 * 0.5, s);
+                }
+            }
+        }
+        println!("{} road points near {at:?}: {:.0}% on the paving as it is; the best fit {:.0}% moved by ({}, {}) m", pts.len(), here * 100.0, best.2 * 100.0, best.0, best.1);
+        assert!(here > 0.8, "the ground is not under the roads: {:.0}% on it", here * 100.0);
+        assert!(best.0.abs() <= 1.0 && best.1.abs() <= 1.0, "the ground fits better moved by ({}, {}) m", best.0, best.1);
+    }
 }
