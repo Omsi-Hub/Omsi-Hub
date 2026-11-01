@@ -102,7 +102,7 @@ struct GroundCache {
     map: String,
     ground: Option<Arc<ground::Ground>>,
     /// Packed squares by place and detail: as they are, and gzipped.
-    squares: HashMap<(i64, i64, bool), Packed>,
+    squares: HashMap<(i64, i64, bool, bool), Packed>,
     /// When the file was last tried (none there yet, or half written: the game makes it as its
     /// navigator first draws the map).
     tried: Option<Instant>,
@@ -389,7 +389,7 @@ impl Shared {
     /// A square of the map's ground, packed (`crate::ground`): `si`, `sj` count squares in the
     /// app's coordinates, the game's: the map's metres (the tiles' as the cache has them) moved by
     /// `off`.
-    fn ground_square(&self, map: &str, off: [f64; 2], si: i64, sj: i64, low: bool) -> Option<Packed> {
+    fn ground_square(&self, map: &str, off: [f64; 2], si: i64, sj: i64, low: bool, dress: bool) -> Option<Packed> {
         let mut g = self.ground.lock().unwrap_or_else(|e| e.into_inner());
         let again = match &g.ground {
             Some(x) => x.stale(),
@@ -401,7 +401,7 @@ impl Shared {
             let ground = ground::cache_file(map).and_then(|f| ground::Ground::open(&f)).map(Arc::new);
             *g = GroundCache { map: map.to_string(), ground, squares: HashMap::new(), tried: Some(Instant::now()) };
         }
-        if let Some(b) = g.squares.get(&(si, sj, low)) {
+        if let Some(b) = g.squares.get(&(si, sj, low, dress)) {
             return Some(b.clone());
         }
         let ground = g.ground.clone()?;
@@ -418,7 +418,9 @@ impl Shared {
                 .map(|(c, faces)| ([(c[0] - o[0]) as f32, (c[1] - o[1]) as f32], faces.into_iter().map(|t| t.map(|v| [(v[0] - o[0]) as f32, (v[1] - o[1]) as f32, v[2] as f32])).collect()))
                 .collect()
         };
-        let plain = ground.square_with(corner, low, &props)?;
+        // (the houses in their textures, for an app that draws them: `crate::dress`)
+        let dressed = |it: &ground::Instance| self.source.dressed(map, [it.at[0] as f64 + o[0], it.at[1] as f64 + o[1]], it.heading);
+        let plain = ground.square_dressed(corner, low, &props, dress.then_some(&dressed as crate::dress::Dresser))?;
         // (gzipped once: a square is a megabyte or two of mostly small numbers)
         let mut z = flate2::write::GzEncoder::new(Vec::with_capacity(plain.len() / 3), flate2::Compression::fast());
         std::io::Write::write_all(&mut z, &plain).ok()?;
@@ -426,7 +428,7 @@ impl Shared {
         if g.squares.len() >= SQUARES_KEPT {
             g.squares.clear();
         }
-        g.squares.insert((si, sj, low), b.clone());
+        g.squares.insert((si, sj, low, dress), b.clone());
         Some(b)
     }
 
@@ -712,7 +714,7 @@ pub fn handle(req: &Request, shared: &Arc<Shared>) -> Response {
                 .collect();
             Response::json(&json!({ "roads": roads, "water": [], "green": [], "names": names, "entries": entries, "lights": lights }))
         }
-        Route::Ground(si, sj, low) => {
+        Route::Ground(si, sj, low, dress) => {
             let (map, off, reference) = {
                 let i = shared.lock();
                 (i.heard.get("map").and_then(Value::as_str).unwrap_or("").to_string(), i.routing.off, i.heard.get("ref").cloned())
@@ -722,7 +724,7 @@ pub fn handle(req: &Request, shared: &Arc<Shared>) -> Response {
             }
             let off = off.or_else(|| reference.and_then(|r| shared.offset(&map, &r))).unwrap_or([0.0, 0.0]);
             let gzip = req.header("accept-encoding").is_some_and(|v| v.split(',').any(|e| e.trim().starts_with("gzip")));
-            match shared.ground_square(&map, off, si, sj, low) {
+            match shared.ground_square(&map, off, si, sj, low, dress) {
                 Some((_, packed)) if gzip => {
                     let mut r = Response::new(200, "application/octet-stream", packed.to_vec());
                     r.encoding = Some("gzip");
@@ -732,6 +734,10 @@ pub fn handle(req: &Request, shared: &Arc<Shared>) -> Response {
                 None => Response::error(404, "not_found"),
             }
         }
+        Route::Skin(id) => match shared.source.skin(id) {
+            Some((bytes, kind)) => Response::new(200, kind, bytes),
+            None => Response::error(404, "not_found"),
+        },
         Route::Traffic => {
             let dir = shared.lock().plugin_dir.clone();
             match dir.and_then(|d| hub_game::bridge::read_traffic(&d)) {

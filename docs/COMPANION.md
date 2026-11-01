@@ -195,7 +195,8 @@ app shows what it has and hides the rest.
 | `GET /api/roads?x=&y=&r=` | the roads within `r` m (≤ 2000) of a point: `{roads: [{w, pts: [[x, y], …], lanes: [[offset, way, turns]], j}], water: [], green: [], names: [{name, x, y, angle}], entries: [{name, x, y}]}` - each road a carriageway: its `lanes` how far right of its line (m, the way the points run), which way (1 with the points, -1 against) and where the lane may go at its end (1 left, 2 straight on, 4 right); `j: true` and no lanes for a junction's own piece - `names`: the streets' names as openOMSI's navigator says them (each name sign's name carried along its road every 220 m; `angle`: the way the road runs, degrees anticlockwise from east), `entries`: the map's entry points - `lights`: every traffic light of the map there, where it holds the traffic - `[x, y, heading, width]`, the middle of a lane's stop line, the way the lane runs over it (degrees clockwise from north) and its width (what each shows comes with `/api/traffic`'s `lights`, for those near the bus) |
 | `GET /api/lines` | the map's lines and tours, for `take_duty`: `{lines: [{name, tours: [{number, today}]}]}` |
 | `GET /api/pos?after=<n>` | where the bus is, thirty places a second: `{pos: [{n, t, x, y, heading, speed}, …]}`, those after the `n`-th (without `after`: the latest), at once when there is one, else within 2 s (`pos: []`) |
-| `GET /api/ground/<i>/<j>[?low=1]` | the game's picture of the map in the square of 500 m whose lower corner is at `i`·500, `j`·500 (the app's coordinates): binary, see below (gzipped for a client that takes it); `low=1` a square far off, without the paint, the trees and the houses' models; 404 when the add-on has none of this map |
+| `GET /api/ground/<i>/<j>[?low=1][?dress=1]` | the game's picture of the map in the square of 500 m whose lower corner is at `i`·500, `j`·500 (the app's coordinates): binary, see below (gzipped for a client that takes it); `low=1` a square far off, without the paint, the trees and the houses' models; `dress=1` the houses' models dressed in their own textures (below); 404 when the add-on has none of this map |
+| `GET /api/ground/skin/<id>` | a house's texture, 128 × 128 pixels: a JPEG, or a PNG where its clear parts are holes (a fence, leaves); 404 for an id the add-on did not give |
 | `GET /api/traffic` | what else is on the road, as the plugin last wrote it (every second): `{at, vehicles: [{id, x, y, heading, kind}], buses: [{id, x, y, heading, line, tour, trip, terminus, delay, number, at_stop}], players: [{name, x, y, heading}], lights: [{x, y, heading, width, aspect, change_in}]}` - `lights` the traffic lights within 500 m of the bus where they hold the traffic (the middle of a lane's stop line, the way the lane runs over it, its width), what each shows as `bus.light`'s `aspect` and the seconds to its next change (-1: none coming); empty with an openOMSI without `omsi.traffic.lights` |
 
 The app fetches roads in tiles of 1000 m and keeps them; `w` is the road's width in metres.
@@ -232,6 +233,25 @@ picture of the map has none): the objects within 15 m of a stop - its shelter, i
 bins and benches, the masts and fences - as the map's own models read from their `.sco` (not a
 plant, a road's piece, a mark on the ground or a building more than 20 m across or 7 m high),
 not in a square far off. An add-on from before them ends the square after the lines.
+
+With `dress=1` the houses come dressed as the game dresses them: the add-on finds each house's
+own object on the map again (where it stands and which way it faces, as the game's picture
+placed it) and reads its model with its textures. A dressed house's triangles leave the model
+triangles above and come after everything in a section of their own - the same faces, at most
+40 000 a square as before:
+
+```
+"SKN1"  u16 looks: u32 texture (its id for /api/ground/skin, 0: none - the colour alone),
+                 4 × u8 colour (r, g, b, a: the material's where it has no texture),
+                 u8 flags (1: the texture's clear parts are holes)
+u32 n   triangles: 3 × (i16 x, i16 y, i16 z), 3 × (i16 u, i16 v) - where on the texture,
+                 2048 a repeat (it repeats: each triangle's moved by whole repeats to start
+                 near 0) - u16 look, u8 shade (as a model triangle's)
+```
+
+The textures come apart, once each however many houses wear them; the app keeps them on its GPU
+while a square it shows wears them. A house whose object is not found (or an add-on from before
+it, which leaves out the section) comes as a model triangle, untextured.
 
 Each triangle, house and tree is in the square its middle is in. A line comes with every square
 it passes, by the stretch of it there.

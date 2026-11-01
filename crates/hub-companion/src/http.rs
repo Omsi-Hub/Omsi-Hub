@@ -140,8 +140,11 @@ pub enum Route {
     /// `GET /api/ground/<i>/<j>`: the game's picture of the map in the square of
     /// [`crate::ground::SQUARE`] metres with its lower corner at `i`, `j` squares (the app's
     /// coordinates), packed (`crate::ground`); `?low=1` without the paint, the trees and the
-    /// houses' models (a square far off).
-    Ground(i64, i64, bool),
+    /// houses' models (a square far off); `?dress=1` with the houses' models dressed in their
+    /// textures where they can be (`crate::dress`).
+    Ground(i64, i64, bool, bool),
+    /// `GET /api/ground/skin/<id>`: a house's texture (`crate::dress::SKIN` pixels a side).
+    Skin(u32),
     /// `GET /api/traffic`: what else is on the road - the AI vehicles, the timetable's buses
     /// with their line, the other players - as the plugin last wrote it.
     Traffic,
@@ -174,6 +177,7 @@ impl Route {
                 | Route::Roads { .. }
                 | Route::Lines
                 | Route::Ground(..)
+                | Route::Skin(_)
                 | Route::Traffic
                 | Route::Device(_)
                 | Route::Texture(_)
@@ -210,8 +214,11 @@ pub fn route(r: &Request) -> Route {
             let id = |prefix: &str| p.strip_prefix(prefix).filter(|id| crate::devices::id_ok(id)).map(str::to_string);
             // (a square of the map: two whole numbers, not far out)
             let square = p.strip_prefix("/api/ground/").and_then(|s| s.split_once('/')).and_then(|(i, j)| Some((i.parse::<i64>().ok()?, j.parse::<i64>().ok()?)));
-            if let Some((i, j)) = square.filter(|(i, j)| i.abs() < 100_000 && j.abs() < 100_000) {
-                wants(get, Route::Ground(i, j, r.query("low").is_some_and(|v| v == "1")))
+            let skin = p.strip_prefix("/api/ground/skin/").and_then(|id| id.parse::<u32>().ok());
+            if let Some(id) = skin {
+                wants(get, Route::Skin(id))
+            } else if let Some((i, j)) = square.filter(|(i, j)| i.abs() < 100_000 && j.abs() < 100_000) {
+                wants(get, Route::Ground(i, j, r.query("low").is_some_and(|v| v == "1"), r.query("dress").is_some_and(|v| v == "1")))
             } else if let Some(id) = id("/api/device/") {
                 wants(get, Route::Device(id))
             } else if let Some(id) = id("/api/texture/") {
@@ -443,8 +450,12 @@ mod tests {
         assert_eq!(route(&req("GET /api/roads?x=-120.5&y=3000 HTTP/1.1\r\n\r\n")), Route::Roads { x: -120.5, y: 3000.0, r: 1000.0 });
         assert_eq!(route(&req("GET /api/roads?x=1&y=2&r=99999 HTTP/1.1\r\n\r\n")), Route::Roads { x: 1.0, y: 2.0, r: 2000.0 });
         assert_eq!(route(&req("GET /api/roads?x=NaN&y=1 HTTP/1.1\r\n\r\n")), Route::NotFound);
-        assert_eq!(route(&req("GET /api/ground/-3/12 HTTP/1.1\r\n\r\n")), Route::Ground(-3, 12, false));
-        assert_eq!(route(&req("GET /api/ground/-3/12?low=1 HTTP/1.1\r\n\r\n")), Route::Ground(-3, 12, true));
+        assert_eq!(route(&req("GET /api/ground/-3/12 HTTP/1.1\r\n\r\n")), Route::Ground(-3, 12, false, false));
+        assert_eq!(route(&req("GET /api/ground/-3/12?low=1 HTTP/1.1\r\n\r\n")), Route::Ground(-3, 12, true, false));
+        assert_eq!(route(&req("GET /api/ground/-3/12?dress=1 HTTP/1.1\r\n\r\n")), Route::Ground(-3, 12, false, true));
+        assert_eq!(route(&req("GET /api/ground/skin/42 HTTP/1.1\r\n\r\n")), Route::Skin(42));
+        assert!(route(&req("GET /api/ground/skin/42 HTTP/1.1\r\n\r\n")).needs_key());
+        assert_eq!(route(&req("GET /api/ground/skin/x HTTP/1.1\r\n\r\n")), Route::NotFound);
         assert!(route(&req("GET /api/ground/-3/12 HTTP/1.1\r\n\r\n")).needs_key());
         assert_eq!(route(&req("GET /api/ground/1/x HTTP/1.1\r\n\r\n")), Route::NotFound);
         assert_eq!(route(&req("GET /api/ground/1/2/3 HTTP/1.1\r\n\r\n")), Route::NotFound);

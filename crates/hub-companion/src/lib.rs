@@ -24,6 +24,7 @@
 //! fake one.
 
 pub mod devices;
+pub mod dress;
 pub mod ground;
 pub mod heard;
 pub mod http;
@@ -102,6 +103,17 @@ pub trait Source: Send + Sync {
     /// ground under it).
     fn stop_props(&self, _map: &str, _lo: [f64; 2], _hi: [f64; 2]) -> Vec<([f64; 2], Vec<[[f64; 3]; 3]>)> {
         Vec::new()
+    }
+    /// A house's model as the game dresses it (`dress`): the object placed at `at` (map metres)
+    /// facing `heading` (compass degrees), as the game's picture places it. `None`: as the
+    /// picture has it, untextured.
+    fn dressed(&self, _map: &str, _at: [f64; 2], _heading: f32) -> Option<std::sync::Arc<dress::Dressed>> {
+        None
+    }
+    /// A house's texture by its id (`dress::Look::skin`), [`dress::SKIN`] pixels a side: its
+    /// bytes and their type (a JPEG, or a PNG where its clear parts are holes).
+    fn skin(&self, _id: u32) -> Option<(Vec<u8>, &'static str)> {
+        None
     }
     /// The map metres of a place given by its tile (x, y of the grid) and the metres in it.
     fn world_of(&self, map: &str, tile: [i64; 2], local: [f64; 2]) -> Option<[f64; 2]>;

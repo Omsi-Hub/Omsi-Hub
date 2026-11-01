@@ -46,7 +46,7 @@ hub-companion = { workspace = true, optional = true }
 glam.workspace = true
 sha2.workspace = true
 # (RosterFlow's duty cards: the company's logo picture read and packed into the PDF, `rosterflow/print.rs`)
-image.workspace = true
+image = { workspace = true, features = ["jpeg"] }
 flate2 = "1"
 
 # A fake openOMSI for the drive's end-to-end test (`tests/drive.rs`): it writes the plugin's

@@ -281,6 +281,14 @@ impl Source for Hub {
         global_of(map).map(|g| crate::content::mapview::stop_props_in(&map_name(map), &g, "", lo, hi)).unwrap_or_default()
     }
 
+    fn dressed(&self, map: &str, at: [f64; 2], heading: f32) -> Option<Arc<hub_companion::dress::Dressed>> {
+        crate::content::housetex::dressed_at(&global_of(map)?, at, heading)
+    }
+
+    fn skin(&self, id: u32) -> Option<(Vec<u8>, &'static str)> {
+        crate::content::housetex::skin(id).map(|s| (s.0.clone(), s.1))
+    }
+
     fn lights(&self, map: &str, date: &str, at: [f64; 2], r: f64) -> Vec<([f64; 2], f64, f64)> {
         global_of(map).map(|g| crate::content::mapview::lights_near(&map_name(map), &g, date, at, r)).unwrap_or_default()
     }

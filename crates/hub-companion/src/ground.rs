@@ -20,6 +20,8 @@ use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
+use crate::dress::Dresser;
+
 /// The side of a square the phone asks for (m).
 pub const SQUARE: f64 = 500.0;
 /// The layers' format this reads (openOMSI's `layers::VERSION`): another is not read.
@@ -277,6 +279,13 @@ impl Ground {
     /// file's coordinates (relative to [`Ground::origin`]; z up from the ground), sent with the
     /// houses' models (not in a square far off).
     pub fn square_with(&self, corner: [f64; 2], low: bool, props: &[([f32; 2], Vec<[[f32; 3]; 3]>)]) -> Option<Vec<u8>> {
+        self.square_dressed(corner, low, props, None)
+    }
+
+    /// [`Ground::square_with`], the houses' models dressed where `dress` has a placed model's
+    /// own (its faces with their textures, `crate::dress`): those go in a section of their own
+    /// after the models, the others as before.
+    pub fn square_dressed(&self, corner: [f64; 2], low: bool, props: &[([f32; 2], Vec<[[f32; 3]; 3]>)], dress: Option<Dresser>) -> Option<Vec<u8>> {
         let lo = [corner[0] as f32, corner[1] as f32];
         let hi = [(corner[0] + SQUARE) as f32, (corner[1] + SQUARE) as f32];
         let inside = |x: f32, y: f32| x >= lo[0] && x < hi[0] && y >= lo[1] && y < hi[1];
@@ -402,18 +411,22 @@ impl Ground {
         let model_at = out.len();
         out.extend_from_slice(&0u32.to_le_bytes());
         let mut n = 0u32;
-        let ll = SHADOW_DIR[0].hypot(SHADOW_DIR[1]);
-        let light = [-SHADOW_DIR[0] / ll, -SHADOW_DIR[1] / ll];
         let mut ids: Vec<&u32> = drawn.iter().collect();
         ids.sort();
-        // (each model's triangles placed, with the middle its walls face away from)
+        // (each model's triangles placed, with the middle its walls face away from; a dressed
+        // one with its texture coordinates and looks)
         let mut placed: Vec<(Vec<[[f32; 3]; 3]>, [f32; 3])> = Vec::new();
+        let mut dressed: Vec<crate::dress::Placed> = Vec::new();
         for &i in ids {
             let it = self.instances[i as usize];
             let (faces, centre) = &self.models[it.model as usize];
             let a = -(it.heading as f64).to_radians();
             let (sn, cs) = (a.sin() as f32, a.cos() as f32);
             let place = |v: [f32; 3]| [v[0] * cs - v[1] * sn + it.at[0], v[0] * sn + v[1] * cs + it.at[1], v[2]];
+            if let Some(d) = dress.and_then(|f| f(&it)) {
+                dressed.push((d.faces.iter().map(|(p, uv, look)| (p.map(place), *uv, *look)).collect(), d.looks.clone(), place([centre[0], centre[1], 0.0])));
+                continue;
+            }
             placed.push((faces.iter().map(|t| t.map(place)).collect(), place([centre[0], centre[1], 0.0])));
         }
         if !low {
@@ -421,24 +434,7 @@ impl Ground {
         }
         for (faces, c) in &placed {
             for &p in faces {
-                let (u, v) = ([p[1][0] - p[0][0], p[1][1] - p[0][1], p[1][2] - p[0][2]], [p[2][0] - p[0][0], p[2][1] - p[0][1], p[2][2] - p[0][2]]);
-                let mut nrm = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
-                let len = (nrm[0] * nrm[0] + nrm[1] * nrm[1] + nrm[2] * nrm[2]).sqrt();
-                if len < 1e-9 {
-                    continue;
-                }
-                nrm = nrm.map(|x| x / len);
-                let flat = nrm[0].hypot(nrm[1]).max(1e-6);
-                let facing = (nrm[0] * light[0] + nrm[1] * light[1]) / flat;
-                let shade = if nrm[2].abs() < 0.35 {
-                    let mid = [(p[0][0] + p[1][0] + p[2][0]) / 3.0 - c[0], (p[0][1] + p[1][1] + p[2][1]) / 3.0 - c[1]];
-                    let out_ward = if nrm[0] * mid[0] + nrm[1] * mid[1] < 0.0 { -facing } else { facing };
-                    ((0.5 + 0.5 * out_ward).clamp(0.0, 1.0) * 127.0).round() as u8
-                } else {
-                    let (nz, f) = if nrm[2] < 0.0 { (-nrm[2], -facing) } else { (nrm[2], facing) };
-                    let away = (1.0 - nz) * (1.0 - (0.5 + 0.5 * f).clamp(0.0, 1.0));
-                    128 | (((away * 0.9).clamp(0.0, 0.45) / 0.45 * 127.0).round() as u8)
-                };
+                let Some(shade) = shade_of(&p, *c) else { continue };
                 for v in p {
                     out.extend_from_slice(&q(v[0], corner[0]).to_le_bytes());
                     out.extend_from_slice(&q(v[1], corner[1]).to_le_bytes());
@@ -449,8 +445,37 @@ impl Ground {
             }
         }
         out[model_at..model_at + 4].copy_from_slice(&n.to_le_bytes());
+        if dress.is_some() {
+            crate::dress::write_section(&mut out, &dressed, corner, UNITS, &shade_of);
+        }
         Some(out)
     }
+}
+
+/// A placed model's triangle's shade: a wall's light (0..127) as it faces away from the house's
+/// middle `c`, a roof's (128 and up) darker as it turns away from the light; None for a face of
+/// no size.
+fn shade_of(p: &[[f32; 3]; 3], c: [f32; 3]) -> Option<u8> {
+    let ll = SHADOW_DIR[0].hypot(SHADOW_DIR[1]);
+    let light = [-SHADOW_DIR[0] / ll, -SHADOW_DIR[1] / ll];
+    let (u, v) = ([p[1][0] - p[0][0], p[1][1] - p[0][1], p[1][2] - p[0][2]], [p[2][0] - p[0][0], p[2][1] - p[0][1], p[2][2] - p[0][2]]);
+    let mut nrm = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+    let len = (nrm[0] * nrm[0] + nrm[1] * nrm[1] + nrm[2] * nrm[2]).sqrt();
+    if len < 1e-9 {
+        return None;
+    }
+    nrm = nrm.map(|x| x / len);
+    let flat = nrm[0].hypot(nrm[1]).max(1e-6);
+    let facing = (nrm[0] * light[0] + nrm[1] * light[1]) / flat;
+    Some(if nrm[2].abs() < 0.35 {
+        let mid = [(p[0][0] + p[1][0] + p[2][0]) / 3.0 - c[0], (p[0][1] + p[1][1] + p[2][1]) / 3.0 - c[1]];
+        let out_ward = if nrm[0] * mid[0] + nrm[1] * mid[1] < 0.0 { -facing } else { facing };
+        ((0.5 + 0.5 * out_ward).clamp(0.0, 1.0) * 127.0).round() as u8
+    } else {
+        let (nz, f) = if nrm[2] < 0.0 { (-nrm[2], -facing) } else { (nrm[2], facing) };
+        let away = (1.0 - nz) * (1.0 - (0.5 + 0.5 * f).clamp(0.0, 1.0));
+        128 | (((away * 0.9).clamp(0.0, 0.45) / 0.45 * 127.0).round() as u8)
+    })
 }
 
 #[cfg(test)]

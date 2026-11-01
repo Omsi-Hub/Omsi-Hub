@@ -36,6 +36,8 @@ pub mod depots;
 pub mod facts;
 pub mod fonts;
 #[cfg(feature = "native")]
+pub mod housetex;
+#[cfg(feature = "native")]
 pub mod mapview;
 // (the website: the maps as the desktop app exported them into the cloud save's content)
 #[cfg(not(feature = "native"))]
