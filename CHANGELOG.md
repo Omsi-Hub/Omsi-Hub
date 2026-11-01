@@ -12,6 +12,12 @@ Each version of the Omsi-Hub add-on, newest first. The release on GitHub links h
   paid time, and then every piece: its running number and bus, every trip with each stop and
   its time, the timing points marked, the reliefs (from which duty, to which) and the breaks.
   The cards carry the company's logo picture (or its monogram and name) and its colour.
+- **The phone's navigator gets openOMSI's own map**: the add-on reads the picture of the map
+  openOMSI keeps once its navigator has drawn it - the ground, the paving, the paint on the
+  roads, the rails and rivers, the trees and the houses with their heights - and hands it to the
+  Companion app square by square, so the app can draw the map as the game does, in 3D. The app
+  can also ask for what else is on the road: the AI vehicles, the timetable's buses with their
+  line and the other players' buses.
 
 ### Changed
 
