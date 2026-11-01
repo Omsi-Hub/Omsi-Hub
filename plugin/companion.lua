@@ -222,6 +222,8 @@ local function bus()
   if fn("bus.passengers") then b.passengers = num(omsi.bus.passengers()) end
   if fn("bus.doors_open") then b.doors_open = omsi.bus.doors_open() end
   if fn("bus.stop_requested") then b.stop_requested = omsi.bus.stop_requested() end
+  -- the speed limit of the lane it drives on (for the phone's navigator)
+  if fn("map.speed_limit") then b.limit = num(omsi.map.speed_limit()) end
   -- the traffic light the bus comes to, and how it shows (for the phone's navigator)
   if fn("traffic.light_ahead") then
     local l = omsi.traffic.light_ahead(150)

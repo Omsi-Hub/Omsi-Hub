@@ -223,6 +223,7 @@ fn bus(h: &Heard) -> Value {
         "x": f(b.get("x")), "y": f(b.get("y")),
         "heading": f(b.get("heading")),
         "speed": f(b.get("speed")).unwrap_or(0.0),
+        "limit": f(b.get("limit")).filter(|l| *l > 0.0 && *l < 300.0),
         "doors_open": b.get("doors_open").and_then(Value::as_bool),
         "stop_requested": b.get("stop_requested").and_then(Value::as_bool),
         "passengers": f(b.get("passengers")).map(|p| p as i64),
@@ -432,7 +433,7 @@ mod tests {
         let mut h = heard(
             json!({
                 "issued": 100, "clock": 30_000.0, "signon": "work",
-                "bus": { "name": "MAN NL202", "number": "2604", "x": 10.0, "y": 20.0, "heading": 90.0, "speed": 31.5, "passengers": 12, "light": { "aspect": "red", "change_in": 7.5, "distance": 42.0 } },
+                "bus": { "name": "MAN NL202", "number": "2604", "x": 10.0, "y": 20.0, "heading": 90.0, "speed": 31.5, "limit": 50.0, "passengers": 12, "light": { "aspect": "red", "change_in": 7.5, "distance": 42.0 } },
                 "duty": { "line": "29", "tour": "3", "trip": 2, "trips": 3, "number": "M29", "terminus": "Markgraf-Berthold-Platz",
                           "departure": 29_900.0, "arrival": 31_000.0, "delay": 120.0, "next": 1, "at_stop": false, "trip_done": false,
                           "next_name": "Kunsthalle" },
@@ -497,6 +498,7 @@ mod tests {
         assert_eq!((stops[1]["passed"].as_bool(), stops[2]["calls"].as_bool()), (Some(false), Some(false)));
         assert_eq!((v["bus"]["number"].as_str(), v["bus"]["passengers"].as_i64()), (Some("2604"), Some(12)));
         assert_eq!(v["bus"]["light"], json!({ "aspect": "red", "change_in": 7.5, "distance": 42.0 }));
+        assert_eq!(v["bus"]["limit"], json!(50.0));
         assert_eq!(v["signon"]["stage"], "work");
         assert_eq!(v["signon"]["number_hint"], "48…");
         assert!(!v.to_string().contains("482913") && !v.to_string().contains("5821"), "the pass is never shown");

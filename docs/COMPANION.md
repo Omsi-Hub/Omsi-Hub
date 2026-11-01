@@ -125,6 +125,7 @@ once after every answer (and backs off 2 s → 10 s after errors). `after` omitt
   "bus": {                         // null on foot
     "name": "MAN Lion's City", "number": "2604",
     "x": 1180.2, "y": -64.0, "heading": 92.0, "speed": 32.5,
+    "limit": 50,                   // the speed limit of the lane it drives on (km/h), null off the lanes
     "doors_open": false, "stop_requested": true, "passengers": 23,
     "light": { "aspect": "red", "change_in": 7.5, "distance": 42.0 }  // the traffic light ahead (within 150 m): "red" | "red_yellow" | "green" | "green_yellow" | "yellow" | "dark", null without
   },
