@@ -193,7 +193,7 @@ app shows what it has and hides the rest.
 | `GET /api/lines` | the map's lines and tours, for `take_duty`: `{lines: [{name, tours: [{number, today}]}]}` |
 | `GET /api/pos?after=<n>` | where the bus is, thirty places a second: `{pos: [{n, t, x, y, heading, speed}, …]}`, those after the `n`-th (without `after`: the latest), at once when there is one, else within 2 s (`pos: []`) |
 | `GET /api/ground/<i>/<j>[?low=1]` | the game's picture of the map in the square of 500 m whose lower corner is at `i`·500, `j`·500 (the app's coordinates): binary, see below (gzipped for a client that takes it); `low=1` a square far off, without the paint, the trees and the houses' models; 404 when the add-on has none of this map |
-| `GET /api/traffic` | what else is on the road, as the plugin last wrote it (every 2 s): `{at, vehicles: [{id, x, y, heading, kind}], buses: [{id, x, y, heading, line, tour, trip, terminus, delay, number, at_stop}], players: [{name, x, y, heading}]}` |
+| `GET /api/traffic` | what else is on the road, as the plugin last wrote it (every second): `{at, vehicles: [{id, x, y, heading, kind}], buses: [{id, x, y, heading, line, tour, trip, terminus, delay, number, at_stop}], players: [{name, x, y, heading}], lights: [{x, y, heading, width, aspect, change_in}]}` - `lights` the traffic lights within 500 m of the bus where they hold the traffic (the middle of a lane's stop line, the way the lane runs over it, its width), what each shows as `bus.light`'s `aspect` and the seconds to its next change (-1: none coming); empty with an openOMSI without `omsi.traffic.lights` |
 
 The app fetches roads in tiles of 1000 m and keeps them; `w` is the road's width in metres.
 

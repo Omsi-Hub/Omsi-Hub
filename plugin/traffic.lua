@@ -1,8 +1,9 @@
 -- Omsi-Hub's plugin: the game's traffic for the company's fleet map - where the player's bus
--- is, every AI vehicle on the road, the timetable's buses with their line, tour and delay, and
--- the other players' buses in a LAN game - written every few seconds for Omsi-Hub, which puts
--- them on the map's roads (crates/hub-api/src/company_more/fleetmap.rs). Nothing is changed
--- in the game: it is all read.
+-- is, every AI vehicle on the road, the timetable's buses with their line, tour and delay, the
+-- other players' buses in a LAN game and the traffic lights about the player's bus with what they
+-- show - written every second for Omsi-Hub, which puts them on the map's
+-- roads (crates/hub-api/src/company_more/fleetmap.rs) and gives them to the companion app.
+-- Nothing is changed in the game: it is all read.
 --
 -- The map's coordinates are the game's; with them comes one place given by its tile and the
 -- metres in it (`ref`), so that Omsi-Hub can put them on its own reading of the map's tiles.
@@ -21,7 +22,10 @@ local has = {}
 -- the functions this reads with, looked up in `omsi` itself (an openOMSI without game.has);
 -- each is used where the game has it (an empty table is written as `{}`: Omsi-Hub reads it as
 -- an empty list)
-M.NEEDS = { "traffic.list", "timetable.buses", "position", "map.tile_at", "others", "map.info" }
+M.NEEDS = { "traffic.list", "timetable.buses", "position", "map.tile_at", "others", "map.info", "traffic.lights" }
+
+-- how far about the player's bus its traffic lights are told (m)
+local LIGHTS = 500
 
 local function fn(name)
   local t = omsi
@@ -81,7 +85,7 @@ end
 
 -- what is on the road now, as Omsi-Hub reads it
 function M.snapshot(now, clock)
-  local out = { at = now, clock = clock, map = map_path(), vehicles = {}, buses = {}, players = {} }
+  local out = { at = now, clock = clock, map = map_path(), vehicles = {}, buses = {}, players = {}, lights = {} }
   local first
   if has["position"] then
     local x, y, _, heading = omsi.position()
@@ -131,11 +135,22 @@ function M.snapshot(now, clock)
       end
     end
   end
+  -- (the traffic lights about the player's bus, where they hold the traffic, and what they show)
+  if has["traffic.lights"] and out.player then
+    for _, l in ipairs(omsi.traffic.lights(LIGHTS) or {}) do
+      if type(l) == "table" and dm(l.x) and dm(l.y) then
+        out.lights[#out.lights + 1] = {
+          x = dm(l.x), y = dm(l.y), heading = dm(l.heading or 0) or 0, width = dm(l.width or 3) or 3,
+          aspect = tostring(l.aspect or "dark"), change_in = dm(l.change_in or -1) or -1,
+        }
+      end
+    end
+  end
   if first then out.ref = reference(first[1], first[2]) end
   return out
 end
 
--- every second: the file, every few seconds
+-- every second: the file
 function M.tick(seconds, now, clock)
   if not M.can() then return end
   wait = wait - seconds

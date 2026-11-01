@@ -717,8 +717,8 @@ pub fn handle(req: &Request, shared: &Arc<Shared>) -> Response {
         Route::Traffic => {
             let dir = shared.lock().plugin_dir.clone();
             match dir.and_then(|d| hub_game::bridge::read_traffic(&d)) {
-                Some(t) => Response::json(&json!({ "at": t.at, "vehicles": t.vehicles, "buses": t.buses, "players": t.players })),
-                None => Response::json(&json!({ "vehicles": [], "buses": [], "players": [] })),
+                Some(t) => Response::json(&json!({ "at": t.at, "vehicles": t.vehicles, "buses": t.buses, "players": t.players, "lights": t.lights })),
+                None => Response::json(&json!({ "vehicles": [], "buses": [], "players": [], "lights": [] })),
             }
         }
         Route::Lines => {

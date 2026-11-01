@@ -13,7 +13,9 @@ Each version of the Omsi-Hub add-on, newest first. The release on GitHub links h
   streets' names as the game's navigator says them and the map's entry points. The app can also
   ask for what else is on the road: the AI vehicles, the timetable's buses with their line and
   the other players' buses. The houses come as the game's own models where they have one, and
-  the phone shows the traffic light your bus comes to and how it shows. (The plugin is 1.19.0.)
+  the phone shows the traffic light your bus comes to and how it shows - and, with an openOMSI
+  that tells them, every traffic light about the bus where it stands with its colour. (The plugin
+  is 1.19.0.)
 
 ## 1.2.0-beta.1
 

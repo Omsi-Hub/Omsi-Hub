@@ -640,6 +640,9 @@ pub struct Traffic {
     pub buses: Vec<GameBus>,
     #[serde(deserialize_with = "list")]
     pub players: Vec<Mover>,
+    /// The traffic lights about the player's bus (`omsi.traffic.lights`, an openOMSI that has it).
+    #[serde(deserialize_with = "list")]
+    pub lights: Vec<Signal>,
 }
 
 /// A place in the game's coordinates and the same place by its tile (numbered as global.cfg's
@@ -681,6 +684,20 @@ pub struct Vehicle {
     pub y: f64,
     pub heading: f64,
     pub kind: String,
+}
+
+/// A traffic light where it holds the traffic: the middle of a lane's stop line, the way the
+/// lane runs over it and its width, what it shows ("red", "red_yellow", "green", "green_yellow",
+/// "yellow", "dark") and the seconds to its next change (-1: none coming).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Signal {
+    pub x: f64,
+    pub y: f64,
+    pub heading: f64,
+    pub width: f64,
+    pub aspect: String,
+    pub change_in: f64,
 }
 
 /// A bus of the timetable the game's AI drives (`omsi.timetable.buses`).
