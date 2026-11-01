@@ -673,7 +673,10 @@ pub fn handle(req: &Request, shared: &Arc<Shared>) -> Response {
                 .into_iter()
                 .map(|(w, pts)| json!({ "w": r1(w), "pts": pts.iter().map(|p| [r1(p[0] + off[0]), r1(p[1] + off[1])]).collect::<Vec<_>>() }))
                 .collect();
-            Response::json(&json!({ "roads": roads, "water": [], "green": [] }))
+            let labels = shared.source.labels(&map, &date, [x - off[0], y - off[1]], r);
+            let names: Vec<Value> = labels.streets.iter().map(|(n, p, a)| json!({ "name": n, "x": r1(p[0] + off[0]), "y": r1(p[1] + off[1]), "angle": r1(*a) })).collect();
+            let entries: Vec<Value> = labels.entries.iter().map(|(n, p)| json!({ "name": n, "x": r1(p[0] + off[0]), "y": r1(p[1] + off[1]) })).collect();
+            Response::json(&json!({ "roads": roads, "water": [], "green": [], "names": names, "entries": entries }))
         }
         Route::Ground(si, sj) => {
             let (map, off, reference) = {
