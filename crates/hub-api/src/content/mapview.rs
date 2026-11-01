@@ -155,6 +155,10 @@ struct Roads {
     objects: HashMap<i64, DVec2>,
     /// The street name signs (world metres) and the names on them.
     signs: Vec<(DVec2, String)>,
+    /// The bus stops' places (world metres).
+    stops: Vec<DVec2>,
+    /// What stands at the stops (`navmap::StopProp`).
+    stop_props: Vec<crate::lineeditor::navmap::StopProp>,
 }
 
 impl Roads {
@@ -264,7 +268,8 @@ fn read_map(look: &Look) -> Roads {
     let root = omsi_cfg::content_roots().into_iter().find(|r| map_dir.starts_with(r)).or_else(|| map_dir.parent().and_then(|p| p.parent()).map(Path::to_path_buf)).unwrap_or_else(|| map_dir.clone());
     let tiles: Vec<(i32, i32, PathBuf)> = global.tiles.iter().map(|t| (t.x, t.y, omsi_cfg::resolve_path(&map_dir, &t.file))).filter(|t| omsi_cfg::vfs::is_file(&t.2)).collect();
     let t0 = std::time::Instant::now();
-    let crate::lineeditor::navmap::CityMap { roads, net, places, signs, .. } = crate::lineeditor::navmap::city_map(&root, &tiles, &chrono);
+    let crate::lineeditor::navmap::CityMap { roads, net, places, signs, stops, stop_props, .. } = crate::lineeditor::navmap::city_map(&root, &tiles, &chrono);
+    let stops = stops.iter().map(|s| s.at.truncate()).collect();
     let signs = signs.into_iter().map(|(at, _, name)| (at.truncate(), name)).collect();
     // the lanes the timetable can name, and the lanes of every spline behind them
     let mut by_path = HashMap::new();
@@ -334,7 +339,7 @@ fn read_map(look: &Look) -> Roads {
         hi.x,
         hi.y
     );
-    Roads { roads, net: Arc::new(net), lanes: by_path, splines: by_spline, origin, lo, hi, entries, objects, signs }
+    Roads { roads, net: Arc::new(net), lanes: by_path, splines: by_spline, origin, lo, hi, entries, objects, signs, stops, stop_props }
 }
 
 /// The duty map (`co_duty_map`) and a duty's route map: [`fleet_export`]'s roads, the routes
@@ -487,6 +492,88 @@ pub fn lights_near(map: &str, global: &Path, date: &str, at: [f64; 2], r: f64) -
         out.push((light, [p.x, p.y], heading, lane.width as f64));
     }
     out.into_iter().map(|(_, p, h, w)| (p, h, w)).collect()
+}
+
+/// What stands at the map's stops in the box `lo`..`hi` (map metres) - the shelters, the signs,
+/// the benches and bins -, each as its model's triangles placed (map metres, z up from the ground
+/// under it) with the object's middle.
+pub fn stop_props_in(map: &str, global: &Path, date: &str, lo: [f64; 2], hi: [f64; 2]) -> Vec<([f64; 2], Vec<[[f64; 3]; 3]>)> {
+    let look = Look { map: map.to_string(), global: global.to_path_buf(), date: date.to_string(), trip: String::new(), entry: -1 };
+    let roads = roads_of(&look);
+    roads
+        .stop_props
+        .iter()
+        .filter(|p| p.at.x >= lo[0] && p.at.x < hi[0] && p.at.y >= lo[1] && p.at.y < hi[1])
+        .filter_map(|p| {
+            let faces = prop_faces(&p.sco)?;
+            let h = p.heading.to_radians();
+            let (sh, ch) = (h.sin(), h.cos());
+            // (the object's frame - x right, y forward, z up - turned clockwise by its heading)
+            let place = |v: [f32; 3]| [p.at.x + v[0] as f64 * ch + v[1] as f64 * sh, p.at.y - v[0] as f64 * sh + v[1] as f64 * ch, p.at.z + v[2] as f64];
+            Some(([p.at.x, p.at.y], faces.iter().map(|t| t.map(place)).collect()))
+        })
+        .collect()
+}
+
+/// The most of a stop's object a square takes (triangles): a bigger model is a building, and the
+/// game's own picture of the map has it already.
+const PROP_FACES: usize = 8000;
+
+/// An object's model as triangles in its own frame (its first level of detail, no shadow meshes,
+/// none shown only on a script's word), read once as openOMSI reads it (the `.sco`'s own meshes
+/// or its `model.cfg`'s, from the `model` folder beside it); none for a model too big for a
+/// stop's object (more than 20 m across, 7 m high or [`PROP_FACES`] triangles) or one that cannot
+/// be read.
+fn prop_faces(sco_path: &Path) -> Option<Arc<Vec<[[f32; 3]; 3]>>> {
+    static KEPT: std::sync::Mutex<Option<HashMap<PathBuf, Option<Arc<Vec<[[f32; 3]; 3]>>>>>> = std::sync::Mutex::new(None);
+    if let Some(had) = KEPT.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).get(sco_path) {
+        return had.clone();
+    }
+    let read = (|| {
+        let sco = omsi_scenery::SceneryObject::load(sco_path).ok()?;
+        let sco_dir = sco_path.parent()?.to_path_buf();
+        let (cfg, dir) = match &sco.model_file {
+            Some(m) => {
+                let mp = omsi_cfg::resolve_path(&sco_dir, m);
+                (omsi_model::Model::load(&mp).ok()?, mp.parent()?.to_path_buf())
+            }
+            None => (sco.model.clone(), sco_dir),
+        };
+        let meshes: Vec<&omsi_model::MeshDef> = if cfg.lods.is_empty() { cfg.meshes.iter().collect() } else { cfg.lod_meshes(0).iter().collect() };
+        let mut faces = Vec::new();
+        let (mut lo, mut hi) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
+        for m in meshes.into_iter().filter(|m| !m.is_shadow && m.visible.is_none()) {
+            let at = omsi_cfg::resolve_path(&omsi_cfg::resolve_path(&dir, "model"), &m.file);
+            let at = if omsi_cfg::vfs::is_file(&at) { at } else { omsi_cfg::resolve_path(&dir, &m.file) };
+            let Ok(mesh) = omsi_o3d::load_mesh(&at) else { continue };
+            for t in &mesh.triangles {
+                // (a mesh's points as the file has them: x right, y up, z forward - here z up)
+                let Some(p) = t.indices.iter().map(|&i| mesh.vertices.get(i as usize).map(|v| Vec3::new(v.position.x, v.position.z, v.position.y))).collect::<Option<Vec<Vec3>>>() else { continue };
+                if (p[1] - p[0]).cross(p[2] - p[0]).length() < 1e-4 {
+                    continue;
+                }
+                for q in &p {
+                    lo = lo.min(*q);
+                    hi = hi.max(*q);
+                }
+                faces.push([p[0].to_array(), p[1].to_array(), p[2].to_array()]);
+            }
+            if faces.len() > PROP_FACES {
+                return None;
+            }
+        }
+        let size = hi - lo;
+        // (not a flat thing on the ground - a mark, a slope's face - nor one sunk into it)
+        (!faces.is_empty() && size.x <= 20.0 && size.y <= 20.0 && hi.z <= 7.0 && hi.z >= 0.4 && lo.z >= -1.0).then(|| Arc::new(faces))
+    })();
+    KEPT.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).insert(sco_path.to_path_buf(), read.clone());
+    read
+}
+
+/// The map's bus stops within `r` metres of `at` (map metres): where each stands.
+pub fn stops_near(map: &str, global: &Path, date: &str, at: [f64; 2], r: f64) -> Vec<[f64; 2]> {
+    let look = Look { map: map.to_string(), global: global.to_path_buf(), date: date.to_string(), trip: String::new(), entry: -1 };
+    roads_of(&look).stops.iter().filter(|p| (p.x - at[0]).abs() <= r && (p.y - at[1]).abs() <= r).map(|p| [p.x, p.y]).collect()
 }
 
 /// A road near a place: its width, its line, its lanes (empty: a junction's own piece).

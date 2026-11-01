@@ -406,7 +406,19 @@ impl Shared {
         }
         let ground = g.ground.clone()?;
         let corner = [si as f64 * ground::SQUARE - off[0] - ground.origin[0], sj as f64 * ground::SQUARE - off[1] - ground.origin[1]];
-        let plain = ground.square(corner, low)?;
+        // (what stands at the stops in it: the game's picture of the map has no shelters)
+        let o = ground.origin;
+        let props: Vec<([f32; 2], Vec<[[f32; 3]; 3]>)> = if low {
+            Vec::new()
+        } else {
+            let lo = [corner[0] + o[0], corner[1] + o[1]];
+            self.source
+                .stop_props(map, lo, [lo[0] + ground::SQUARE, lo[1] + ground::SQUARE])
+                .into_iter()
+                .map(|(c, faces)| ([(c[0] - o[0]) as f32, (c[1] - o[1]) as f32], faces.into_iter().map(|t| t.map(|v| [(v[0] - o[0]) as f32, (v[1] - o[1]) as f32, v[2] as f32])).collect()))
+                .collect()
+        };
+        let plain = ground.square_with(corner, low, &props)?;
         // (gzipped once: a square is a megabyte or two of mostly small numbers)
         let mut z = flate2::write::GzEncoder::new(Vec::with_capacity(plain.len() / 3), flate2::Compression::fast());
         std::io::Write::write_all(&mut z, &plain).ok()?;

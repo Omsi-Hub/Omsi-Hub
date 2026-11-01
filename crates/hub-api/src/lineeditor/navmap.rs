@@ -29,6 +29,27 @@ pub struct NavigationMap {
     /// Every bus stop of the map (an object whose `.sco` says `[busstop]`): placed, hung on
     /// another object (`[attachObj]`, at its parent) or put on a spline.
     pub stops: Vec<MapStop>,
+    /// What stands at the stops: the objects placed within [`PROP_REACH`] of one (the shelter,
+    /// the sign, the benches and bins), for the companion's map to draw them.
+    pub stop_props: Vec<StopProp>,
+}
+
+/// How far from a stop an object counts as the stop's own (m).
+pub const PROP_REACH: f64 = 15.0;
+
+/// Whether an object is a plant by its file's name (trees, bushes, hedges, grass).
+fn is_greenery(sco: &Path) -> bool {
+    let name = sco.to_string_lossy().to_ascii_lowercase();
+    ["tree", "baum", "bush", "busch", "hecke", "hedge", "gras", "plant", "pflanz", "strauch", "blume", "flower"].iter().any(|w| name.contains(w))
+}
+
+/// An object standing at a stop: its `.sco` (its meshes are in it, or in the `model.cfg` it
+/// names), where (map metres; `z` above the ground under it) and which way (degrees clockwise).
+#[derive(Clone, Debug, PartialEq)]
+pub struct StopProp {
+    pub sco: PathBuf,
+    pub at: DVec3,
+    pub heading: f64,
 }
 
 /// A bus stop of the map as the line editor offers it.
@@ -76,7 +97,7 @@ pub fn navigation_map_of(root: &Path, tiles: &[(i32, i32, PathBuf)], chrono_dirs
         .clone()
     };
     #[allow(clippy::type_complexity)]
-    let parts: Vec<(Vec<Lane>, Vec<(i64, DVec3)>, Vec<(DVec3, f64, String)>, Vec<(Vec<DVec3>, f32)>, Vec<MapStop>)> = tiles
+    let parts: Vec<(Vec<Lane>, Vec<(i64, DVec3)>, Vec<(DVec3, f64, String)>, Vec<(Vec<DVec3>, f32)>, Vec<MapStop>, Vec<StopProp>)> = tiles
         .par_iter()
         .map(|(tx, ty, path)| {
             let (tx, ty) = (*tx, *ty);
@@ -85,8 +106,9 @@ pub fn navigation_map_of(root: &Path, tiles: &[(i32, i32, PathBuf)], chrono_dirs
             let mut signs = Vec::new();
             let mut roads = Vec::new();
             let mut stops = Vec::new();
+            let mut props = Vec::new();
             let Some(tile) = omsi_world::map_index::read_tile(path, chrono_dirs) else {
-                return (lanes, positions, signs, roads, stops);
+                return (lanes, positions, signs, roads, stops, props);
             };
             let origin2 = DVec2::new(tx as f64 * tile_size(), ty as f64 * tile_size());
             let terrain = Terrain::load(&tile_companion(&path, ".terrain")).unwrap_or_else(|_| Terrain::flat());
@@ -138,6 +160,11 @@ pub fn navigation_map_of(root: &Path, tiles: &[(i32, i32, PathBuf)], chrono_dirs
                 let absolute = sco.absolute_height();
                 let pos = DVec3::new(x, y, if absolute { o.pos[2] } else { o.pos[2] + ground() });
                 positions.push((o.id, pos));
+                // (what may stand at a stop: an object, not a road's or the ground's, not one only
+                // the editor shows, not a tree or a hedge - the game's picture has its trees)
+                if sco.paths.is_empty() && !sco.surface && !sco.only_editor && !is_greenery(&sco.path) {
+                    props.push(StopProp { sco: sco.path.clone(), at: DVec3::new(x, y, if absolute { o.pos[2] - ground() } else { o.pos[2] }), heading: o.rot[0] });
+                }
                 if sco.is_bus_stop {
                     stops.push(MapStop { tile: (tx, ty), id: o.id, at: pos, heading: o.rot[0], name: o.extra.first().map(|s| s.trim().to_string()).unwrap_or_default() });
                 }
@@ -171,7 +198,9 @@ pub fn navigation_map_of(root: &Path, tiles: &[(i32, i32, PathBuf)], chrono_dirs
                 }
                 stops.push(MapStop { tile: (tx, ty), id: a.id, at: first.pose.pos, heading: first.pose.heading(), name: a.strings.first().map(|s| s.trim().to_string()).unwrap_or_default() });
             }
-            (lanes, positions, signs, roads, stops)
+            // (of the objects, those standing at one of the tile's stops)
+            props.retain(|p: &StopProp| stops.iter().any(|s| (s.at.x - p.at.x).hypot(s.at.y - p.at.y) <= PROP_REACH));
+            (lanes, positions, signs, roads, stops, props)
         })
         .collect();
     let mut lanes = Vec::new();
@@ -179,12 +208,14 @@ pub fn navigation_map_of(root: &Path, tiles: &[(i32, i32, PathBuf)], chrono_dirs
     let mut signs = Vec::new();
     let mut roads = Vec::new();
     let mut stops = Vec::new();
-    for (l, p, s, r, b) in parts {
+    let mut stop_props = Vec::new();
+    for (l, p, s, r, b, o) in parts {
         lanes.extend(l);
         positions.extend(p);
         signs.extend(s);
         roads.extend(r);
         stops.extend(b);
+        stop_props.extend(o);
     }
     // (an id objects of several tiles share - a map joined from others - is the bus stop's
     // where one of them is a stop: these places are the stops' beyond the loaded tiles)
@@ -202,7 +233,7 @@ pub fn navigation_map_of(root: &Path, tiles: &[(i32, i32, PathBuf)], chrono_dirs
         slis.lock().len(),
         t0.elapsed().as_secs_f64()
     );
-    NavigationMap { lanes, road_surfaces: roads, places: positions, signs, stops }
+    NavigationMap { lanes, road_surfaces: roads, places: positions, signs, stops, stop_props }
 }
 
 /// Whether an asset name describes a road surface. Match whole filename tokens so objects
@@ -744,12 +775,14 @@ pub struct CityMap {
     pub stops: Vec<MapStop>,
     /// The street name signs: where, the object's heading, the name.
     pub signs: Vec<(DVec3, f64, String)>,
+    /// What stands at the stops (`NavigationMap::stop_props`).
+    pub stop_props: Vec<StopProp>,
 }
 
 /// Read the map's tiles `tiles` (of the installation `root`, the chrono folders `chrono`) as the
 /// city map reads them.
 pub fn city_map(root: &Path, tiles: &[(i32, i32, PathBuf)], chrono: &[PathBuf]) -> CityMap {
-    let NavigationMap { lanes, road_surfaces, places, signs, stops } = navigation_map_of(root, tiles, chrono);
+    let NavigationMap { lanes, road_surfaces, places, signs, stops, stop_props } = navigation_map_of(root, tiles, chrono);
     let (roads, net) = city_roads(lanes, &road_surfaces);
-    CityMap { roads, net, places, stops, signs }
+    CityMap { roads, net, places, stops, signs, stop_props }
 }

@@ -269,6 +269,14 @@ impl Ground {
     /// sixteenths of a metre from the corner.
     /// `low`: a square far off - without the paint, the trees and the houses' models.
     pub fn square(&self, corner: [f64; 2], low: bool) -> Option<Vec<u8>> {
+        self.square_with(corner, low, &[])
+    }
+
+    /// [`Ground::square`] with what stands at the stops in it (the game's picture of the map
+    /// has no shelters, signs or benches): each object's middle and its triangles, in this
+    /// file's coordinates (relative to [`Ground::origin`]; z up from the ground), sent with the
+    /// houses' models (not in a square far off).
+    pub fn square_with(&self, corner: [f64; 2], low: bool, props: &[([f32; 2], Vec<[[f32; 3]; 3]>)]) -> Option<Vec<u8>> {
         let lo = [corner[0] as f32, corner[1] as f32];
         let hi = [(corner[0] + SQUARE) as f32, (corner[1] + SQUARE) as f32];
         let inside = |x: f32, y: f32| x >= lo[0] && x < hi[0] && y >= lo[1] && y < hi[1];
@@ -398,15 +406,21 @@ impl Ground {
         let light = [-SHADOW_DIR[0] / ll, -SHADOW_DIR[1] / ll];
         let mut ids: Vec<&u32> = drawn.iter().collect();
         ids.sort();
+        // (each model's triangles placed, with the middle its walls face away from)
+        let mut placed: Vec<(Vec<[[f32; 3]; 3]>, [f32; 3])> = Vec::new();
         for &i in ids {
             let it = self.instances[i as usize];
             let (faces, centre) = &self.models[it.model as usize];
             let a = -(it.heading as f64).to_radians();
             let (sn, cs) = (a.sin() as f32, a.cos() as f32);
             let place = |v: [f32; 3]| [v[0] * cs - v[1] * sn + it.at[0], v[0] * sn + v[1] * cs + it.at[1], v[2]];
-            let c = place([centre[0], centre[1], 0.0]);
-            for t in faces {
-                let p = t.map(place);
+            placed.push((faces.iter().map(|t| t.map(place)).collect(), place([centre[0], centre[1], 0.0])));
+        }
+        if !low {
+            placed.extend(props.iter().filter(|(c, _)| inside(c[0], c[1])).map(|(c, faces)| (faces.clone(), [c[0], c[1], 0.0])));
+        }
+        for (faces, c) in &placed {
+            for &p in faces {
                 let (u, v) = ([p[1][0] - p[0][0], p[1][1] - p[0][1], p[1][2] - p[0][2]], [p[2][0] - p[0][0], p[2][1] - p[0][1], p[2][2] - p[0][2]]);
                 let mut nrm = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
                 let len = (nrm[0] * nrm[0] + nrm[1] * nrm[1] + nrm[2] * nrm[2]).sqrt();

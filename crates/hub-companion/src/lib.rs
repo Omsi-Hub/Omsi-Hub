@@ -97,6 +97,12 @@ pub trait Source: Send + Sync {
     fn lights(&self, _map: &str, _date: &str, _at: [f64; 2], _r: f64) -> Vec<([f64; 2], f64, f64)> {
         Vec::new()
     }
+    /// What stands at the map's stops in the box `lo`..`hi` (the shelters, the signs, the
+    /// benches): each object's middle and its model's triangles (map metres, z up from the
+    /// ground under it).
+    fn stop_props(&self, _map: &str, _lo: [f64; 2], _hi: [f64; 2]) -> Vec<([f64; 2], Vec<[[f64; 3]; 3]>)> {
+        Vec::new()
+    }
     /// The map metres of a place given by its tile (x, y of the grid) and the metres in it.
     fn world_of(&self, map: &str, tile: [i64; 2], local: [f64; 2]) -> Option<[f64; 2]>;
     /// The bus the plugin names (its `.bus` file, relative to the game's folder): its

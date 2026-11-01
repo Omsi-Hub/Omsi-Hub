@@ -17,7 +17,8 @@ Each version of the Omsi-Hub add-on, newest first. The release on GitHub links h
   that tells them, every traffic light about the bus where it stands with its colour, and the
   speed limit of the lane the bus drives on; the map's roads come with every traffic light of
   the map where it stands; the phone hears of a red light run and a speed camera's flash with the
-  fine, and of a speed camera on the lane ahead. (The plugin is 1.19.0.)
+  fine, and of a speed camera on the lane ahead; the stops on the phone's map come with what stands
+  at them - their shelters, signs, bins and benches, as the map's own models. (The plugin is 1.19.0.)
 
 ## 1.2.0-beta.1
 

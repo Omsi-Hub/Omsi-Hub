@@ -227,7 +227,11 @@ u32 n   model triangles: 3 × (i16 x, i16 y, i16 z), u8 shade - the houses' own 
 
 The models are openOMSI's own of the houses (untextured, as its 3D map draws them), at most
 40 000 triangles a square, the nearest its middle first; a house whose model did not fit is
-raised from its outline. An add-on from before them ends the square after the lines.
+raised from its outline. After them come what stands at the stops in the square (the game's
+picture of the map has none): the objects within 15 m of a stop - its shelter, its sign, the
+bins and benches, the masts and fences - as the map's own models read from their `.sco` (not a
+plant, a road's piece, a mark on the ground or a building more than 20 m across or 7 m high),
+not in a square far off. An add-on from before them ends the square after the lines.
 
 Each triangle, house and tree is in the square its middle is in. A line comes with every square
 it passes, by the stretch of it there.

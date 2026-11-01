@@ -277,6 +277,10 @@ impl Source for Hub {
         hub_companion::Labels { streets, entries }
     }
 
+    fn stop_props(&self, map: &str, lo: [f64; 2], hi: [f64; 2]) -> Vec<([f64; 2], Vec<[[f64; 3]; 3]>)> {
+        global_of(map).map(|g| crate::content::mapview::stop_props_in(&map_name(map), &g, "", lo, hi)).unwrap_or_default()
+    }
+
     fn lights(&self, map: &str, date: &str, at: [f64; 2], r: f64) -> Vec<([f64; 2], f64, f64)> {
         global_of(map).map(|g| crate::content::mapview::lights_near(&map_name(map), &g, date, at, r)).unwrap_or_default()
     }
@@ -535,6 +539,20 @@ mod tests {
         println!("{} road points near {at:?}: {:.0}% on the paving as it is; the best fit {:.0}% moved by ({}, {}) m", pts.len(), here * 100.0, best.2 * 100.0, best.0, best.1);
         assert!(here > 0.8, "the ground is not under the roads: {:.0}% on it", here * 100.0);
         assert!(best.0.abs() <= 1.0 && best.1.abs() <= 1.0, "the ground fits better moved by ({}, {}) m", best.0, best.1);
+    }
+
+    /// What stands at a real map's stops comes with its squares - the shelters, the signs, the
+    /// bins -, the game's picture of the map having none: `cargo test -p hub-api --release --
+    /// --ignored what_stands`.
+    #[test]
+    #[ignore]
+    fn what_stands_at_the_stops_of_a_real_map() {
+        let map = "maps/Ahlheim 5/global.cfg";
+        let Some(global) = global_of(map) else { return };
+        let props = crate::content::mapview::stop_props_in(&map_name(map), &global, "", [-3500.0, 1500.0], [-500.0, 4500.0]);
+        let faces: usize = props.iter().map(|p| p.1.len()).sum();
+        println!("{} objects at stops, {faces} triangles", props.len());
+        assert!(props.len() > 50 && faces > 1000);
     }
 
     /// The streets' names of a real map come with its roads, along them as the game's navigator
