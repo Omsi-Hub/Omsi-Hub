@@ -125,7 +125,8 @@ once after every answer (and backs off 2 s → 10 s after errors). `after` omitt
   "bus": {                         // null on foot
     "name": "MAN Lion's City", "number": "2604",
     "x": 1180.2, "y": -64.0, "heading": 92.0, "speed": 32.5,
-    "doors_open": false, "stop_requested": true, "passengers": 23
+    "doors_open": false, "stop_requested": true, "passengers": 23,
+    "light": { "aspect": "red", "change_in": 7.5, "distance": 42.0 }  // the traffic light ahead (within 150 m): "red" | "red_yellow" | "green" | "green_yellow" | "yellow" | "dark", null without
   },
   "nav": {                         // null without a route
     "maneuver": "left",            // "straight" | "slight_left" | "left" | "sharp_left" |
@@ -211,11 +212,19 @@ square's lower corner; a triangle reaching out of its square still fits.
            paving: road, foot, area, green, inner; paint: white, amber
 u32 n   houses:  u16 points, points × (i16 x, i16 y) (anticlockwise),
                  u16 roof triangles, × 3 u16 (indices into the outline),
-                 u16 height in decimetres, u8 flags (1: open - a roof on posts, no walls)
+                 u16 height in decimetres, u8 flags (1: open - a roof on posts, no walls;
+                 2: its model comes below, so it is not raised from its outline)
 u32 n   trees:   i16 x, i16 y, i16 the crown's radius
 u32 n   lines:   u8 class (0 rail, 1 tram, 2 river, 3 road edge, 4 area edge),
                  u16 width (sixteenths of a metre), u16 points, points × (i16 x, i16 y)
+u32 n   model triangles: 3 × (i16 x, i16 y, i16 z), u8 shade - the houses' own models,
+                 placed (z up from the ground); the shade below 128 a wall's light (0 turned
+                 from it, 127 facing it), from 128 a roof's darkening as it turns away (0 to 127)
 ```
+
+The models are openOMSI's own of the houses (untextured, as its 3D map draws them), at most
+40 000 triangles a square, the nearest its middle first; a house whose model did not fit is
+raised from its outline. An add-on from before them ends the square after the lines.
 
 Each triangle, house and tree is in the square its middle is in. A line comes with every square
 it passes, by the stretch of it there.

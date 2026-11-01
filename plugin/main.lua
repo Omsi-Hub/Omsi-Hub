@@ -22,7 +22,7 @@
 --                         the game to Omsi-Hub's companion server by UDP)
 -- A game without the file functions gets the handshake and the reports in its log instead.
 
-local VERSION = "1.18.0"
+local VERSION = "1.19.0"
 local BRIDGE = 1
 local PANEL = "omsihub"
 

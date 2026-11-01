@@ -226,7 +226,19 @@ fn bus(h: &Heard) -> Value {
         "doors_open": b.get("doors_open").and_then(Value::as_bool),
         "stop_requested": b.get("stop_requested").and_then(Value::as_bool),
         "passengers": f(b.get("passengers")).map(|p| p as i64),
+        "light": light(b.get("light")),
     })
+}
+
+/// The traffic light the bus comes to (within 150 m): how it shows - `red`, `red_yellow`,
+/// `green`, `green_yellow`, `yellow` or `dark` - the seconds to its next change, how far off.
+fn light(l: Option<&Value>) -> Value {
+    let Some(l) = l.and_then(Value::as_object) else { return Value::Null };
+    let aspect = s(l.get("aspect"));
+    if !["red", "red_yellow", "green", "green_yellow", "yellow", "dark"].contains(&aspect.as_str()) {
+        return Value::Null;
+    }
+    json!({ "aspect": aspect, "change_in": f(l.get("change_in")), "distance": f(l.get("distance")) })
 }
 
 fn nav(facts: &Facts, live: Option<&Map<String, Value>>) -> Value {
@@ -420,7 +432,7 @@ mod tests {
         let mut h = heard(
             json!({
                 "issued": 100, "clock": 30_000.0, "signon": "work",
-                "bus": { "name": "MAN NL202", "number": "2604", "x": 10.0, "y": 20.0, "heading": 90.0, "speed": 31.5, "passengers": 12 },
+                "bus": { "name": "MAN NL202", "number": "2604", "x": 10.0, "y": 20.0, "heading": 90.0, "speed": 31.5, "passengers": 12, "light": { "aspect": "red", "change_in": 7.5, "distance": 42.0 } },
                 "duty": { "line": "29", "tour": "3", "trip": 2, "trips": 3, "number": "M29", "terminus": "Markgraf-Berthold-Platz",
                           "departure": 29_900.0, "arrival": 31_000.0, "delay": 120.0, "next": 1, "at_stop": false, "trip_done": false,
                           "next_name": "Kunsthalle" },
@@ -484,6 +496,7 @@ mod tests {
         assert_eq!((stops[0]["delay"].as_f64(), stops[1]["delay"].as_f64()), (Some(60.0), Some(120.0)), "passed: the delay there; to come: now");
         assert_eq!((stops[1]["passed"].as_bool(), stops[2]["calls"].as_bool()), (Some(false), Some(false)));
         assert_eq!((v["bus"]["number"].as_str(), v["bus"]["passengers"].as_i64()), (Some("2604"), Some(12)));
+        assert_eq!(v["bus"]["light"], json!({ "aspect": "red", "change_in": 7.5, "distance": 42.0 }));
         assert_eq!(v["signon"]["stage"], "work");
         assert_eq!(v["signon"]["number_hint"], "48…");
         assert!(!v.to_string().contains("482913") && !v.to_string().contains("5821"), "the pass is never shown");

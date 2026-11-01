@@ -222,6 +222,13 @@ local function bus()
   if fn("bus.passengers") then b.passengers = num(omsi.bus.passengers()) end
   if fn("bus.doors_open") then b.doors_open = omsi.bus.doors_open() end
   if fn("bus.stop_requested") then b.stop_requested = omsi.bus.stop_requested() end
+  -- the traffic light the bus comes to, and how it shows (for the phone's navigator)
+  if fn("traffic.light_ahead") then
+    local l = omsi.traffic.light_ahead(150)
+    if type(l) == "table" and l.aspect then
+      b.light = { aspect = tostring(l.aspect), change_in = num(l.change_in), distance = num(l.distance) }
+    end
+  end
   return b
 end
 

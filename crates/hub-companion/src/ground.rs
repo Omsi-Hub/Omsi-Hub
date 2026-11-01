@@ -6,7 +6,11 @@
 //! that file - not the houses' models: the phone raises a house from its outline - and hands it
 //! out by squares of [`SQUARE`] metres, packed small ([`Ground::square`]).
 //!
-//! The file is read once through: the houses, trees and lines are kept, and of the triangles
+//! The houses' own models (untextured, as openOMSI's 3D map draws the nearest ones) go with
+//! them, each triangle with the shade the game gives it, up to [`MODEL_BUDGET`] a square; a house
+//! whose model did not fit is raised from its outline.
+//!
+//! The file is read once through: the houses, trees, lines and models are kept, and of the triangles
 //! (hundreds of megabytes on a big map) only where each run of [`RUN`] of them lies. The
 //! generator writes them tile by tile, so a run covers a small place, and a square reads only
 //! the runs that touch it.
@@ -27,6 +31,13 @@ pub const CLASSES: [usize; 3] = [6, 5, 2];
 const ALL: usize = 13;
 /// Triangles to a run.
 const RUN: usize = 2048;
+/// The houses' model triangles a square carries at most (openOMSI's small map allows 30 000 about
+/// the bus; a square is a part of what the phone shows).
+pub const MODEL_BUDGET: usize = 40_000;
+/// Which way the shadows fall, per metre of height (openOMSI's `SHADOW_DIR`): the light comes from
+/// the other way.
+const SHADOW_DIR: [f32; 2] = [0.34, -0.28];
+
 /// A square's positions: sixteenths of a metre from its corner, as `i16` (some 2 km either way:
 /// a triangle reaching far out of its square still fits).
 pub const UNITS: f64 = 16.0;
@@ -47,6 +58,17 @@ pub struct House {
     pub height: f32,
     /// A roof on posts (a canopy, a bridge): no walls.
     pub open: bool,
+    /// The placed model it is a part of (`Ground::instances`), drawn in 3D where it fits.
+    pub model: Option<u32>,
+}
+
+/// A placed model: which of `Ground::models`, where (relative to the origin), which way (compass
+/// degrees).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Instance {
+    pub model: u32,
+    pub at: [f32; 2],
+    pub heading: f32,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -56,6 +78,9 @@ pub struct Line {
     pub width: f32,
     pub points: Vec<[f32; 2]>,
 }
+
+/// A house's model: its faces (x, y, z up from its ground) and the middle of its ground plan.
+pub type Model = (Vec<[[f32; 3]; 3]>, [f32; 2]);
 
 /// A map's layers as the game cached them.
 pub struct Ground {
@@ -68,6 +93,10 @@ pub struct Ground {
     pub houses: Vec<House>,
     pub trees: Vec<[f32; 3]>,
     pub lines: Vec<Line>,
+    /// The houses' models: their faces (x, y, z up from the model's ground) and the middle of
+    /// their ground plan (the walls face away from it).
+    pub models: Vec<Model>,
+    pub instances: Vec<Instance>,
 }
 
 /// Where openOMSI keeps a map's layers: its folder's name (the global.cfg's), made safe as the
@@ -188,15 +217,34 @@ impl Ground {
             }
             let height = r.f32()?;
             let flags = r.u8()?;
-            r.skip(4)?; // (its model, which the phone does not draw)
-            houses.push(House { outline, roof, height, open: flags & 1 != 0 });
+            let inst = r.u32()?;
+            houses.push(House { outline, roof, height, open: flags & 1 != 0, model: (flags & 2 != 0 && inst != u32::MAX).then_some(inst) });
         }
+        let mut models = Vec::new();
         for _ in 0..r.count(4)? {
-            let faces = r.count(36)?;
-            r.skip(faces as u64 * 36)?;
+            let n = r.count(36)?;
+            let mut faces = Vec::with_capacity(n);
+            let (mut sx, mut sy) = (0.0f32, 0.0f32);
+            for _ in 0..n {
+                let mut t = [[0.0f32; 3]; 3];
+                for v in t.iter_mut() {
+                    *v = [r.f32()?, r.f32()?, r.f32()?];
+                    sx += v[0];
+                    sy += v[1];
+                }
+                faces.push(t);
+            }
+            let k = (n * 3).max(1) as f32;
+            models.push((faces, [sx / k, sy / k]));
         }
-        let instances = r.count(16)?;
-        r.skip(instances as u64 * 16)?;
+        let mut instances = Vec::new();
+        for _ in 0..r.count(16)? {
+            let model = r.u32()?;
+            if model as usize >= models.len() {
+                return None;
+            }
+            instances.push(Instance { model, at: [r.f32()?, r.f32()?], heading: r.f32()? });
+        }
         let mut trees = Vec::new();
         for _ in 0..r.count(12)? {
             trees.push([r.f32()?, r.f32()?, r.f32()?]);
@@ -207,7 +255,7 @@ impl Ground {
             let width = r.f32()?;
             lines.push(Line { class, width, points: r.points()? });
         }
-        Some(Ground { file: file.to_path_buf(), stamp, origin, runs, houses, trees, lines })
+        Some(Ground { file: file.to_path_buf(), stamp, origin, runs, houses, trees, lines, models, instances })
     }
 
     /// Whether the game wrote the file anew since it was read.
@@ -262,6 +310,27 @@ impl Ground {
                 h.outline.len() >= 3 && h.outline.len() <= u16::MAX as usize && inside(sx / n, sy / n)
             })
             .collect();
+        // the houses' models that fit the budget, nearest the square's middle first
+        let mid = [(lo[0] + hi[0]) / 2.0, (lo[1] + hi[1]) / 2.0];
+        let mut wanted: Vec<u32> = houses.iter().filter_map(|h| h.model).filter(|&i| (i as usize) < self.instances.len()).collect();
+        wanted.sort_by(|a, b| {
+            let d = |i: &u32| {
+                let at = self.instances[*i as usize].at;
+                (at[0] - mid[0]).hypot(at[1] - mid[1])
+            };
+            d(a).total_cmp(&d(b))
+        });
+        wanted.dedup();
+        let mut drawn = std::collections::HashSet::new();
+        let mut spent = 0;
+        for i in wanted {
+            let faces = self.models[self.instances[i as usize].model as usize].0.len();
+            if spent + faces > MODEL_BUDGET || drawn.contains(&i) {
+                continue;
+            }
+            spent += faces;
+            drawn.insert(i);
+        }
         out.extend_from_slice(&(houses.len() as u32).to_le_bytes());
         for h in houses {
             out.extend_from_slice(&(h.outline.len() as u16).to_le_bytes());
@@ -275,7 +344,8 @@ impl Ground {
                 t.iter().for_each(|i| out.extend_from_slice(&i.to_le_bytes()));
             }
             out.extend_from_slice(&((h.height * 10.0).round().clamp(0.0, u16::MAX as f32) as u16).to_le_bytes());
-            out.push(h.open as u8);
+            let modelled = h.model.is_some_and(|i| drawn.contains(&i));
+            out.push(h.open as u8 | (modelled as u8) << 1);
         }
         let trees: Vec<&[f32; 3]> = self.trees.iter().filter(|t| inside(t[0], t[1])).collect();
         out.extend_from_slice(&(trees.len() as u32).to_le_bytes());
@@ -316,6 +386,52 @@ impl Ground {
                 out.extend_from_slice(&q(p[1], corner[1]).to_le_bytes());
             }
         }
+        // the houses' models: each triangle placed, with its shade - a wall's light (0..127) as
+        // it faces away from the house's middle, a roof's (128 and up) darker as it turns away
+        let model_at = out.len();
+        out.extend_from_slice(&0u32.to_le_bytes());
+        let mut n = 0u32;
+        let ll = SHADOW_DIR[0].hypot(SHADOW_DIR[1]);
+        let light = [-SHADOW_DIR[0] / ll, -SHADOW_DIR[1] / ll];
+        let mut ids: Vec<&u32> = drawn.iter().collect();
+        ids.sort();
+        for &i in ids {
+            let it = self.instances[i as usize];
+            let (faces, centre) = &self.models[it.model as usize];
+            let a = -(it.heading as f64).to_radians();
+            let (sn, cs) = (a.sin() as f32, a.cos() as f32);
+            let place = |v: [f32; 3]| [v[0] * cs - v[1] * sn + it.at[0], v[0] * sn + v[1] * cs + it.at[1], v[2]];
+            let c = place([centre[0], centre[1], 0.0]);
+            for t in faces {
+                let p = t.map(place);
+                let (u, v) = ([p[1][0] - p[0][0], p[1][1] - p[0][1], p[1][2] - p[0][2]], [p[2][0] - p[0][0], p[2][1] - p[0][1], p[2][2] - p[0][2]]);
+                let mut nrm = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+                let len = (nrm[0] * nrm[0] + nrm[1] * nrm[1] + nrm[2] * nrm[2]).sqrt();
+                if len < 1e-9 {
+                    continue;
+                }
+                nrm = nrm.map(|x| x / len);
+                let flat = nrm[0].hypot(nrm[1]).max(1e-6);
+                let facing = (nrm[0] * light[0] + nrm[1] * light[1]) / flat;
+                let shade = if nrm[2].abs() < 0.35 {
+                    let mid = [(p[0][0] + p[1][0] + p[2][0]) / 3.0 - c[0], (p[0][1] + p[1][1] + p[2][1]) / 3.0 - c[1]];
+                    let out_ward = if nrm[0] * mid[0] + nrm[1] * mid[1] < 0.0 { -facing } else { facing };
+                    ((0.5 + 0.5 * out_ward).clamp(0.0, 1.0) * 127.0).round() as u8
+                } else {
+                    let (nz, f) = if nrm[2] < 0.0 { (-nrm[2], -facing) } else { (nrm[2], facing) };
+                    let away = (1.0 - nz) * (1.0 - (0.5 + 0.5 * f).clamp(0.0, 1.0));
+                    128 | (((away * 0.9).clamp(0.0, 0.45) / 0.45 * 127.0).round() as u8)
+                };
+                for v in p {
+                    out.extend_from_slice(&q(v[0], corner[0]).to_le_bytes());
+                    out.extend_from_slice(&q(v[1], corner[1]).to_le_bytes());
+                    out.extend_from_slice(&((v[2] as f64 * UNITS).round().clamp(i16::MIN as f64, i16::MAX as f64) as i16).to_le_bytes());
+                }
+                out.push(shade);
+                n += 1;
+            }
+        }
+        out[model_at..model_at + 4].copy_from_slice(&n.to_le_bytes());
         Some(out)
     }
 }
