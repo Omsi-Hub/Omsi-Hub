@@ -487,6 +487,40 @@ pub struct MapRoad {
     pub width: f32,
     /// A road cars drive far along (the map's own speed limits say so): drawn brighter.
     pub main: bool,
+    /// Its lanes, for the companion's markings: how far right of the line (m, the way its points
+    /// run), which way (1 with the points, -1 against) and where the lane may go at its end
+    /// ([`TURN_LEFT`], [`TURN_STRAIGHT`], [`TURN_RIGHT`]). Empty for a junction's own piece.
+    pub lanes: Vec<(f32, i8, u8)>,
+}
+
+pub const TURN_LEFT: u8 = 1;
+pub const TURN_STRAIGHT: u8 = 2;
+pub const TURN_RIGHT: u8 = 4;
+
+/// Where a lane may go at its end: the ways the lanes it leads into turn, as their own ends face
+/// against its end (within 30 degrees straight on).
+fn turns_of(net: &Network, lane: &omsi_sim::traffic::Lane) -> u8 {
+    let n = lane.points.len();
+    if n < 2 {
+        return 0;
+    }
+    let dir = (lane.points[n - 1] - lane.points[n - 2]).truncate().normalize_or_zero();
+    let mut turns = 0;
+    for &j in &lane.next {
+        let Some(next) = net.lanes.get(j).filter(|l| l.points.len() >= 2) else { continue };
+        let m = next.points.len();
+        let out = (next.points[m - 1] - next.points[m.saturating_sub(2)]).truncate().normalize_or_zero();
+        let cross = dir.x * out.y - dir.y * out.x;
+        let dot = dir.dot(out);
+        turns |= if dot > 30f64.to_radians().cos() {
+            TURN_STRAIGHT
+        } else if cross > 0.0 {
+            TURN_LEFT
+        } else {
+            TURN_RIGHT
+        };
+    }
+    turns
 }
 
 /// Some maps separate the asphalt mesh from their editor-only traffic splines. Use the
@@ -599,7 +633,7 @@ pub(crate) fn road_geometry(net: &Network) -> Vec<MapRoad> {
         if let Some(key) = lane.key.filter(|_| lane.source == 1) {
             splines.entry((key.tile, key.id)).or_default().push(lane);
         } else {
-            roads.push(MapRoad { points: lane.points.clone(), width: lane.width.max(2.6), main: lane.speed_limit_kmh >= 55.0 });
+            roads.push(MapRoad { points: lane.points.clone(), width: lane.width.max(2.6), main: lane.speed_limit_kmh >= 55.0, lanes: Vec::new() });
         }
     }
     for mut lanes in splines.into_values() {
@@ -643,7 +677,9 @@ pub(crate) fn road_geometry(net: &Network) -> Vec<MapRoad> {
             let t = if span.abs() > 0.01 { (((lo + hi) * 0.5 - a.offset) / span) as f64 } else { 0.0 };
             let point = |l: &omsi_sim::traffic::Lane, i: usize| l.points[if l.reversed { l.points.len() - 1 - i } else { i }];
             let points = (0..a.points.len()).map(|i| point(a, i).lerp(point(b, i), t)).collect();
-            roads.push(MapRoad { points, width: hi - lo, main: lanes[start..end].iter().any(|l| l.speed_limit_kmh >= 55.0) });
+            let middle = (lo + hi) * 0.5;
+            let marks = lanes[start..end].iter().map(|l| (l.offset - middle, if l.reversed { -1 } else { 1 }, turns_of(net, l))).collect();
+            roads.push(MapRoad { points, width: hi - lo, main: lanes[start..end].iter().any(|l| l.speed_limit_kmh >= 55.0), lanes: marks });
             start = end;
         }
     }
@@ -653,7 +689,12 @@ pub(crate) fn road_geometry(net: &Network) -> Vec<MapRoad> {
             let Some(next) = net.lanes.get(j).filter(|l| l.kind == LaneKind::Street && !l.invisible && l.points.len() >= 2) else { continue };
             let distance = lane.end().distance(next.start());
             if distance > 0.05 && distance <= 2.0 {
-                roads.push(MapRoad { points: vec![lane.end(), next.start()], width: lane.width.min(next.width).max(2.6), main: lane.speed_limit_kmh >= 55.0 && next.speed_limit_kmh >= 55.0 });
+                roads.push(MapRoad {
+                    points: vec![lane.end(), next.start()],
+                    width: lane.width.min(next.width).max(2.6),
+                    main: lane.speed_limit_kmh >= 55.0 && next.speed_limit_kmh >= 55.0,
+                    lanes: Vec::new(),
+                });
             }
         }
     }

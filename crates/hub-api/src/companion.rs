@@ -262,8 +262,13 @@ impl Source for Hub {
         Some(crate::content::mapview::route_line(&map_name(map), &global, date, trip)).filter(|r| r.len() >= 2)
     }
 
-    fn roads(&self, map: &str, date: &str, at: [f64; 2], r: f64) -> Vec<(f64, Vec<[f64; 2]>)> {
-        global_of(map).map(|g| crate::content::mapview::roads_near(&map_name(map), &g, date, at, r)).unwrap_or_default()
+    fn roads(&self, map: &str, date: &str, at: [f64; 2], r: f64) -> Vec<hub_companion::Road> {
+        global_of(map)
+            .map(|g| crate::content::mapview::roads_near(&map_name(map), &g, date, at, r))
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(width, points, lanes)| hub_companion::Road { width, points, lanes })
+            .collect()
     }
 
     fn labels(&self, map: &str, date: &str, at: [f64; 2], r: f64) -> hub_companion::Labels {
@@ -456,7 +461,7 @@ mod tests {
         let h = &g.houses[g.houses.len() / 3];
         let at = [h.outline[0][0] as f64 + g.origin[0], h.outline[0][1] as f64 + g.origin[1]];
         let roads = crate::content::mapview::roads_near(&map_name(map), &global, "", at, 300.0);
-        let pts: Vec<[f64; 2]> = roads.iter().flat_map(|(_, p)| p.iter().copied()).filter(|p| (p[0] - at[0]).hypot(p[1] - at[1]) < 300.0).collect();
+        let pts: Vec<[f64; 2]> = roads.iter().flat_map(|(_, p, _)| p.iter().copied()).filter(|p| (p[0] - at[0]).hypot(p[1] - at[1]) < 300.0).collect();
         assert!(pts.len() > 50, "roads near {at:?}: {}", pts.len());
         // the paving of the squares about it (carriageways, pavements, yards, the streets'
         // middle), laid on a grid of half metres
@@ -540,5 +545,12 @@ mod tests {
         names.dedup();
         println!("{} street labels ({} names: {:?}), {} entry points", streets.len(), names.len(), &names[..names.len().min(12)], entries.len());
         assert!(!streets.is_empty(), "no street names near the houses of Ahlheim");
+        // the roads there come with their lanes, and some lanes with their turns
+        let roads = crate::content::mapview::roads_near(&map_name(map), &global, "", [-2093.0, 3251.0], 1000.0);
+        let laned = roads.iter().filter(|r| !r.2.is_empty()).count();
+        let turning = roads.iter().flat_map(|r| r.2.iter()).filter(|l| l.2 & 5 != 0).count();
+        let both_ways = roads.iter().filter(|r| r.2.iter().any(|l| l.1 > 0) && r.2.iter().any(|l| l.1 < 0)).count();
+        println!("{} roads: {laned} with lanes ({both_ways} both ways), {turning} lanes turning at their end", roads.len());
+        assert!(laned > 0 && turning > 0);
     }
 }

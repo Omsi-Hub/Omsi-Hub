@@ -679,7 +679,15 @@ pub fn handle(req: &Request, shared: &Arc<Shared>) -> Response {
                 .source
                 .roads(&map, &date, [x - off[0], y - off[1]], r)
                 .into_iter()
-                .map(|(w, pts)| json!({ "w": r1(w), "pts": pts.iter().map(|p| [r1(p[0] + off[0]), r1(p[1] + off[1])]).collect::<Vec<_>>() }))
+                .map(|road| {
+                    let pts: Vec<[f64; 2]> = road.points.iter().map(|p| [r1(p[0] + off[0]), r1(p[1] + off[1])]).collect();
+                    if road.lanes.is_empty() {
+                        json!({ "w": r1(road.width), "pts": pts, "j": true })
+                    } else {
+                        let lanes: Vec<Value> = road.lanes.iter().map(|(o, d, t)| json!([r1(*o as f64), d, t])).collect();
+                        json!({ "w": r1(road.width), "pts": pts, "lanes": lanes })
+                    }
+                })
                 .collect();
             let labels = shared.source.labels(&map, &date, [x - off[0], y - off[1]], r);
             let names: Vec<Value> = labels.streets.iter().map(|(n, p, a)| json!({ "name": n, "x": r1(p[0] + off[0]), "y": r1(p[1] + off[1]), "angle": r1(*a) })).collect();
@@ -852,8 +860,8 @@ mod tests {
             // (the add-on's map metres: the game's are 1000 m further east)
             Some(vec![[0.0, 0.0], [0.0, 300.0], [200.0, 300.0]])
         }
-        fn roads(&self, _map: &str, _date: &str, at: [f64; 2], _r: f64) -> Vec<(f64, Vec<[f64; 2]>)> {
-            vec![(7.0, vec![at, [at[0] + 10.0, at[1]]])]
+        fn roads(&self, _map: &str, _date: &str, at: [f64; 2], _r: f64) -> Vec<crate::Road> {
+            vec![crate::Road { width: 7.0, points: vec![at, [at[0] + 10.0, at[1]]], lanes: vec![(1.75, 1, 2), (-1.75, -1, 0)] }]
         }
         fn world_of(&self, _map: &str, tile: [i64; 2], local: [f64; 2]) -> Option<[f64; 2]> {
             Some([tile[0] as f64 * 300.0 + local[0], tile[1] as f64 * 300.0 + local[1]])

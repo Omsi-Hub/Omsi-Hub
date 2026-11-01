@@ -49,6 +49,17 @@ pub const UDP_PORT: u16 = 47812;
 /// The paired devices' file, in the data folder.
 pub const DEVICES_FILE: &str = "companion-devices.json";
 
+/// A road of the map: its width (m), its line (the add-on's map metres) and its lanes - how far
+/// right of the line (m, the way its points run), which way (1 with the points, -1 against) and
+/// where the lane may go at its end (1 left, 2 straight on, 4 right). No lanes: a junction's own
+/// piece.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Road {
+    pub width: f64,
+    pub points: Vec<[f64; 2]>,
+    pub lanes: Vec<(f32, i8, u8)>,
+}
+
 /// What the map writes on the ground near a place (the add-on's map metres): each street's name
 /// with where it is said and the way its road runs (degrees anticlockwise from east), each entry
 /// point's name with where it stands.
@@ -73,8 +84,8 @@ pub trait Source: Send + Sync {
     /// The route the timetable's trip `trip` of map `map` (`maps/<name>/global.cfg`) drives on
     /// `date` (YYYY-MM-DD, "" for any), as a line through the lanes.
     fn route(&self, map: &str, date: &str, trip: &str) -> Option<Vec<[f64; 2]>>;
-    /// The map's roads within `r` metres of `at`: their width and their line.
-    fn roads(&self, map: &str, date: &str, at: [f64; 2], r: f64) -> Vec<(f64, Vec<[f64; 2]>)>;
+    /// The map's roads within `r` metres of `at`: their width, their line and their lanes.
+    fn roads(&self, map: &str, date: &str, at: [f64; 2], r: f64) -> Vec<Road>;
     /// What the map writes on the ground within `r` metres of `at`: the streets' names (where,
     /// the way the road runs - degrees anticlockwise from east) and the entry points' names.
     fn labels(&self, _map: &str, _date: &str, _at: [f64; 2], _r: f64) -> Labels {
@@ -229,7 +240,7 @@ mod tests {
         fn route(&self, _: &str, _: &str, _: &str) -> Option<Vec<[f64; 2]>> {
             None
         }
-        fn roads(&self, _: &str, _: &str, _: [f64; 2], _: f64) -> Vec<(f64, Vec<[f64; 2]>)> {
+        fn roads(&self, _: &str, _: &str, _: [f64; 2], _: f64) -> Vec<Road> {
             Vec::new()
         }
         fn world_of(&self, _: &str, _: [i64; 2], _: [f64; 2]) -> Option<[f64; 2]> {

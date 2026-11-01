@@ -325,8 +325,14 @@ fn read_map(look: &Look) -> Roads {
         objects.len(),
         entries.len(),
         t0.elapsed().as_secs_f64(),
-        min.x, min.y, max.x, max.y,
-        lo.x, lo.y, hi.x, hi.y
+        min.x,
+        min.y,
+        max.x,
+        max.y,
+        lo.x,
+        lo.y,
+        hi.x,
+        hi.y
     );
     Roads { roads, net: Arc::new(net), lanes: by_path, splines: by_spline, origin, lo, hi, entries, objects, signs }
 }
@@ -440,8 +446,8 @@ pub fn route_line(map: &str, global: &Path, date: &str, trip: &str) -> Vec<[f64;
 }
 
 /// The map's roads with a point within `r` metres of `at` (map metres), thinned to half a metre:
-/// their width and their line, for the companion's map.
-pub fn roads_near(map: &str, global: &Path, date: &str, at: [f64; 2], r: f64) -> Vec<(f64, Vec<[f64; 2]>)> {
+/// their width, their line and their lanes (`navmap::MapRoad::lanes`), for the companion's map.
+pub fn roads_near(map: &str, global: &Path, date: &str, at: [f64; 2], r: f64) -> Vec<NearRoad> {
     let look = Look { map: map.to_string(), global: global.to_path_buf(), date: date.to_string(), trip: String::new(), entry: -1 };
     let roads = roads_of(&look);
     let o = roads.origin;
@@ -452,10 +458,13 @@ pub fn roads_near(map: &str, global: &Path, date: &str, at: [f64; 2], r: f64) ->
         .take(4000)
         .map(|road| {
             let v: Vec<Vec3> = road.points.iter().map(|q| Vec3::new((q.x - o.x) as f32, (q.y - o.y) as f32, 0.0)).collect();
-            (road.width as f64, simplify(&v, 0.5).iter().map(|q| [q.x as f64 + o.x, q.y as f64 + o.y]).collect())
+            (road.width as f64, simplify(&v, 0.5).iter().map(|q| [q.x as f64 + o.x, q.y as f64 + o.y]).collect(), road.lanes.clone())
         })
         .collect()
 }
+
+/// A road near a place: its width, its line, its lanes (empty: a junction's own piece).
+pub type NearRoad = (f64, Vec<[f64; 2]>, Vec<(f32, i8, u8)>);
 
 /// A street's name where it is said, and the way its road runs (degrees anticlockwise from east).
 pub type StreetLabel = (String, [f64; 2], f64);
