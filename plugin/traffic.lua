@@ -14,7 +14,7 @@ local json = require("hubjson")
 
 local M = {}
 
-local EVERY = 2
+local EVERY = 1
 local wait = 0
 local has = {}
 

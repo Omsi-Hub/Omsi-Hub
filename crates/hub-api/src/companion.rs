@@ -469,7 +469,7 @@ mod tests {
         for di in -1..=1 {
             for dj in -1..=1 {
                 let corner = [sq[0] + di as f64 * SQUARE, sq[1] + dj as f64 * SQUARE];
-                let b = g.square(corner).unwrap();
+                let b = g.square(corner, false).unwrap();
                 let cw = [corner[0] + g.origin[0], corner[1] + g.origin[1]];
                 let mut k = 8;
                 for class in 0..13 {

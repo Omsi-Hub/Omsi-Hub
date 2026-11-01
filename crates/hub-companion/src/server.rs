@@ -101,7 +101,8 @@ pub struct Shared {
 struct GroundCache {
     map: String,
     ground: Option<Arc<ground::Ground>>,
-    squares: HashMap<(i64, i64), Arc<Vec<u8>>>,
+    /// Packed squares by place and detail: as they are, and gzipped.
+    squares: HashMap<(i64, i64, bool), Packed>,
     /// When the file was last tried (none there yet, or half written: the game makes it as its
     /// navigator first draws the map).
     tried: Option<Instant>,
@@ -109,6 +110,9 @@ struct GroundCache {
 
 /// How long a map without a picture is not looked for again.
 const GROUND_RETRY: Duration = Duration::from_secs(5);
+
+/// A square packed, as it is and gzipped.
+type Packed = (Arc<Vec<u8>>, Arc<Vec<u8>>);
 
 /// Squares kept packed: what a phone's map shows around the bus, and more.
 const SQUARES_KEPT: usize = 48;
@@ -385,7 +389,7 @@ impl Shared {
     /// A square of the map's ground, packed (`crate::ground`): `si`, `sj` count squares in the
     /// app's coordinates, the game's: the map's metres (the tiles' as the cache has them) moved by
     /// `off`.
-    fn ground_square(&self, map: &str, off: [f64; 2], si: i64, sj: i64) -> Option<Arc<Vec<u8>>> {
+    fn ground_square(&self, map: &str, off: [f64; 2], si: i64, sj: i64, low: bool) -> Option<Packed> {
         let mut g = self.ground.lock().unwrap_or_else(|e| e.into_inner());
         let again = match &g.ground {
             Some(x) => x.stale(),
@@ -397,16 +401,20 @@ impl Shared {
             let ground = ground::cache_file(map).and_then(|f| ground::Ground::open(&f)).map(Arc::new);
             *g = GroundCache { map: map.to_string(), ground, squares: HashMap::new(), tried: Some(Instant::now()) };
         }
-        if let Some(b) = g.squares.get(&(si, sj)) {
+        if let Some(b) = g.squares.get(&(si, sj, low)) {
             return Some(b.clone());
         }
         let ground = g.ground.clone()?;
         let corner = [si as f64 * ground::SQUARE - off[0] - ground.origin[0], sj as f64 * ground::SQUARE - off[1] - ground.origin[1]];
-        let b = Arc::new(ground.square(corner)?);
+        let plain = ground.square(corner, low)?;
+        // (gzipped once: a square is a megabyte or two of mostly small numbers)
+        let mut z = flate2::write::GzEncoder::new(Vec::with_capacity(plain.len() / 3), flate2::Compression::fast());
+        std::io::Write::write_all(&mut z, &plain).ok()?;
+        let b = (Arc::new(plain), Arc::new(z.finish().ok()?));
         if g.squares.len() >= SQUARES_KEPT {
             g.squares.clear();
         }
-        g.squares.insert((si, sj), b.clone());
+        g.squares.insert((si, sj, low), b.clone());
         Some(b)
     }
 
@@ -678,7 +686,7 @@ pub fn handle(req: &Request, shared: &Arc<Shared>) -> Response {
             let entries: Vec<Value> = labels.entries.iter().map(|(n, p)| json!({ "name": n, "x": r1(p[0] + off[0]), "y": r1(p[1] + off[1]) })).collect();
             Response::json(&json!({ "roads": roads, "water": [], "green": [], "names": names, "entries": entries }))
         }
-        Route::Ground(si, sj) => {
+        Route::Ground(si, sj, low) => {
             let (map, off, reference) = {
                 let i = shared.lock();
                 (i.heard.get("map").and_then(Value::as_str).unwrap_or("").to_string(), i.routing.off, i.heard.get("ref").cloned())
@@ -687,8 +695,14 @@ pub fn handle(req: &Request, shared: &Arc<Shared>) -> Response {
                 return Response::error(404, "not_found");
             }
             let off = off.or_else(|| reference.and_then(|r| shared.offset(&map, &r))).unwrap_or([0.0, 0.0]);
-            match shared.ground_square(&map, off, si, sj) {
-                Some(b) => Response::new(200, "application/octet-stream", b.to_vec()),
+            let gzip = req.header("accept-encoding").is_some_and(|v| v.split(',').any(|e| e.trim().starts_with("gzip")));
+            match shared.ground_square(&map, off, si, sj, low) {
+                Some((_, packed)) if gzip => {
+                    let mut r = Response::new(200, "application/octet-stream", packed.to_vec());
+                    r.encoding = Some("gzip");
+                    r
+                }
+                Some((plain, _)) => Response::new(200, "application/octet-stream", plain.to_vec()),
                 None => Response::error(404, "not_found"),
             }
         }

@@ -495,24 +495,85 @@ pub fn labels_near(map: &str, global: &Path, date: &str, at: [f64; 2], r: f64) -
             named.entry(i).or_insert_with(|| name.clone());
         }
     }
-    // along each named road, so far apart that a name is not said twice close by
+    // the name carried on along the road, as openOMSI's navigator carries it: from a road's end
+    // to the road that goes on from there the same way (within 35 degrees), until another sign
+    // names it or the road has run far
+    let end = |i: usize, last: bool| -> Option<(DVec2, DVec2)> {
+        let p = &roads.roads[i].points;
+        (p.len() >= 2).then(|| {
+            if last {
+                (p[p.len() - 1].truncate(), (p[p.len() - 1] - p[p.len() - 2]).truncate().normalize_or_zero())
+            } else {
+                (p[0].truncate(), (p[0] - p[1]).truncate().normalize_or_zero())
+            }
+        })
+    };
+    let mut grid: HashMap<(i64, i64), Vec<(usize, bool)>> = HashMap::new();
+    for &i in &near {
+        for last in [false, true] {
+            if let Some((q, _)) = end(i, last) {
+                grid.entry(((q.x / 5.0).floor() as i64, (q.y / 5.0).floor() as i64)).or_default().push((i, last));
+            }
+        }
+    }
+    let mut queue: Vec<(usize, f64)> = named.keys().map(|&i| (i, 0.0)).collect();
+    while let Some((i, run)) = queue.pop() {
+        let Some(name) = named.get(&i).cloned() else { continue };
+        let len: f64 = roads.roads[i].points.windows(2).map(|w| w[0].truncate().distance(w[1].truncate())).sum();
+        if run + len > 3000.0 {
+            continue;
+        }
+        for last in [false, true] {
+            let Some((q, out)) = end(i, last) else { continue };
+            let cell = ((q.x / 5.0).floor() as i64, (q.y / 5.0).floor() as i64);
+            for dx in -1..=1 {
+                for dy in -1..=1 {
+                    for &(k, k_last) in grid.get(&(cell.0 + dx, cell.1 + dy)).map(Vec::as_slice).unwrap_or(&[]) {
+                        if k == i || named.contains_key(&k) {
+                            continue;
+                        }
+                        let Some((kq, kout)) = end(k, k_last) else { continue };
+                        // (the road going on leaves its touching end the way this one came in)
+                        if kq.distance(q) <= 2.5 && (-kout).dot(out) > 35f64.to_radians().cos() {
+                            named.insert(k, name.clone());
+                            queue.push((k, run + len));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // a name in the middle of each named road long enough to hold it, the longest first, never
+    // the same name twice close by
+    let mut order: Vec<(usize, f64)> = named.keys().map(|&i| (i, roads.roads[i].points.windows(2).map(|w| w[0].truncate().distance(w[1].truncate())).sum::<f64>())).collect();
+    order.sort_by(|a, b| b.1.total_cmp(&a.1));
     let mut streets: Vec<StreetLabel> = Vec::new();
-    for (i, name) in &named {
-        let pts = &roads.roads[*i].points;
+    for (i, len) in order {
+        if len < 25.0 {
+            continue;
+        }
+        let name = &named[&i];
+        let pts = &roads.roads[i].points;
+        // places along it every so often, the first at its middle when it is short
+        let mut wanted: Vec<f64> = if len < EVERY { vec![len / 2.0] } else { (0..).map(|k| FIRST + k as f64 * EVERY).take_while(|d| *d < len - 10.0).collect() };
+        wanted.retain(|d| *d >= 0.0);
         let mut along = 0.0;
-        let mut next = FIRST;
+        let mut want = wanted.into_iter().peekable();
         for w in pts.windows(2) {
             let (a, b) = (w[0].truncate(), w[1].truncate());
-            let len = a.distance(b);
-            while len > 0.0 && next <= along + len {
-                let p = a + (b - a) * ((next - along) / len);
-                let near_same = streets.iter().any(|(n, q, _)| n == name && DVec2::new(q[0], q[1]).distance(p) < EVERY * 0.6);
+            let seg = a.distance(b);
+            while let Some(&d) = want.peek() {
+                if d > along + seg {
+                    break;
+                }
+                want.next();
+                let p = a + (b - a) * ((d - along) / seg.max(1e-9));
+                let near_same = streets.iter().any(|(n, q, _)| n == name && DVec2::new(q[0], q[1]).distance(p) < 160.0);
                 if inside(p, 0.0) && !near_same {
                     streets.push((name.clone(), [p.x, p.y], (b.y - a.y).atan2(b.x - a.x).to_degrees()));
                 }
-                next += EVERY;
             }
-            along += len;
+            along += seg;
         }
     }
     let entries = roads.entries.iter().filter(|e| inside(e.at, 0.0)).map(|e| (e.name.clone(), [e.at.x, e.at.y])).collect();

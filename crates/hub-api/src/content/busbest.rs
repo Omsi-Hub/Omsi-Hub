@@ -135,7 +135,9 @@ fn best_of(vfs: &Vfs, map: &str, date: &str, free: bool, trips: &[(String, Strin
         let wagons = fleet.get(&key(file)).copied().unwrap_or(0.0);
         let mut c = Candidate { file: file.clone(), name: name.clone(), fit: 0.0, depot: String::new(), wagons };
         if !free {
-            let depots = read.entry(key(file)).or_insert_with(|| bus_depot_files(vfs, file, false).iter().filter_map(|f| DEPOTS.get(f, |f| hub_omsi::hof::Hof::load(f).ok().map(|h| Arc::new(depot_of(&h))))).collect());
+            let depots = read
+                .entry(key(file))
+                .or_insert_with(|| bus_depot_files(vfs, file, false).iter().filter_map(|f| DEPOTS.get(f, |f| hub_omsi::hof::Hof::load(f).ok().map(|h| Arc::new(depot_of(&h))))).collect());
             for d in depots.iter() {
                 let fit = knows(d, trips) as f32 / trips.len().max(1) as f32;
                 if fit > c.fit {

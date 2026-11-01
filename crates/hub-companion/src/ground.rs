@@ -267,7 +267,8 @@ impl Ground {
     /// [`Ground::origin`]), packed for the phone (see the protocol's `GET /api/ground`): every
     /// triangle, house and tree whose middle is in it, and every line that passes it, at
     /// sixteenths of a metre from the corner.
-    pub fn square(&self, corner: [f64; 2]) -> Option<Vec<u8>> {
+    /// `low`: a square far off - without the paint, the trees and the houses' models.
+    pub fn square(&self, corner: [f64; 2], low: bool) -> Option<Vec<u8>> {
         let lo = [corner[0] as f32, corner[1] as f32];
         let hi = [(corner[0] + SQUARE) as f32, (corner[1] + SQUARE) as f32];
         let inside = |x: f32, y: f32| x >= lo[0] && x < hi[0] && y >= lo[1] && y < hi[1];
@@ -278,11 +279,13 @@ impl Ground {
         out.extend_from_slice(&(ALL as u16).to_le_bytes());
         let mut file = File::open(&self.file).ok()?;
         let mut buf = Vec::new();
-        for runs in &self.runs {
+        for (class, runs) in self.runs.iter().enumerate() {
             let count_at = out.len();
             out.extend_from_slice(&0u32.to_le_bytes());
             let mut n = 0u32;
-            for run in runs.iter().filter(|r| r.hi[0] >= lo[0] && r.lo[0] < hi[0] && r.hi[1] >= lo[1] && r.lo[1] < hi[1]) {
+            // (far off, no paint: the classes after the paving)
+            let skip = low && class >= CLASSES[0] + CLASSES[1];
+            for run in runs.iter().filter(|r| !skip && r.hi[0] >= lo[0] && r.lo[0] < hi[0] && r.hi[1] >= lo[1] && r.lo[1] < hi[1]) {
                 buf.resize(run.n as usize * 24, 0);
                 file.seek(SeekFrom::Start(run.at)).ok()?;
                 file.read_exact(&mut buf).ok()?;
@@ -325,7 +328,7 @@ impl Ground {
         let mut spent = 0;
         for i in wanted {
             let faces = self.models[self.instances[i as usize].model as usize].0.len();
-            if spent + faces > MODEL_BUDGET || drawn.contains(&i) {
+            if low || spent + faces > MODEL_BUDGET || drawn.contains(&i) {
                 continue;
             }
             spent += faces;
@@ -347,7 +350,7 @@ impl Ground {
             let modelled = h.model.is_some_and(|i| drawn.contains(&i));
             out.push(h.open as u8 | (modelled as u8) << 1);
         }
-        let trees: Vec<&[f32; 3]> = self.trees.iter().filter(|t| inside(t[0], t[1])).collect();
+        let trees: Vec<&[f32; 3]> = self.trees.iter().filter(|t| !low && inside(t[0], t[1])).collect();
         out.extend_from_slice(&(trees.len() as u32).to_le_bytes());
         for t in trees {
             out.extend_from_slice(&q(t[0], corner[0]).to_le_bytes());
@@ -505,7 +508,7 @@ mod tests {
         assert_eq!(g.trees, vec![[200.0, 250.0, 3.0]]);
         assert!(!g.stale());
 
-        let b = g.square([0.0, 0.0]).unwrap();
+        let b = g.square([0.0, 0.0], false).unwrap();
         assert_eq!(&b[..4], b"OHG1");
         let mut at = 8;
         let mut tris = Vec::new();
@@ -521,7 +524,7 @@ mod tests {
         assert_eq!(u32_at(&b, at), 1);
         assert_eq!(u16::from_le_bytes([b[at + 4], b[at + 5]]), 4);
         // the next square has the other triangle and neither house nor tree
-        let next = g.square([500.0, 0.0]).unwrap();
+        let next = g.square([500.0, 0.0], false).unwrap();
         let land_water = 8 + 5 * 4;
         assert_eq!(u32_at(&next, land_water), 1);
         assert_eq!(i16_at(&next, land_water + 4), 110 * 16);
@@ -561,8 +564,8 @@ mod tests {
         let mid = g.houses[g.houses.len() / 2].outline[0];
         let corner = [(mid[0] as f64 / SQUARE).floor() * SQUARE, (mid[1] as f64 / SQUARE).floor() * SQUARE];
         let t = std::time::Instant::now();
-        let b = g.square(corner).unwrap();
-        println!("a square in {:?}: {} KB", t.elapsed(), b.len() / 1024);
+        let b = g.square(corner, false).unwrap();
+        println!("a square in {:?}: {} KB ({} KB far off)", t.elapsed(), b.len() / 1024, g.square(corner, true).unwrap().len() / 1024);
         // (for the app's mock server: `HUB_GROUND_DUMP=<dir>` writes the squares around the one
         // with the most houses as <i>_<j>.bin, i from -3 to 2 and j from -3 to 3 about it)
         let Some(dir) = std::env::var_os("HUB_GROUND_DUMP").map(PathBuf::from) else { return };
@@ -576,7 +579,7 @@ mod tests {
         for i in -3..=2 {
             for j in -3..=3 {
                 let corner = [(ci + i) as f64 * SQUARE, (cj + j) as f64 * SQUARE];
-                std::fs::write(dir.join(format!("{i}_{j}.bin")), g.square(corner).unwrap()).unwrap();
+                std::fs::write(dir.join(format!("{i}_{j}.bin")), g.square(corner, false).unwrap()).unwrap();
             }
         }
         println!("dumped about square {ci},{cj} to {dir:?}");
