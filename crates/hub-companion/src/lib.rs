@@ -49,6 +49,15 @@ pub const UDP_PORT: u16 = 47812;
 /// The paired devices' file, in the data folder.
 pub const DEVICES_FILE: &str = "companion-devices.json";
 
+/// What the map writes on the ground near a place (the add-on's map metres): each street's name
+/// with where it is said and the way its road runs (degrees anticlockwise from east), each entry
+/// point's name with where it stands.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Labels {
+    pub streets: Vec<(String, [f64; 2], f64)>,
+    pub entries: Vec<(String, [f64; 2])>,
+}
+
 /// What the add-on knows that the server needs. Map points are the add-on's own map metres
 /// (a tile's place in `global.cfg`'s grid and the metres in it); the server turns them into
 /// the game's with the place the plugin gives along with its tile.
@@ -66,6 +75,11 @@ pub trait Source: Send + Sync {
     fn route(&self, map: &str, date: &str, trip: &str) -> Option<Vec<[f64; 2]>>;
     /// The map's roads within `r` metres of `at`: their width and their line.
     fn roads(&self, map: &str, date: &str, at: [f64; 2], r: f64) -> Vec<(f64, Vec<[f64; 2]>)>;
+    /// What the map writes on the ground within `r` metres of `at`: the streets' names (where,
+    /// the way the road runs - degrees anticlockwise from east) and the entry points' names.
+    fn labels(&self, _map: &str, _date: &str, _at: [f64; 2], _r: f64) -> Labels {
+        Labels::default()
+    }
     /// The map metres of a place given by its tile (x, y of the grid) and the metres in it.
     fn world_of(&self, map: &str, tile: [i64; 2], local: [f64; 2]) -> Option<[f64; 2]>;
     /// The bus the plugin names (its `.bus` file, relative to the game's folder): its

@@ -266,6 +266,12 @@ impl Source for Hub {
         global_of(map).map(|g| crate::content::mapview::roads_near(&map_name(map), &g, date, at, r)).unwrap_or_default()
     }
 
+    fn labels(&self, map: &str, date: &str, at: [f64; 2], r: f64) -> hub_companion::Labels {
+        let Some(g) = global_of(map) else { return hub_companion::Labels::default() };
+        let (streets, entries) = crate::content::mapview::labels_near(&map_name(map), &g, date, at, r);
+        hub_companion::Labels { streets, entries }
+    }
+
     fn world_of(&self, map: &str, tile: [i64; 2], local: [f64; 2]) -> Option<[f64; 2]> {
         let global = global_of(map)?;
         Some(crate::content::mapview::world_of(&map_name(map), &global, "", tile, local))
@@ -520,5 +526,19 @@ mod tests {
         println!("{} road points near {at:?}: {:.0}% on the paving as it is; the best fit {:.0}% moved by ({}, {}) m", pts.len(), here * 100.0, best.2 * 100.0, best.0, best.1);
         assert!(here > 0.8, "the ground is not under the roads: {:.0}% on it", here * 100.0);
         assert!(best.0.abs() <= 1.0 && best.1.abs() <= 1.0, "the ground fits better moved by ({}, {}) m", best.0, best.1);
+    }
+
+    /// The streets' names of a real map come with its roads, along them as the game's navigator
+    /// says them: `cargo test -p hub-api --release -- --ignored street_names`.
+    #[test]
+    #[ignore]
+    fn street_names_of_a_real_map() {
+        let map = "maps/Ahlheim 5/global.cfg";
+        let Some(global) = global_of(map) else { return };
+        let (streets, entries) = crate::content::mapview::labels_near(&map_name(map), &global, "", [-2093.0, 3251.0], 1000.0);
+        let mut names: Vec<&str> = streets.iter().map(|s| s.0.as_str()).collect();
+        names.dedup();
+        println!("{} street labels ({} names: {:?}), {} entry points", streets.len(), names.len(), &names[..names.len().min(12)], entries.len());
+        assert!(!streets.is_empty(), "no street names near the houses of Ahlheim");
     }
 }

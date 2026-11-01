@@ -23,9 +23,8 @@ pub struct NavigationMap {
     pub road_surfaces: Vec<(Vec<DVec3>, f32)>,
     /// Every placed object's position by id (bus stops beyond the loaded tiles).
     pub places: HashMap<i64, DVec3>,
-    /// Street name signs: where, the object's heading and the name on it.
-    // (the navigator's street names: read as the game reads them, not drawn by the pages)
-    #[allow(dead_code)]
+    /// Street name signs: where, the object's heading and the name on it (the navigator's
+    /// street names, read as the game reads them).
     pub signs: Vec<(DVec3, f64, String)>,
     /// Every bus stop of the map (an object whose `.sco` says `[busstop]`): placed, hung on
     /// another object (`[attachObj]`, at its parent) or put on a spline.
@@ -699,12 +698,14 @@ pub struct CityMap {
     pub net: Network,
     pub places: HashMap<i64, DVec3>,
     pub stops: Vec<MapStop>,
+    /// The street name signs: where, the object's heading, the name.
+    pub signs: Vec<(DVec3, f64, String)>,
 }
 
 /// Read the map's tiles `tiles` (of the installation `root`, the chrono folders `chrono`) as the
 /// city map reads them.
 pub fn city_map(root: &Path, tiles: &[(i32, i32, PathBuf)], chrono: &[PathBuf]) -> CityMap {
-    let NavigationMap { lanes, road_surfaces, places, signs: _, stops } = navigation_map_of(root, tiles, chrono);
+    let NavigationMap { lanes, road_surfaces, places, signs, stops } = navigation_map_of(root, tiles, chrono);
     let (roads, net) = city_roads(lanes, &road_surfaces);
-    CityMap { roads, net, places, stops }
+    CityMap { roads, net, places, stops, signs }
 }

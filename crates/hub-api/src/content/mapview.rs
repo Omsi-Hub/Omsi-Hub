@@ -153,6 +153,8 @@ struct Roads {
     entries: Vec<Entry>,
     /// Every placed object's world place: the trip's stops are found here.
     objects: HashMap<i64, DVec2>,
+    /// The street name signs (world metres) and the names on them.
+    signs: Vec<(DVec2, String)>,
 }
 
 impl Roads {
@@ -262,7 +264,8 @@ fn read_map(look: &Look) -> Roads {
     let root = omsi_cfg::content_roots().into_iter().find(|r| map_dir.starts_with(r)).or_else(|| map_dir.parent().and_then(|p| p.parent()).map(Path::to_path_buf)).unwrap_or_else(|| map_dir.clone());
     let tiles: Vec<(i32, i32, PathBuf)> = global.tiles.iter().map(|t| (t.x, t.y, omsi_cfg::resolve_path(&map_dir, &t.file))).filter(|t| omsi_cfg::vfs::is_file(&t.2)).collect();
     let t0 = std::time::Instant::now();
-    let crate::lineeditor::navmap::CityMap { roads, net, places, .. } = crate::lineeditor::navmap::city_map(&root, &tiles, &chrono);
+    let crate::lineeditor::navmap::CityMap { roads, net, places, signs, .. } = crate::lineeditor::navmap::city_map(&root, &tiles, &chrono);
+    let signs = signs.into_iter().map(|(at, _, name)| (at.truncate(), name)).collect();
     // the lanes the timetable can name, and the lanes of every spline behind them
     let mut by_path = HashMap::new();
     let mut by_spline: HashMap<(i32, i32, i64), Vec<usize>> = HashMap::new();
@@ -325,7 +328,7 @@ fn read_map(look: &Look) -> Roads {
         min.x, min.y, max.x, max.y,
         lo.x, lo.y, hi.x, hi.y
     );
-    Roads { roads, net: Arc::new(net), lanes: by_path, splines: by_spline, origin, lo, hi, entries, objects }
+    Roads { roads, net: Arc::new(net), lanes: by_path, splines: by_spline, origin, lo, hi, entries, objects, signs }
 }
 
 /// The duty map (`co_duty_map`) and a duty's route map: [`fleet_export`]'s roads, the routes
@@ -452,6 +455,68 @@ pub fn roads_near(map: &str, global: &Path, date: &str, at: [f64; 2], r: f64) ->
             (road.width as f64, simplify(&v, 0.5).iter().map(|q| [q.x as f64 + o.x, q.y as f64 + o.y]).collect())
         })
         .collect()
+}
+
+/// A street's name where it is said, and the way its road runs (degrees anticlockwise from east).
+pub type StreetLabel = (String, [f64; 2], f64);
+
+/// What the companion's map writes on the ground within `r` metres of `at` (map metres): the
+/// streets' names as openOMSI's navigator lays them - carried from each name sign along the
+/// road it stands at, every so often, the way the road runs (degrees anticlockwise from east) -
+/// and the map's entry points with their names.
+pub fn labels_near(map: &str, global: &Path, date: &str, at: [f64; 2], r: f64) -> (Vec<StreetLabel>, Vec<(String, [f64; 2])>) {
+    /// A sign names the road within this many metres of it.
+    const NEAR: f64 = 35.0;
+    /// A name every so many metres along its road, the first this far in.
+    const EVERY: f64 = 220.0;
+    const FIRST: f64 = 40.0;
+    let look = Look { map: map.to_string(), global: global.to_path_buf(), date: date.to_string(), trip: String::new(), entry: -1 };
+    let roads = roads_of(&look);
+    let at = DVec2::new(at[0], at[1]);
+    let inside = |p: DVec2, more: f64| (p.x - at.x).abs() <= r + more && (p.y - at.y).abs() <= r + more;
+    let near: Vec<usize> = (0..roads.roads.len()).filter(|&i| roads.roads[i].points.iter().any(|q| inside(q.truncate(), 0.0))).collect();
+    // each sign's name on the road nearest to it
+    let mut named: HashMap<usize, String> = HashMap::new();
+    for (p, name) in roads.signs.iter().filter(|(p, _)| inside(*p, NEAR)) {
+        let mut best = (NEAR, None);
+        for &i in &near {
+            let pts = &roads.roads[i].points;
+            for w in pts.windows(2) {
+                let (a, b) = (w[0].truncate(), w[1].truncate());
+                let ab = b - a;
+                let t = ((*p - a).dot(ab) / ab.length_squared().max(1e-9)).clamp(0.0, 1.0);
+                let d = (a + ab * t).distance(*p);
+                if d < best.0 {
+                    best = (d, Some(i));
+                }
+            }
+        }
+        if let (_, Some(i)) = best {
+            named.entry(i).or_insert_with(|| name.clone());
+        }
+    }
+    // along each named road, so far apart that a name is not said twice close by
+    let mut streets: Vec<StreetLabel> = Vec::new();
+    for (i, name) in &named {
+        let pts = &roads.roads[*i].points;
+        let mut along = 0.0;
+        let mut next = FIRST;
+        for w in pts.windows(2) {
+            let (a, b) = (w[0].truncate(), w[1].truncate());
+            let len = a.distance(b);
+            while len > 0.0 && next <= along + len {
+                let p = a + (b - a) * ((next - along) / len);
+                let near_same = streets.iter().any(|(n, q, _)| n == name && DVec2::new(q[0], q[1]).distance(p) < EVERY * 0.6);
+                if inside(p, 0.0) && !near_same {
+                    streets.push((name.clone(), [p.x, p.y], (b.y - a.y).atan2(b.x - a.x).to_degrees()));
+                }
+                next += EVERY;
+            }
+            along += len;
+        }
+    }
+    let entries = roads.entries.iter().filter(|e| inside(e.at, 0.0)).map(|e| (e.name.clone(), [e.at.x, e.at.y])).collect();
+    (streets, entries)
 }
 
 /// The map metres of a place given by its tile (the grid's x and y) and the metres in it.
