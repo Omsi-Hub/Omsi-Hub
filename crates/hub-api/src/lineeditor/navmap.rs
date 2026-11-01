@@ -142,7 +142,10 @@ pub fn navigation_map_of(root: &Path, tiles: &[(i32, i32, PathBuf)], chrono_dirs
                     stops.push(MapStop { tile: (tx, ty), id: o.id, at: pos, heading: o.rot[0], name: o.extra.first().map(|s| s.trim().to_string()).unwrap_or_default() });
                 }
                 if !sco.paths.is_empty() {
-                    lanes.extend(object_lanes(&sco, pos, [o.rot[0], 0.0, 0.0], None, (tx, ty), o.id, &o.rules));
+                    // (a crossing with traffic lights: its own number for them, the object's place
+                    // in the map - the companion's map shows where its lights hold the traffic)
+                    let lights = sco.path_traffic_light.iter().any(|t| *t >= 0).then(|| (((tx as i64 & 0xffff) << 44) ^ ((ty as i64 & 0xffff) << 28) ^ o.id) as usize);
+                    lanes.extend(object_lanes(&sco, pos, [o.rot[0], 0.0, 0.0], lights, (tx, ty), o.id, &o.rules));
                 }
             }
             // the stops hung on another object (Ahlheim's on their shelters): at their parent,

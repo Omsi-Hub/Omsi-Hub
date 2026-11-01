@@ -91,6 +91,12 @@ pub trait Source: Send + Sync {
     fn labels(&self, _map: &str, _date: &str, _at: [f64; 2], _r: f64) -> Labels {
         Labels::default()
     }
+    /// The map's traffic lights within `r` metres of `at`, where they hold the traffic: the
+    /// middle of a lane's stop line, the way the lane runs over it (degrees clockwise from north)
+    /// and its width.
+    fn lights(&self, _map: &str, _date: &str, _at: [f64; 2], _r: f64) -> Vec<([f64; 2], f64, f64)> {
+        Vec::new()
+    }
     /// The map metres of a place given by its tile (x, y of the grid) and the metres in it.
     fn world_of(&self, map: &str, tile: [i64; 2], local: [f64; 2]) -> Option<[f64; 2]>;
     /// The bus the plugin names (its `.bus` file, relative to the game's folder): its

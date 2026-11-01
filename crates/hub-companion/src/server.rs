@@ -692,7 +692,13 @@ pub fn handle(req: &Request, shared: &Arc<Shared>) -> Response {
             let labels = shared.source.labels(&map, &date, [x - off[0], y - off[1]], r);
             let names: Vec<Value> = labels.streets.iter().map(|(n, p, a)| json!({ "name": n, "x": r1(p[0] + off[0]), "y": r1(p[1] + off[1]), "angle": r1(*a) })).collect();
             let entries: Vec<Value> = labels.entries.iter().map(|(n, p)| json!({ "name": n, "x": r1(p[0] + off[0]), "y": r1(p[1] + off[1]) })).collect();
-            Response::json(&json!({ "roads": roads, "water": [], "green": [], "names": names, "entries": entries }))
+            let lights: Vec<Value> = shared
+                .source
+                .lights(&map, &date, [x - off[0], y - off[1]], r)
+                .into_iter()
+                .map(|(p, h, w)| json!([r1(p[0] + off[0]), r1(p[1] + off[1]), r1(h), r1(w)]))
+                .collect();
+            Response::json(&json!({ "roads": roads, "water": [], "green": [], "names": names, "entries": entries, "lights": lights }))
         }
         Route::Ground(si, sj, low) => {
             let (map, off, reference) = {

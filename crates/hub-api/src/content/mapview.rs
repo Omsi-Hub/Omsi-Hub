@@ -463,6 +463,32 @@ pub fn roads_near(map: &str, global: &Path, date: &str, at: [f64; 2], r: f64) ->
         .collect()
 }
 
+/// The map's traffic lights within `r` metres of `at` (map metres) where they hold the traffic:
+/// the middle of each street lane's stop line (the start of a lane a light controls), the way the
+/// lane runs over it (degrees clockwise from north) and its width - one per light and place, the
+/// lanes turning off from one stop line sharing it.
+pub fn lights_near(map: &str, global: &Path, date: &str, at: [f64; 2], r: f64) -> Vec<([f64; 2], f64, f64)> {
+    let look = Look { map: map.to_string(), global: global.to_path_buf(), date: date.to_string(), trip: String::new(), entry: -1 };
+    let roads = roads_of(&look);
+    let mut out: Vec<((usize, usize), [f64; 2], f64, f64)> = Vec::new();
+    for lane in &roads.net.lanes {
+        let Some(light) = lane.traffic_light else { continue };
+        if lane.kind != omsi_sim::traffic::LaneKind::Street || lane.invisible || lane.points.len() < 2 {
+            continue;
+        }
+        let p = lane.points[0];
+        if (p.x - at[0]).abs() > r || (p.y - at[1]).abs() > r {
+            continue;
+        }
+        if out.iter().any(|(l, q, _, _)| *l == light && (q[0] - p.x).hypot(q[1] - p.y) < 2.0) {
+            continue;
+        }
+        let heading = lane.headings.first().map(|h| *h as f64).unwrap_or(0.0).rem_euclid(360.0);
+        out.push((light, [p.x, p.y], heading, lane.width as f64));
+    }
+    out.into_iter().map(|(_, p, h, w)| (p, h, w)).collect()
+}
+
 /// A road near a place: its width, its line, its lanes (empty: a junction's own piece).
 pub type NearRoad = (f64, Vec<[f64; 2]>, Vec<(f32, i8, u8)>);
 

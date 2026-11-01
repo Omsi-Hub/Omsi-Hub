@@ -277,6 +277,10 @@ impl Source for Hub {
         hub_companion::Labels { streets, entries }
     }
 
+    fn lights(&self, map: &str, date: &str, at: [f64; 2], r: f64) -> Vec<([f64; 2], f64, f64)> {
+        global_of(map).map(|g| crate::content::mapview::lights_near(&map_name(map), &g, date, at, r)).unwrap_or_default()
+    }
+
     fn world_of(&self, map: &str, tile: [i64; 2], local: [f64; 2]) -> Option<[f64; 2]> {
         let global = global_of(map)?;
         Some(crate::content::mapview::world_of(&map_name(map), &global, "", tile, local))
@@ -551,6 +555,10 @@ mod tests {
         let turning = roads.iter().flat_map(|r| r.2.iter()).filter(|l| l.2 & 5 != 0).count();
         let both_ways = roads.iter().filter(|r| r.2.iter().any(|l| l.1 > 0) && r.2.iter().any(|l| l.1 < 0)).count();
         println!("{} roads: {laned} with lanes ({both_ways} both ways), {turning} lanes turning at their end", roads.len());
+        // and its traffic lights, where they hold the traffic
+        let lights = crate::content::mapview::lights_near(&map_name(map), &global, "", [-2093.0, 3251.0], 1000.0);
+        println!("{} traffic lights' stop lines", lights.len());
+        assert!(!lights.is_empty());
         assert!(laned > 0 && turning > 0);
     }
 }

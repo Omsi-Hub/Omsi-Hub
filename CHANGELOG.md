@@ -15,7 +15,8 @@ Each version of the Omsi-Hub add-on, newest first. The release on GitHub links h
   the other players' buses. The houses come as the game's own models where they have one, and
   the phone shows the traffic light your bus comes to and how it shows - and, with an openOMSI
   that tells them, every traffic light about the bus where it stands with its colour, and the
-  speed limit of the lane the bus drives on. (The plugin is 1.19.0.)
+  speed limit of the lane the bus drives on; the map's roads come with every traffic light of
+  the map where it stands. (The plugin is 1.19.0.)
 
 ## 1.2.0-beta.1
 
