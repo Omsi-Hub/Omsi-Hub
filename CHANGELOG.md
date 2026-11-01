@@ -2,6 +2,18 @@
 
 Each version of the Omsi-Hub add-on, newest first. The release on GitHub links here.
 
+## Unreleased
+
+### Added
+
+- **The phone's navigator gets openOMSI's own map**: the add-on reads the picture of the map
+  openOMSI keeps once its navigator has drawn it - the ground, the paving, the paint on the
+  roads, the rails and rivers, the trees and the houses with their heights - and hands it to the
+  Companion app square by square, so the app can draw the map as the game does, in 3D, with the
+  streets' names as the game's navigator says them and the map's entry points. The app can also
+  ask for what else is on the road: the AI vehicles, the timetable's buses with their line and
+  the other players' buses.
+
 ## 1.2.0-beta.1
 
 A test build for the beta testers. It needs **openOMSI 0.2.22 or newer** and an original
