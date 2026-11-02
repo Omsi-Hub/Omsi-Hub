@@ -2090,6 +2090,81 @@ pub fn written(l: &LineDesign) -> bool {
     !l.draft && problems(l).is_empty()
 }
 
+/// The refusals of [`take_shared`] (keys of the translations).
+pub const SHARED_NOT_SAFE: &str = "The boss's line could not be taken over: it is not a line this version can read.";
+pub const SHARED_TAKEN: &str = "You have a line of your own with this line's number on this map. Rename yours to drive the boss's.";
+
+/// The line written as timetable line `name` as a company's player gets it to drive: as it runs
+/// now, without what only means something on the boss's computer (its buses, his own depot file).
+/// None: no line of this registry (a line of the map's own the player has already).
+pub fn shared_line(reg: &Registry, name: &str) -> Option<LineDesign> {
+    let t = reg.as_timetable();
+    let stems = stems(&t);
+    let l = t.lines.iter().filter(|l| written(l)).find(|l| stems.get(&l.id).is_some_and(|s| l.timetable_name(s).eq_ignore_ascii_case(name.trim())))?;
+    Some(l.clone().without_the_owners())
+}
+
+impl LineDesign {
+    fn without_the_owners(self) -> LineDesign {
+        LineDesign { vehicles: LineVehicles::default(), depot_file: String::new(), live: None, pending_from: String::new(), ..self }
+    }
+
+    /// The same file in the timetable as `other`: the same `.ttl` of the map's, or the same number.
+    fn same_file(&self, other: &LineDesign) -> bool {
+        match (&self.map, &other.map) {
+            (Some(a), Some(b)) => a.ttl.trim().eq_ignore_ascii_case(b.trim_ttl()),
+            (None, None) => safe_name(&self.number).eq_ignore_ascii_case(&safe_name(&other.number)),
+            _ => false,
+        }
+    }
+}
+
+impl MapSource {
+    fn trim_ttl(&self) -> &str {
+        self.ttl.trim()
+    }
+
+    /// A name for a file in the map's `TTData`, and nothing that leads out of it.
+    fn ttl_is_plain(&self) -> bool {
+        let t = self.ttl.trim();
+        !t.is_empty() && t.len() <= 128 && !t.contains(['/', '\\', ':']) && !t.contains("..") && !t.chars().any(char::is_control)
+    }
+}
+
+/// A line of the boss's (`shared_line`) kept in the player's registry, as the company `company`'s:
+/// the one it had of that company replaced, a line of his own never. It comes from another
+/// computer, so what it may name is checked: the rest of it is written as data, its file names
+/// made from `safe_name`.
+pub fn take_shared(reg: &mut Registry, company: &str, line: LineDesign) -> Result<(), &'static str> {
+    let mut line = line.without_the_owners();
+    line.company = company.to_string();
+    line.draft = false;
+    let safe = !company.trim().is_empty()
+        && !line.number.trim().is_empty()
+        && line.number.len() <= 64
+        && line.map.as_ref().is_none_or(MapSource::ttl_is_plain)
+        && !line.directions.is_empty()
+        && written(&line);
+    if !safe {
+        return Err(SHARED_NOT_SAFE);
+    }
+    if reg.lines.iter().any(|l| l.company != company && l.same_file(&line)) {
+        return Err(SHARED_TAKEN);
+    }
+    match reg.lines.iter_mut().find(|l| l.company == company && l.same_file(&line)) {
+        Some(old) => {
+            line.id = old.id;
+            *old = line;
+        }
+        None => {
+            line.id = reg.next_id;
+            reg.next_id += 1;
+            reg.lines.push(line);
+        }
+    }
+    Ok(())
+}
+
 /// The files of every line of the registry that can be saved (`problems` empty). `raw_tiles`
 /// is `global.cfg`'s `[map]` list (a lane's tile is its place there); `map_links` the pairs
 /// of stops the map has a link for, `map_stops` the stops its `Busstops.cfg` names.
@@ -2408,6 +2483,69 @@ mod tests {
             vias: Vec::new(),
             map_way: None,
         }
+    }
+
+    /// A company's line goes to its player as it runs, and comes under the name the duty asks.
+    #[test]
+    fn a_line_is_shared_with_a_player_under_the_same_name() {
+        let mut boss = Registry::default();
+        let id = line(&mut boss);
+        {
+            let l = boss.line_mut(id).unwrap();
+            l.depot_file = "the boss's own".into();
+            l.vehicles = LineVehicles { buses: vec![crate::service::BusPick::default()], ..LineVehicles::default() };
+        }
+        assert_eq!(shared_line(&boss, "oo_nothing"), None);
+        let name = "oo_42";
+        let shared = shared_line(&boss, name).expect("the boss's line");
+        assert!(shared.depot_file.is_empty() && shared.vehicles == LineVehicles::default());
+
+        let mut player = Registry::default();
+        let mine = player.add_line("Busses");
+        mine.number = "7".into();
+        take_shared(&mut player, "co-1", shared.clone()).unwrap();
+        assert_eq!(player.lines.len(), 2);
+        assert_eq!(shared_line(&player, name).map(|l| l.company), Some("co-1".to_string()));
+        // again: the same line, not a second
+        take_shared(&mut player, "co-1", shared).unwrap();
+        assert_eq!(player.lines.len(), 2);
+    }
+
+    /// A line of the player's own with the number stays, and the boss's is refused.
+    #[test]
+    fn a_shared_line_never_takes_the_place_of_the_players_own() {
+        let mut boss = Registry::default();
+        line(&mut boss);
+        let shared = shared_line(&boss, "oo_42").unwrap();
+        let mut player = Registry::default();
+        let own = line(&mut player);
+        let before = player.clone();
+        assert_eq!(take_shared(&mut player, "co-1", shared), Err(SHARED_TAKEN));
+        assert_eq!(player, before);
+        assert!(player.line_mut(own).is_some());
+    }
+
+    /// What another computer sends may not lead out of the map's folder, nor be half a line.
+    #[test]
+    fn a_shared_line_that_is_not_safe_is_refused() {
+        let mut boss = Registry::default();
+        line(&mut boss);
+        let good = shared_line(&boss, "oo_42").unwrap();
+        let refused = |l: LineDesign, company: &str| take_shared(&mut Registry::default(), company, l) == Err(SHARED_NOT_SAFE);
+        assert!(refused(good.clone(), " "));
+        assert!(refused(LineDesign { number: " ".into(), ..good.clone() }, "co-1"));
+        assert!(refused(LineDesign { directions: Vec::new(), ..good.clone() }, "co-1"));
+        for ttl in ["../../evil", "a/b", "a\\b", "C:evil", ""] {
+            assert!(refused(LineDesign { map: Some(MapSource { ttl: ttl.into(), ..MapSource::default() }), ..good.clone() }, "co-1"), "{ttl}");
+        }
+        // (the number becomes a file name through `safe_name`)
+        assert!(stems(&{
+            let mut r = Registry::default();
+            take_shared(&mut r, "co-1", LineDesign { number: "../../evil".into(), ..good.clone() }).unwrap();
+            r
+        })
+        .values()
+        .all(|s| !s.contains(['/', '\\'])));
     }
 
     /// A line of three stops out and three back over five lanes, every day.

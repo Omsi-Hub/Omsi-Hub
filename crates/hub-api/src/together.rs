@@ -15,6 +15,8 @@
 mod host;
 #[cfg(feature = "native")]
 mod join;
+#[cfg(feature = "native")]
+mod lines;
 // (the website: nobody hosts, nobody joins)
 #[cfg(not(feature = "native"))]
 #[path = "together/off.rs"]

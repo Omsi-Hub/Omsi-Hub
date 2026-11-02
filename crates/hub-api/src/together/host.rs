@@ -250,7 +250,9 @@ fn handle(body: &str) -> String {
             company::changed(s);
         }
         tell_boss(s, h);
-        answered.body.to_string()
+        let mut body = answered.body;
+        super::lines::attach(&mut body);
+        body.to_string()
     })
 }
 

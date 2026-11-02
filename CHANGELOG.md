@@ -16,6 +16,10 @@ merged but in no build yet is under Unreleased.
 
 ### Fixed
 
+- **Your company's own lines reach the player who drives them**: a line made in the line editor
+  was only on the computer it was made on, so a colleague got told it was not in the simulator.
+  It now comes with the duty when he starts it, as long as he has the same map. A line of his
+  own with the same number stays his: he is asked to rename it first.
 - **The Companion no longer says the game is not running when the game hitches**: after a slow
   frame the plugin (1.18.1) waits for the game to run smoothly before it sends the phone
   anything, and a game that kept hitching looked stopped. It now says it is there every second

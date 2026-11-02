@@ -684,6 +684,13 @@ fn drive(args: &Value, p: &dyn Platform, what: &str) -> Answer {
     let Some(start) = v.get("start").and_then(|x| serde_json::from_value::<DriveStart>(x.clone()).ok()) else {
         return Ok(json!({ "error": refusal_words(&v) }));
     };
+    // (the boss's own line is not in this computer's game yet)
+    if let Some(line) = v.get("own_line").and_then(|x| serde_json::from_value(x.clone()).ok()) {
+        if let Err(e) = super::lines::install(&start, line) {
+            core::log_to_file(&format!("company session: the duty's line not written: {e}"));
+            return Ok(json!({ "error": e }));
+        }
+    }
     let base: core::Duty = serde_json::from_value(args.get("base").cloned().unwrap_or(Value::Null)).map_err(|e| format!("base: {e}"))?;
     let name = driver();
     let mut d = start.duty(base);
