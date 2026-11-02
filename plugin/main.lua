@@ -22,7 +22,7 @@
 --                         the game to Omsi-Hub's companion server by UDP)
 -- A game without the file functions gets the handshake and the reports in its log instead.
 
-local VERSION = "1.18.0"
+local VERSION = "1.18.1"
 local BRIDGE = 1
 local PANEL = "omsihub"
 
@@ -693,6 +693,7 @@ local traffic = require("traffic")
 traffic.setup(has)
 omsi.every(1, function() if calm() then traffic.tick(1, now(), clock()) end end)
 omsi.every(5, live_notices)
+omsi.every(1, companion.alive)
 omsi.every(0.25, function() if calm() then companion.tick(0.25) end end)
 omsi.every(0.1, function() if calm() then companion.screen() end end)
 omsi.every(2, messages.read)

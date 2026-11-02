@@ -14,6 +14,14 @@ merged but in no build yet is under Unreleased.
   its time, the timing points marked, the reliefs (from which duty, to which) and the breaks.
   The cards carry the company's logo picture (or its monogram and name) and its colour.
 
+### Fixed
+
+- **The Companion no longer says the game is not running when the game hitches**: after a slow
+  frame the plugin (1.18.1) waits for the game to run smoothly before it sends the phone
+  anything, and a game that kept hitching looked stopped. It now says it is there every second
+  all the same. What the phone shows still waits for the smooth frames, and while the game does
+  nothing at all for more than five seconds, as a long load can, the phone says so.
+
 ## 1.2.0-beta.2
 
 The next test build for the beta testers, now for macOS too. It needs what 1.2.0-beta.1 needs,
