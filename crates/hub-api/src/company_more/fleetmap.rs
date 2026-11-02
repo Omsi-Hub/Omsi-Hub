@@ -14,7 +14,11 @@
 //!   (what the plugin writes, `traffic.json`: `hub_game::bridge::Traffic`); else the player's
 //!   bus is on the timetable by the delay the game reported;
 //! - the game's other traffic is drawn too: its cars, trams and bicycles, the buses of the
-//!   timetable's lines the company does not run, and the other players' buses in a LAN game.
+//!   timetable's lines the company does not run, and the other players' buses in a LAN game;
+//! - the players of "Play together" each drive in a game of their own: their launchers say where
+//!   their buses are (`together::guest_buses`), and each is on the block of the duty he drives -
+//!   for the boss and for every player who looks at the map (complaints, 2026-10-26: "the players
+//!   don't see each other on the map").
 //!
 //! The clock follows the time of day - the game's while it runs on the company's map, else the
 //! company's to the second - or runs by itself, ten or sixty times as fast. The view is asked for
@@ -468,6 +472,29 @@ fn traffic_of(t: &hub_game::bridge::Traffic, map: &str, origin: [f64; 2], edge: 
     Some(GameRoad { player, buses, vehicles, players })
 }
 
+/// Where the buses of the players of "Play together" are (`together::guest_buses`), in the map's
+/// metres from `origin` (its tiles `edge` metres): each player's name, the line and tour of the
+/// duty he drives, and his bus - those of the company's map.
+fn guests_of(c: &Company, origin: [f64; 2], edge: f64) -> Vec<(String, Option<(String, String)>, Telemetry)> {
+    crate::together::guest_buses(c)
+        .into_iter()
+        .filter(|(_, _, b)| same_map(&b.map, &c.map))
+        .map(|(name, duty, b)| {
+            let off = b.reference.map_or([0.0, 0.0], |r| [r[0] - (r[2] * edge + r[4]), r[1] - (r[3] * edge + r[5])]);
+            let t = Telemetry {
+                at: [b.x - off[0] - origin[0], b.y - off[1] - origin[1]],
+                heading: b.heading.rem_euclid(360.0),
+                delay: b.delay,
+                passengers: b.passengers,
+                speed: b.speed,
+                line: b.line.trim().to_string(),
+                tour: b.tour.trim().to_string(),
+            };
+            (name, duty.map(|r| (r.line, r.tour)), t)
+        })
+        .collect()
+}
+
 /// Whether the bus `t` the game drives (the player's, or one of the timetable's) is on block `b`:
 /// its line and its tour, or a tour of the timetable it runs.
 fn drives(t: &Telemetry, b: &Block, tp: &co::day::TourPlan) -> bool {
@@ -517,15 +544,68 @@ impl Marker {
     }
 }
 
-/// How each trip of a block runs: the lateness model's, the player's tours by the delay the game
-/// reported (on time when it did not).
+/// How each trip of a block runs: the lateness model's, the player's tours and the player's own
+/// duty by the delay the game reported (on time when it did not).
 fn runs_of(m: &MapState, day: &Day, tp: &co::day::TourPlan, b: &Block) -> Vec<Run> {
+    let d = m.delays.get(&(b.number.to_lowercase(), b.tour.trim().to_string())).copied().unwrap_or(0.0);
     if tp.by_player {
-        let d = m.delays.get(&(b.number.to_lowercase(), b.tour.trim().to_string())).copied().unwrap_or(0.0);
         return vec![Run::late(d, d); b.trips.len()];
     }
+    // (the model leaves out the player's duty - nobody's employee drives it -: its trips ran as
+    // not run, and the bus stood at the terminus for the next duty of the company's driver while
+    // the player drove it - a beta tester's)
+    let players = |j: usize| tp.duties.iter().any(|x| x.driver == Some(PLAYER) && x.start <= j && j < x.end);
     let row = day.model.get(b.ti);
-    (0..b.trips.len()).map(|j| row.and_then(|r| r.get(j)).and_then(|x| x.as_ref()).map_or(Run::default(), |t| Run::late(t.dep * 60.0, t.arr * 60.0))).collect()
+    (0..b.trips.len())
+        .map(|j| match row.and_then(|r| r.get(j)).and_then(|x| x.as_ref()) {
+            Some(t) => Run::late(t.dep * 60.0, t.arr * 60.0),
+            None if players(j) => Run::late(d, d),
+            None => Run::default(),
+        })
+        .collect()
+}
+
+/// Where the bus of a block is on its way now, in the game's own coordinates (`game_place`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GamePlace {
+    pub x: f64,
+    pub y: f64,
+    pub heading: f64,
+    /// The trip's next stop (0 the first of those it calls at).
+    pub next_stop: Option<usize>,
+}
+
+/// Where the bus of `line`/`tour` (a block of today's plan) is at the company's clock as the map
+/// moves it - in the game's coordinates, for the game to put the player's bus there when he takes
+/// it over (`bridge::TakeOver`) -, while it drives block trip `trip` (an index into the tour's
+/// trips). None: the map was not built (never opened), or the bus is not on that trip now.
+pub fn game_place(s: &mut Session, line: &str, tour: &str, trip: usize) -> Option<GamePlace> {
+    let c = s.company.clone()?;
+    let plan = s.plan.clone()?;
+    let (now, _) = time_of_day(s);
+    let mut mm = more(s);
+    let m = &mut mm.map;
+    let origin = m.origin?;
+    let bi = m.blocks.iter().position(|b| same(&b.line, line) && b.tour.trim() == tour.trim())?;
+    let mut day = m.day.take();
+    let d = day_of(&mut day, s, &c, &plan);
+    let b = &m.blocks[bi];
+    let tp = plan.tours.get(b.ti)?;
+    let runs = runs_of(m, d, tp, b);
+    let refs: Vec<&TripShape> = b.trips.iter().collect();
+    let cut = tp.bus.and_then(|v| d.cut.iter().find(|x| x.vehicle == v));
+    let (live, _) = fm::block_at(&refs, &runs, now, cut.map(|x| x.at as f64 * 60.0));
+    m.day = day;
+    let at = live.at.filter(|_| live.trip == trip && matches!(live.doing, Doing::Service | Doing::Deadhead))?;
+    // (the map's metres from its middle; the game's coordinates are its world metres, where the
+    // place the plugin last gave by its tile does not say otherwise: `traffic_of`)
+    #[cfg(feature = "native")]
+    let edge = omsi_map::tile_size();
+    #[cfg(not(feature = "native"))]
+    let edge = 300.0;
+    let traffic = crate::addon::plugins_dir().ok().map(|d| hub_game::install::plugin_dir(&d)).and_then(|d| hub_game::bridge::read_traffic(&d));
+    let off = traffic.filter(|t| same_map(&t.map, &c.map)).and_then(|t| t.reference).map_or([0.0, 0.0], |r| [r.x - (r.tile_x as f64 * edge + r.local_x), r.y - (r.tile_y as f64 * edge + r.local_y)]);
+    Some(GamePlace { x: at[0] + origin[0] + off[0], y: at[1] + origin[1] + off[1], heading: live.heading, next_stop: live.next_stop })
 }
 
 /// The fleet map's view at its clock (asked for a few times a second): the clock, the lines
@@ -562,6 +642,13 @@ pub fn view(s: &mut Session, _args: &Value) -> Value {
     }
     live_delays(m, c, in_game);
     game_road(m, c, in_game);
+    // (the players of "Play together" where their own games say, each once)
+    #[cfg(feature = "native")]
+    let edge = omsi_map::tile_size();
+    #[cfg(not(feature = "native"))]
+    let edge = 300.0;
+    let guests = m.origin.map(|o| guests_of(c, o, edge)).unwrap_or_default();
+    let mut guest_used = vec![false; guests.len()];
     // (the game's timetable buses each on one block of the plan at most)
     let mut taken = vec![false; m.road.as_ref().map_or(0, |r| r.buses.len())];
     // the blocks of today's plan, and how its trips run
@@ -597,6 +684,18 @@ pub fn view(s: &mut Session, _args: &Value) -> Value {
             let player = tp.by_player || tp.duties.iter().any(|x| x.driver == Some(PLAYER));
             let road = m.road.as_ref();
             let mine = road.and_then(|r| r.player.as_ref()).filter(|t| player && drives(t, b, tp)).cloned();
+            // (a player of "Play together" on its duty: by the duty he drives, else by what his game
+            // says it runs)
+            let on = |d: &Option<(String, String)>| d.as_ref().is_some_and(|(l, t)| l.eq_ignore_ascii_case(&b.line) && t.trim() == b.tour.trim());
+            let guest =
+                guests.iter().enumerate().find(|(i, g)| !guest_used[*i] && on(&g.1)).or_else(|| guests.iter().enumerate().find(|(i, g)| !guest_used[*i] && g.1.is_none() && drives(&g.2, b, tp)));
+            let mine = match guest {
+                Some((i, g)) => {
+                    guest_used[i] = true;
+                    Some(g.2.clone())
+                }
+                None => mine,
+            };
             let ai = if player || broken.is_some() {
                 None
             } else {
@@ -644,6 +743,14 @@ pub fn view(s: &mut Session, _args: &Value) -> Value {
     // the game's other traffic: its vehicles, the buses of the lines the company does not run
     // (their line on their tag), the other players' buses (their names)
     let dm = |x: f64| (x * 10.0).round() / 10.0;
+    // (the players of "Play together" not on a block of the day: by their names)
+    let spare: Vec<Value> = guests
+        .iter()
+        .zip(&guest_used)
+        .filter(|(_, used)| !**used)
+        .map(|((name, _, t), _)| json!({ "key": format!("player|{name}"), "at": [dm(t.at[0]), dm(t.at[1])], "h": dm(t.heading), "tag": name }))
+        .collect();
+    let named: Vec<&str> = guests.iter().map(|g| g.0.as_str()).collect();
     let traffic = m.road.as_ref().map(|r| {
         let others: Vec<Value> = r
             .buses
@@ -653,9 +760,17 @@ pub fn view(s: &mut Session, _args: &Value) -> Value {
             .map(|((t, number), _)| json!({ "key": format!("game|{}|{}|{number}", t.line, t.tour), "at": [dm(t.at[0]), dm(t.at[1])], "h": dm(t.heading), "tag": t.line }))
             .collect();
         let vehicles: Vec<Value> = r.vehicles.iter().enumerate().map(|(i, (id, at, h, kind))| json!([id.map_or(format!("v{i}"), |n| n.to_string()), dm(at[0]), dm(at[1]), dm(*h), kind])).collect();
-        let players: Vec<Value> = r.players.iter().map(|(name, at, h)| json!({ "key": format!("player|{name}"), "at": [dm(at[0]), dm(at[1])], "h": dm(*h), "tag": name })).collect();
+        // (a player of the session in the same world as the boss: once, where his own game says)
+        let mut players: Vec<Value> = r
+            .players
+            .iter()
+            .filter(|(name, ..)| !named.contains(&name.as_str()))
+            .map(|(name, at, h)| json!({ "key": format!("player|{name}"), "at": [dm(at[0]), dm(at[1])], "h": dm(*h), "tag": name }))
+            .collect();
+        players.extend(spare.iter().cloned());
         json!({ "vehicles": vehicles, "buses": others, "players": players, "label": tr("The game's traffic") })
     });
+    let traffic = traffic.or_else(|| (!spare.is_empty()).then(|| json!({ "vehicles": [], "buses": [], "players": spare, "label": tr("The game's traffic") })));
     // the panel
     let on_road = markers.iter().filter(|mk| matches!(mk.live.doing, Doing::Service | Doing::Deadhead)).count();
     let pausing = markers.iter().filter(|mk| mk.live.doing == Doing::Layover).count();
@@ -777,8 +892,12 @@ fn bus_card(c: &Company, plan: &Plan, d: &Day, m: &MapState, mk: &Marker, clock:
     let driver = duty.and_then(|k| tp.duties.get(k)).and_then(|x| x.driver);
     // (Beta 63: a player of "Play together" on it, or the AI for one who left it)
     let guest = duty.and_then(|k| co::together::guest_on(c, &c.date, &tp.tour.line, &tp.tour.tour, k));
+    // (the player's own duty his game left before it was done: the AI drives it since, `own`)
+    let own = duty.and_then(|k| co::own::of(c, &c.date, &tp.tour.line, &tp.tour.tour, k));
+    let own_ai = duty.zip(own).is_some_and(|(k, o)| o.ai_drives(j.saturating_sub(tp.duties[k].start)));
     let driver_text = match driver {
         Some(PLAYER) if guest.is_some() => guest.map(|g| crate::together::guest_label(c, g)).unwrap_or_default(),
+        Some(PLAYER) if own_ai => tr("AI driver"),
         Some(PLAYER) => tr("You"),
         Some(AGENCY) => tr("Agency driver"),
         Some(id) => c.employee(id).map(|e| e.name.clone()).unwrap_or_else(|| "—".into()),
@@ -825,6 +944,17 @@ fn bus_card(c: &Company, plan: &Plan, d: &Day, m: &MapState, mk: &Marker, clock:
         "rf": match duty { Some(k) => json!({ "view": 0, "day": 0, "sel": { "duty": [b.line, b.tour, k] } }), None => json!({ "view": 1, "day": 0, "reveal": format!("B|{}|{}", b.line, b.tour) }) },
     })];
     links.push(json!({ "label": tr("Service control"), "icon": "support_agent", "tab": OPS_TAB }));
+    // (on the road today: the player takes its bus over where it is - from its driver, or his own
+    // duty back from the AI - with everything of the duty typed in, `launch::DutyLaunch::taking`)
+    let on_road = matches!(mk.live.doing, Doing::Service | Doing::Deadhead | Doing::Layover | Doing::Depot) && bus.is_some();
+    if let Some(k) = duty.filter(|_| on_road && guest.is_none() && !mk.player) {
+        let duty = json!({ "date": c.date, "line": tp.tour.line, "tour": tp.tour.tour, "duty": k });
+        match driver {
+            Some(PLAYER) if own_ai => links.insert(0, json!({ "label": tr("Take it back from the AI"), "icon": "sports_esports", "take": duty, "back": true, "main": true })),
+            Some(PLAYER) => {}
+            _ => links.insert(0, json!({ "label": tr("Take over this bus"), "icon": "sports_esports", "take": duty, "main": true })),
+        }
+    }
     if let Some(v) = bus {
         links.push(json!({ "label": tr("The bus's page"), "icon": "directions_bus", "bus": v.id }));
     }
@@ -922,6 +1052,18 @@ fn notes_of(c: &Company, tp: &co::day::TourPlan, mk: &Marker, clock: f64) -> Vec
 }
 
 pub fn act(s: &mut Session, what: &str, args: &Value) -> Option<Answer> {
+    // the bus picked taken over by the player in his game (`launch::DutyLaunch::taking`; `back`:
+    // his own duty taken back from the AI)
+    if what == "map_take" {
+        let r: co::duty_launch::DutyRef = match serde_json::from_value(args.get("duty").cloned().unwrap_or(Value::Null)) {
+            Ok(r) => r,
+            Err(e) => return Some(Err(format!("duty: {e}"))),
+        };
+        let back = args.get("back").and_then(Value::as_bool).unwrap_or(false);
+        s.launch = Some(if back { super::super::launch::DutyLaunch::new(r, super::super::MAP_TAB) } else { super::super::launch::DutyLaunch::taking(r, super::super::MAP_TAB) });
+        s.generation += 1;
+        return Some(Ok(json!({ "launch": true })));
+    }
     let mut m = more(s);
     let m = &mut m.map;
     match what {

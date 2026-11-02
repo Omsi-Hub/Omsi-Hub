@@ -17,7 +17,8 @@
 //! 4. **the bridge's loop** on a thread of its own, every [`EVERY`] while the game runs: the
 //!    plugin's reports booked (`addon::book`), the company told (`company::after_booking`), its
 //!    own work done (the replies, the status, the inbox for the plugin: `messages::tick`), the
-//!    on-time brief written (`company::ontime::refresh`), the live dashboard sampled
+//!    on-time brief written (`company::ontime::refresh`), the company's buses for the game's AI
+//!    (`company::fleetgame::refresh`), the live dashboard sampled
 //!    (`live::sample`); the notices go to the plugin as they come (`addon::notify_game`);
 //! 5. the game ended: the reports booked once more, then the page told (`game-ended`, with what
 //!    was booked).
@@ -33,6 +34,14 @@ use std::time::{Duration, Instant};
 
 /// The game Omsi-Hub started (one at a time).
 static GAME: Mutex<Option<Game>> = Mutex::new(None);
+/// The bridge's loop watches a game (until it told the company how it ended: `watch`).
+static WATCHING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// A game Omsi-Hub started is watched to its end now: the company hears how it ended from the
+/// watch (`company::game_ended`), not by finding it gone.
+pub fn watching() -> bool {
+    WATCHING.load(std::sync::atomic::Ordering::SeqCst)
+}
 /// How often the bridge's loop looks while the game runs.
 pub const EVERY: Duration = Duration::from_secs(2);
 
@@ -158,6 +167,13 @@ pub fn start(d: &Duty, p: &dyn Platform) -> Answer {
         }
     };
     let issued = assignment.as_ref().map(|a| a.issued);
+    // (the company's buses for the game's AI only in a company's duty, written for it just now:
+    // `company::fleetgame`; a drive of the player's own runs the map's whole timetable)
+    if let Some(dir) = plugin.as_deref().filter(|_| assignment.as_ref().is_none_or(|a| a.company.trim().is_empty())) {
+        if let Err(e) = hub_game::bridge::clear_fleet(dir) {
+            hub_core::log_line(&format!("drive: the company's buses for the game: {e}"));
+        }
+    }
     let spec = launch_spec(d, Path::new(&s.omsi2_folder));
     let g = process::start(&checked.install.exe, &spec).map_err(|e| match e {
         #[cfg(feature = "native")]
@@ -185,6 +201,7 @@ pub fn look() -> crate::addon::Booked {
     let b = crate::addon::book();
     crate::company::after_booking(&b);
     crate::company::ontime::refresh();
+    crate::company::fleetgame::refresh();
     crate::live::sample();
     b
 }
@@ -197,6 +214,7 @@ pub fn poll_once() -> Value {
 /// Watch the game on a thread of its own until it ends: the bridge every [`EVERY`], and once
 /// more at the end; then tell the page.
 fn watch(emit: Option<crate::Emitter>) {
+    WATCHING.store(true, std::sync::atomic::Ordering::SeqCst);
     std::thread::spawn(move || {
         // (the company's words on this thread in the player's language)
         crate::company::words::set_language(&crate::addon::player_language());
@@ -222,7 +240,10 @@ fn watch(emit: Option<crate::Emitter>) {
             std::thread::sleep(Duration::from_millis(250));
             let ended = {
                 let mut game = GAME.lock().unwrap_or_else(|e| e.into_inner());
-                let Some(g) = game.as_mut() else { return };
+                let Some(g) = game.as_mut() else {
+                    WATCHING.store(false, std::sync::atomic::Ordering::SeqCst);
+                    return;
+                };
                 let ended = g.poll();
                 if ended.is_some() {
                     *game = None;
@@ -231,6 +252,10 @@ fn watch(emit: Option<crate::Emitter>) {
             };
             if let Some(ended) = ended {
                 add(look());
+                // (what the player drove of a company's duty and what the AI drives of it now:
+                // the game's reports decide, `company::game_ended`)
+                crate::company::game_ended(ended.code);
+                WATCHING.store(false, std::sync::atomic::Ordering::SeqCst);
                 hub_core::log_line(&format!("drive: openOMSI ended ({:?}) after {:.0} s; {} reports, {} trips booked", ended.code, ended.seconds, booked.reports, booked.trips));
                 if let Some(e) = &emit {
                     e("game-ended", json!({ "code": ended.code, "seconds": ended.seconds, "booked": booked }));

@@ -863,6 +863,9 @@ function career() {
 
 // --- the more pages (`co_more_view`) -----------------------------------------------------------
 
+/** The longest duty the player set (`planning::tools`). */
+let longest = 450;
+
 function planning(a) {
   if (rosterflowOn()) return { rosterflow: true };
   const c = co();
@@ -896,6 +899,7 @@ function planning(a) {
       fill: { label: 'FILL THE ROSTER', tip: 'Fix in the roster what the dispatcher would take: free buses, and free drivers by the working-time rules. Only what is planned runs.' },
       clear: { label: a.clear_armed ? 'PRESS AGAIN' : 'CLEAR THE DAY', widest: ['CLEAR THE DAY', 'PRESS AGAIN'], armed: !!a.clear_armed, tip: 'Take every bus and driver of this weekday out of the roster' },
       repeat: { label: 'REPEAT MON–FRI', tip: "This weekday's roster on the other days too (theirs is replaced)" },
+      longest: { label: 'LONGEST DUTY', value: longest, choices: Array.from({ length: 17 }, (_, k) => ({ value: 120 + k * 30, label: `${Math.floor((120 + k * 30) / 60)}:${String((120 + k * 30) % 60).padStart(2, '0')}` })), tip: 'A driver works at most this long a day: longer tours are split into duties no longer than this, and the dispatcher gives nobody more.' },
     },
     gantt: { t0: 5 * 60, t1: 23 * 60, head: { fold: { label: 'COLLAPSE ALL', icon: 'unfold_less', tip: 'Fold every line to its heading: what it has planned, and what is open', all: false } }, groups, names: LINES.map((l) => l.name) },
     side: sidePanel(sel, a.arm, day === 0),
@@ -921,6 +925,8 @@ function sidePanel(sel, arm, today) {
       cands_title: 'WHO COULD DRIVE IT',
       cands: [{ who: 'player', name: 'You', state: 'Drive it yourself', tone: 'dim', swatch: 'accent', on: who === 'you' }, ...drivers().map((e) => ({ who: `staff:${e.id}`, name: e.name, state: e.id === 2 ? 'On holiday from tomorrow' : 'Free then', tone: e.id === 2 ? 'warn' : 'ok', swatch: e.colour, on: who === e.id })), { who: null, name: 'Nobody', state: '', tone: 'dim', swatch: null, on: false }],
       drive: today ? 'DRIVE THIS DUTY' : null,
+      // (split in two at its middle, as often as wanted: `planning::duty_panel`)
+      split: to - from >= 120 ? { label: 'Split this duty', note: `At ${hhmm(Math.round((from + to) / 2 / 10) * 10)}, ${l.caption.split(' – ')[0]}`, tip: 'A new duty begins at the relief point nearest its middle: each half can be split again.' } : null,
     };
   }
   return {
@@ -948,6 +954,17 @@ function moreAct(a) {
       break;
     case 'plan_give_bus':
       if (t) t.bus = a.bus == null ? null : Number(a.bus);
+      break;
+    case 'plan_split':
+      if (t && t.duties[a.k]) {
+        const [from, to, who] = t.duties[a.k];
+        const at = Math.round((from + to) / 2 / 10) * 10;
+        t.duties.splice(a.k, 1, [from, at, who], [at, to, null]);
+        say(`Duty cut on ${t.line}/${t.tour} at ${hhmm(at)}`);
+      }
+      break;
+    case 'plan_duty_max':
+      longest = Number(a.minutes) || longest;
       break;
     case 'plan_drive':
       st.launch = { duty: `${st.open}|${co().date}|${t?.line}|${t?.tour}|${a.k}` };
@@ -1311,7 +1328,11 @@ function depotDash() {
 
 function depot() {
   const c = co();
-  const busAt = (b) => ({ id: b.id, number: b.number, size: b.kind.startsWith('Articulated') ? 'articulated' : 'solo', file: b.file, paint: b.livery, tip: `${b.number} ${b.name}  ·  condition ${Math.round(b.cond * 100)} %` });
+  // (out on their tours by the clock, as `company_more::depot` has it: the 3D yard has them
+  // drive out and back)
+  const TOURS = { 1: [7 * 60, 13 * 60], 2: [8 * 60, 18 * 60], 3: [6 * 60, 7 * 60 + 50] };
+  const out = (b) => !!TOURS[b.id] && c.minute >= TOURS[b.id][0] && c.minute < TOURS[b.id][1];
+  const busAt = (b) => ({ id: b.id, number: b.number, size: b.kind.startsWith('Articulated') ? 'articulated' : 'solo', file: b.file, paint: b.livery, tip: `${b.number} ${b.name}  ·  condition ${Math.round(b.cond * 100)} %`, out: out(b) });
   const bld = (head, works = null) => ({ built: true, head, works });
   // (`?mock&buses=120`: a full yard, for the 3D depot's speed)
   const many = Number(new URLSearchParams(location.search).get('buses')) || 0;

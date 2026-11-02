@@ -9,6 +9,7 @@
 --   data/notices.json     Omsi-Hub -> plugin: notices that come while the game runs
 --   data/messages.json    Omsi-Hub -> plugin: the control room's messages (messages.lua)
 --   data/ontime.json      Omsi-Hub -> plugin: the on-time card's brief (ontime.lua)
+--   data/fleet.json       Omsi-Hub -> plugin: the company's buses for the game's AI (fleet.lua)
 --   data/hello.json       plugin -> Omsi-Hub: the handshake (what this openOMSI offers)
 --   data/reports.jsonl    plugin -> Omsi-Hub: the duty taken, each trip done, the duty ended
 --   data/replies.jsonl    plugin -> Omsi-Hub: the driver's answers and quick buttons
@@ -21,7 +22,7 @@
 --                         the game to Omsi-Hub's companion server by UDP)
 -- A game without the file functions gets the handshake and the reports in its log instead.
 
-local VERSION = "1.16.1"
+local VERSION = "1.18.0"
 local BRIDGE = 1
 local PANEL = "omsihub"
 
@@ -200,9 +201,11 @@ end
 -- (signing on is out for now (Luc, 2026-10-25: "Het aanmelden ... mogen er voor nu wel even
 -- uit"): the driver is at work at once, the duty's codes in the IBIS as without a pass)
 local SIGN_ON = false
-if SIGN_ON and company_duty() then signon.setup(tr, assignment) end
+-- (its translator always: the panel's heading is its too; the pass only with signing on)
+signon.setup(tr, SIGN_ON and company_duty() and assignment or nil)
 -- (the on-time card: punctuality, headway, connections, diversions - `ontime.lua`, its own)
 local ontime = require("ontime")
+local fleet = require("fleet")
 ontime.setup(tr, assignment, has)
 
 -- the duty strip, the handover notes and the walk-around of a company's duty (duty_strip.lua):
@@ -271,6 +274,11 @@ end
 local function say(text, title, icon, seconds)
   notes.say(text, { title = title, icon = icon, color = "#F58620", seconds = seconds or 10 })
 end
+
+-- a bus taken over halfway along its trip (the assignment's `take_over`: takeover.lua) - the
+-- AI's bus of the tour, where it is
+local takeover = require("takeover")
+takeover.setup(assignment, function(text, title, icon) say(tr(text), tr(title), icon, 8) end)
 
 local function start_duty()
   if not (assignment and has["duty.start"]) or duty_now() or start.busy() then return end
@@ -484,12 +492,27 @@ omsi.on("red_light", function(kmh) watch.red_light(kmh) end)
 -- (the object editor once, as soon as the world is there: the frames come with it)
 local editor_opened = false
 
+-- the game busy - a frame long after the one before (the world just loaded, or the game
+-- hitched): what can wait (the phone companion, the fleet map's traffic) waits until the frames
+-- have come smoothly for a few seconds. openOMSI stops a plugin whose one call runs longer than
+-- 50 ms, and while the game still loads beside it every call of the plugin takes longer. (In
+-- real time: the game gives a frame at most a tenth of a second of its own.)
+local CALM = 3
+local last_frame, busy_at = now(), nil
+local function calm()
+  return not busy_at or now() - busy_at >= CALM
+end
+
 omsi.on("frame", function(dt)
+  local t = now()
+  if t - last_frame > 0.2 then busy_at = t end
+  last_frame = t
   if assignment and assignment.editor and not editor_opened then
     editor_opened = true
     if has["game.action"] then omsi.game.action("object_editor") end
   end
   if fn("has_vehicle") and not omsi.has_vehicle() then return end
+  takeover.frame(dt)
   trip.frame(dt)
   watch.frame(dt)
   strip.frame(dt)
@@ -618,6 +641,7 @@ omsi.on("stop", function()
   strip.stop()
   ontime.stop()
   navigator.stop()
+  fleet.stop()
 end)
 
 -- service control's messages for the duty (`company.lua`), each once, when they are due
@@ -655,13 +679,22 @@ omsi.every(2, function()
   watch_trips()
   panel()
 end)
+-- (in a company's duty only the company's own buses on the road, where its fleet map has them;
+-- not held back while the game loads: the other buses are kept off before they are seen)
+fleet.setup(has)
+omsi.every(1, function()
+  -- (the tour whose bus the player took over: the AI's no more)
+  local line, tour = takeover.taken()
+  if line then fleet.keep_off(line, tour) end
+  fleet.tick(1, company_duty())
+end)
 -- (the game's traffic for the fleet map: whatever the player drives)
 local traffic = require("traffic")
 traffic.setup(has)
-omsi.every(1, function() traffic.tick(1, now(), clock()) end)
+omsi.every(1, function() if calm() then traffic.tick(1, now(), clock()) end end)
 omsi.every(5, live_notices)
-omsi.every(0.25, function() companion.tick(0.25) end)
-omsi.every(0.1, companion.screen)
+omsi.every(0.25, function() if calm() then companion.tick(0.25) end end)
+omsi.every(0.1, function() if calm() then companion.screen() end end)
 omsi.every(2, messages.read)
 -- (the navigator set again once for what its parts changed meanwhile)
 omsi.every(0.2, navigator.flush)

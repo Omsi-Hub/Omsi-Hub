@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 /// The plugin's name: its folder in the plugins folder.
 pub const NAME: &str = "omsihub";
 /// The plugin's version; `plugin/main.lua` says the same (a test keeps the two the same).
-pub const VERSION: &str = "1.16.1";
+pub const VERSION: &str = "1.18.0";
 /// The plugin's files.
 pub const FILES: &[(&str, &str)] = &[
     ("main.lua", include_str!("../../../plugin/main.lua")),
@@ -37,6 +37,8 @@ pub const FILES: &[(&str, &str)] = &[
     ("legs.lua", include_str!("../../../plugin/legs.lua")),
     ("start.lua", include_str!("../../../plugin/start.lua")),
     ("traffic.lua", include_str!("../../../plugin/traffic.lua")),
+    ("fleet.lua", include_str!("../../../plugin/fleet.lua")),
+    ("takeover.lua", include_str!("../../../plugin/takeover.lua")),
     ("dash.lua", include_str!("../../../plugin/dash.lua")),
     ("layout.lua", include_str!("../../../plugin/layout.lua")),
     ("navigator.lua", include_str!("../../../plugin/navigator.lua")),
@@ -45,7 +47,7 @@ pub const FILES: &[(&str, &str)] = &[
     // (Omsi-Hub's look for openOMSI's own screens: an interface theme, `ui.set_theme`)
     ("theme.json", include_str!("../../../plugin/theme.json")),
     ("theme-loading.svg", include_str!("../../../plugin/theme-loading.svg")),
-    ("theme-icon.svg", include_str!("../../../plugin/theme-icon.svg")),
+    ("theme-logo.svg", include_str!("../../../plugin/theme-logo.svg")),
 ];
 /// The texts the plugin shows (`tr` in `plugin/main.lua`), in English: Omsi-Hub puts their
 /// translations into the assignment (`bridge::Assignment::texts`).
@@ -264,6 +266,11 @@ pub const TEXTS: &[&str] = &[
     "Roadworks on the line today: expect delays",
     "Diversion on the line today: expect delays",
     "Diversion on the line today",
+    "You took the bus over where it was: drive on, the duty is typed in",
+    "Bus taken over",
+    "Your bus is where the company's bus was: drive on, the duty is typed in",
+    "Your bus waits at the stop the duty goes on from: drive on, the duty is typed in",
+    "The bus could not be put on its way: drive to the duty's next stop",
 ];
 
 /// The sounds of the control room's messages (`lua/messages.lua`), made here as small WAV files:

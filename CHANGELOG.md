@@ -2,16 +2,65 @@
 
 Each version of the Omsi-Hub add-on, newest first. The release on GitHub links here.
 
-## Unreleased
+## 1.2.0-beta.1
+
+A test build for the beta testers. It needs **openOMSI 0.2.22 or newer** and an original
+**OMSI 2**; only your own buses in the game needs an openOMSI with `timetable.set_ai_trips`.
+The app does not update a test build: install the next version yourself.
 
 ### Added
 
+- **Only your own buses in the game, where the fleet map has them**: when you drive a duty of
+  your company, the game's AI runs only the trips your company runs that day, with your buses.
+  Buses of lines you do not run stay off the road, and so do tours you dropped. Each of your
+  buses comes onto the road as late as the fleet map has it, so what you meet on the street is
+  what the fleet map shows. The stops' departure boards and the people waiting at them only
+  count those buses too. In a drive of your own the game runs the map's whole timetable as
+  before. This needs an openOMSI that has `timetable.set_ai_trips`. With an older one the
+  other buses are taken off the road as they come, and yours run on time. (The plugin is 1.17.0.)
 - **RosterFlow prints duty cards**: the print menu has **Duty cards (PDF)**, every duty of the
   day as a depot prints them, two to an A4 sheet across to cut in two. Each card has the depot,
   the day, the duty number, signing on and off, the longest break, the driving time and the
   paid time, and then every piece: its running number and bus, every trip with each stop and
   its time, the timing points marked, the reliefs (from which duty, to which) and the breaks.
   The cards carry the company's logo picture (or its monogram and name) and its colour.
+- **RosterFlow's complete handbook**: the "?" in RosterFlow's title bar has **The complete
+  handbook (English)**, which opens the whole handbook (PDF) in your browser.
+
+### Changed
+
+- **Your drivers work days as long as you want**: the planning has a **Longest duty** in its
+  toolbar (2:00 to 10:00). A tour longer than that is split into duties no longer than it, and
+  the dispatcher gives no driver more work in a day. A new company starts at 7:30; a company of
+  before keeps its planning until you set one.
+- **Split a duty with one click, as often as you want**: a duty chosen on the planning has
+  **Split this duty**, which starts a new duty at the relief point nearest its middle (it says
+  where); each half can be split again.
+- **The online account asks the server far less**: your online state, your profile, your
+  friends and your invites now come in one small request, which sends the lists only when
+  something in them changed. While Omsi-Hub's window is in the background (you are driving) it
+  asks every three minutes instead of every minute, and a friend counts as online for five
+  minutes after Omsi-Hub last said so. Your cloud saves' slots are only read while a page shows
+  them.
+
+### Fixed
+
+- **Play together: duties for the players**: in a company with its own drivers no duty was
+  ever open to the players. A duty the company's own driver or the agency would drive can now
+  be taken (or asked for) by a player, who takes it over; the boss's own duty stays his. A
+  player's duty also stays his when the boss cuts its tour anew.
+- **Play together: the players see each other**: each player's bus is on the fleet map where
+  his own game says it is, on the block of the duty he drives - for the boss and for every
+  player who looks at the map. And the company's world can be joined for the whole of a duty:
+  from three hours before it begins, and after it began from its next trip (the AI drove the
+  trips before), instead of only in the 25 minutes around its start.
+- **The plugin no longer stops with "ran longer than 50 ms" as the game loads**: with the
+  phone companion on, the plugin's first moment in the game read and sent everything for the
+  phone at once - the bus and its devices, its keys, the duty's trips and every line and tour
+  of the map's timetable - and while the game was still busy loading that one call ran over
+  openOMSI's 50 ms, so it switched the plugin off and nothing of the drive reached Omsi-Hub.
+  The plugin (1.16.2) now does one of those at a time, reads the map's lines once, and sends
+  the devices' screens with less work ten times a second.
 
 ## 1.1.1
 
@@ -80,7 +129,7 @@ game's own screens needs an openOMSI with interface themes.
   the name as the map loads. When the ring is nearly round, the bus pops up and flashes its
   headlights; the stops pop up on the line as it reaches them. The pause menu, its settings and lists are panes of frosted glass
   over the game's picture, in Omsi-Hub's blue, with Omsi-Hub's logo at the top. The plugin
-  puts the look in force once; Options › Interface › Interface theme in openOMSI switches back
+  puts the look in force once; Options › Interface › Theme pack in openOMSI switches back
   to openOMSI's own look (or to another theme), and that choice stays. The plugin is 1.16.1.
 
 ### Changed

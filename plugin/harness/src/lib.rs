@@ -17,6 +17,8 @@
 //!   `omsi.timetable.buses()` and `omsi.others()` are [`GameState::traffic`],
 //!   [`GameState::timetable_buses`] and [`GameState::others`] as JSON; `omsi.map.tile_at`
 //!   puts the map's coordinates on tiles of [`GameState::tile`] metres from the origin;
+//!   `omsi.timetable.set_ai_trips` and `omsi.traffic.remove` are kept in
+//!   [`GameState::ai_trips`] and [`GameState::removed`] (a bus removed leaves the timetable's);
 //! * the bus's triggers, script variables and strings, tickets and sales are
 //!   [`GameState::triggers`], [`GameState::vars`], [`GameState::strs`], [`GameState::tickets`]
 //!   and [`GameState::sales`]; `omsi.trigger`, `omsi.bus.action` and `omsi.bus.set_line` are
@@ -82,7 +84,7 @@ pub struct GameState {
     pub language: String,
     /// The clock, seconds of the day; and the Unix time `omsi.util.now` says.
     pub clock: f64,
-    pub now: i64,
+    pub now: f64,
     /// The bus the player is in (its name), and its file.
     pub vehicle: Option<String>,
     pub bus_file: String,
@@ -114,6 +116,14 @@ pub struct GameState {
     pub timetable_buses: Vec<Value>,
     pub others: Vec<Value>,
     pub tile: f64,
+    /// The trips given to the timetable's AI (`omsi.timetable.set_ai_trips`, each call; `null`:
+    /// the whole timetable again) and the AI vehicles taken off the road (`omsi.traffic.remove`).
+    pub ai_trips: Vec<Value>,
+    pub removed: Vec<i64>,
+    /// Where the plugin put the player's bus (`omsi.map.teleport`: x, y and heading) and the
+    /// stops it made the next (`omsi.duty.skip_to`).
+    pub teleported: Vec<(f64, f64, f64)>,
+    pub skipped_to: Vec<i64>,
     /// The bus's script triggers (`omsi.bus.triggers`) and the ones fired (`omsi.trigger`),
     /// its key actions done (`omsi.bus.action`) and the lines typed (`omsi.bus.set_line`).
     pub triggers: Vec<String>,
@@ -137,7 +147,7 @@ pub struct GameState {
 
 impl Default for GameState {
     fn default() -> GameState {
-        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as f64).unwrap_or(0.0);
         GameState {
             version: "0.2.1500".into(),
             api: 1,
@@ -167,6 +177,10 @@ impl Default for GameState {
             timetable_buses: Vec::new(),
             others: Vec::new(),
             tile: 300.0,
+            ai_trips: Vec::new(),
+            removed: Vec::new(),
+            teleported: Vec::new(),
+            skipped_to: Vec::new(),
             triggers: Vec::new(),
             pressed: Vec::new(),
             held: Vec::new(),
@@ -227,12 +241,15 @@ pub const FUNCTIONS: &[&str] = &[
     "game.has",
     "map.info",
     "map.tile_at",
+    "map.teleport",
     "audio.play",
     "position",
     "others",
     "traffic.list",
+    "traffic.remove",
     "timetable.buses",
     "timetable.lines",
+    "timetable.set_ai_trips",
     "trigger",
     "press",
     "release",
@@ -420,10 +437,23 @@ fn api(lua: &Lua, state: &Rc<RefCell<GameState>>, plugin_dir: &Path) -> mlua::Re
     f!(omsi, "others", |l, s, _a: Option<f64>| to_lua(l, &Value::from(s.borrow().others.clone())));
     let traffic = lua.create_table()?;
     f!(traffic, "list", |l, s, _a: Option<f64>| to_lua(l, &Value::from(s.borrow().traffic.clone())));
+    f!(traffic, "remove", |_l, s, id: i64| {
+        let mut g = s.borrow_mut();
+        let before = g.timetable_buses.len();
+        g.timetable_buses.retain(|b| b.get("id").and_then(Value::as_i64) != Some(id));
+        g.removed.push(id);
+        Ok(g.timetable_buses.len() < before)
+    });
     omsi.set("traffic", traffic)?;
     let timetable = lua.create_table()?;
     f!(timetable, "buses", |l, s, _a: ()| to_lua(l, &Value::from(s.borrow().timetable_buses.clone())));
     f!(timetable, "lines", |l, s, _a: ()| to_lua(l, &s.borrow().lines.clone()));
+    f!(timetable, "set_ai_trips", |l, s, trips: LuaValue| {
+        let v = if trips.is_nil() { Value::Null } else { from_lua(l, trips)? };
+        let n = v.as_array().map_or(0, Vec::len) as i64;
+        s.borrow_mut().ai_trips.push(v);
+        Ok(n)
+    });
     omsi.set("timetable", timetable)?;
     f!(omsi, "speed", |_l, s, _a: ()| Ok(s.borrow().speed));
     f!(omsi, "vehicle", |_l, s, _a: ()| Ok(s.borrow().vehicle.clone()));
@@ -560,7 +590,9 @@ fn api(lua: &Lua, state: &Rc<RefCell<GameState>>, plugin_dir: &Path) -> mlua::Re
         Ok(true)
     });
     f!(duty, "skip_to", |_l, s, n: i64| {
-        if let Some(d) = s.borrow_mut().duty.as_mut() {
+        let mut g = s.borrow_mut();
+        g.skipped_to.push(n);
+        if let Some(d) = g.duty.as_mut() {
             d.trip = n;
         }
         Ok(true)
@@ -648,6 +680,10 @@ fn api(lua: &Lua, state: &Rc<RefCell<GameState>>, plugin_dir: &Path) -> mlua::Re
 
     let map = lua.create_table()?;
     f!(map, "info", |l, s, _a: ()| to_lua(l, &json!({ "path": s.borrow().map })));
+    f!(map, "teleport", |_l, s, a: (f64, f64, Option<f64>, Option<f64>)| {
+        s.borrow_mut().teleported.push((a.0, a.1, a.3.unwrap_or(0.0)));
+        Ok(true)
+    });
     f!(map, "lane", |l, s, _a: (f64, f64)| to_lua(l, &json!({ "index": 1, "distance": 0.5, "name": s.borrow().lane })));
     f!(map, "tile_at", |_l, s, a: (f64, f64)| {
         let t = s.borrow().tile;
