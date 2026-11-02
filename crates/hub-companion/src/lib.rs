@@ -76,6 +76,11 @@ pub struct Labels {
 pub trait Source: Send + Sync {
     /// The plugin's folder in the player's openOMSI (where `data/` is).
     fn plugin_dir(&self) -> Option<PathBuf>;
+    /// A game the add-on started still runs - its plugin may be quiet a while (paused in its menu,
+    /// out of focus) without the game being gone.
+    fn game_alive(&self) -> bool {
+        false
+    }
     /// The assignment the plugin was last given.
     fn assignment(&self) -> Option<Assignment>;
     /// The company's currency sign ("" for the default, "€").

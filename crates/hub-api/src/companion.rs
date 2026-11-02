@@ -253,6 +253,10 @@ impl Source for Hub {
         crate::addon::game_plugin_dir().filter(|d| d.is_dir())
     }
 
+    fn game_alive(&self) -> bool {
+        crate::drive::state()["running"].as_bool().unwrap_or(false)
+    }
+
     fn assignment(&self) -> Option<Assignment> {
         ASSIGNED.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }

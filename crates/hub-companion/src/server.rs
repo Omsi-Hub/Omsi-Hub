@@ -220,7 +220,8 @@ impl Shared {
             (None, _) => i.inbox = None,
             _ => {}
         }
-        let game = i.heard.fresh(now, state::GAME_FRESH);
+        let alive = self.source.game_alive();
+        let game = state::game_there(&i.heard, alive, now);
         // the bus's devices, made again when the player is in another bus
         if game {
             let bus = i.heard.get("bus_file").and_then(Value::as_str).unwrap_or("").to_string();
@@ -240,6 +241,7 @@ impl Shared {
             route_v: i.routing.v,
             pause: brk,
             devices: if game { i.board.json() } else { json!([]) },
+            alive,
         };
         let s = state::build(&i.heard, &facts, now);
         if s != i.state {

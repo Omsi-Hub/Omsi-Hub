@@ -89,9 +89,9 @@ once after every answer (and backs off 2 s → 10 s after errors). `after` omitt
 ```jsonc
 {
   "v": 1842,                       // version of this state; send it back as ?after=
-  "game": true,                    // the plugin was heard in the last 5 s
+  "game": true,                    // the plugin was heard in the last 5 s, or within the hour while the game the add-on started still runs (paused, out of focus)
   "clock": 30240.5,                // the game's time of day
-  "paused": false,
+  "paused": false,                 // the game's pause menu, or the game there but quiet
   "signon": {                      // signing on (the driver's pass is the add-on's)
     "stage": "signon",             // "signon" | "order" | "work" | "none" (no sign-on needed)
     "number_hint": "48…",          // never the full number or the code

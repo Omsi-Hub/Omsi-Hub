@@ -10,6 +10,15 @@ use serde_json::{json, Map, Value};
 
 /// The game counts as there when it was heard within this many seconds.
 pub const GAME_FRESH: f64 = 5.0;
+/// A game still running ([`Facts::alive`]) but quiet - paused in its menu, out of focus - counts as
+/// there, paused, for this many seconds after it was last heard: the phone keeps its navigator.
+pub const GAME_HELD: f64 = 3600.0;
+
+/// Whether the game counts as there: heard a moment ago, or still running and heard within
+/// [`GAME_HELD`].
+pub fn game_there(h: &Heard, alive: bool, now: f64) -> bool {
+    h.fresh(now, GAME_FRESH) || (alive && h.fresh(now, GAME_HELD))
+}
 /// A wait between two trips counts as a break from this many seconds before the next one
 /// leaves.
 const BREAK_MIN: f64 = 120.0;
@@ -32,6 +41,8 @@ pub struct Facts {
     pub pause: Option<Value>,
     /// The bus's devices (`crate::devices`).
     pub devices: Value,
+    /// The game started from the add-on still runs (its plugin may be quiet: paused, out of focus).
+    pub alive: bool,
 }
 
 fn f(v: Option<&Value>) -> Option<f64> {
@@ -61,14 +72,16 @@ fn assignment_of<'a>(h: &Heard, facts: &'a Facts, game: bool) -> Option<&'a Assi
 
 /// The whole state; `v` is set by the server.
 pub fn build(h: &Heard, facts: &Facts, now: f64) -> Value {
-    let game = h.fresh(now, GAME_FRESH);
+    let game = game_there(h, facts.alive, now);
+    // (there but quiet: paused in its menu or out of focus)
+    let quiet = game && !h.fresh(now, GAME_FRESH);
     let a = assignment_of(h, facts, game);
     let duty_live = if game { duty_of(h) } else { None };
     let clock = if game { f(h.get("clock")) } else { None };
     json!({
         "game": game,
         "clock": clock,
-        "paused": game && h.get("paused").and_then(Value::as_bool).unwrap_or(false),
+        "paused": game && (quiet || h.get("paused").and_then(Value::as_bool).unwrap_or(false)),
         "signon": signon(h, a, game),
         "duty": duty(h, a, duty_live),
         "trip": if game { trip(h, duty_live) } else { Value::Null },
@@ -491,6 +504,20 @@ mod tests {
             }),
             ..Assignment::default()
         }
+    }
+
+    #[test]
+    fn a_game_paused_or_out_of_focus_keeps_its_navigator() {
+        let h = driving();
+        // quiet for a minute: gone, unless the game still runs - then there, paused
+        let gone = build(&h, &Facts::default(), 61.0);
+        assert_eq!(gone["game"], false);
+        let held = build(&h, &Facts { alive: true, ..Facts::default() }, 61.0);
+        assert_eq!(held["game"], true);
+        assert_eq!(held["paused"], true);
+        assert!(!held["bus"].is_null());
+        // a moment after the last word it is not paused for that
+        assert_eq!(build(&h, &Facts { alive: true, ..Facts::default() }, 2.0)["paused"], false);
     }
 
     #[test]
