@@ -1139,17 +1139,18 @@ class Studio {
     const planeX = this.planeX;
     layers.forEach((l, k) => {
       // every stroke with its copy on the other side right after it (an eraser takes both)
+      const mirrored = planeX !== undefined && l.spiegel !== false;
       const strokes = [];
       for (const st of l.streken || []) {
         const o = strokeO3d(st);
         strokes.push(o);
-        if (planeX !== undefined) strokes.push({ ...o, punten: o.punten.map((p) => [2 * planeX - p[0], p[1], p[2]]), normalen: o.normalen.map((q) => [-q[0], q[1], q[2]]) });
+        if (mirrored) strokes.push({ ...o, punten: o.punten.map((p) => [2 * planeX - p[0], p[1], p[2]]), normalen: o.normalen.map((q) => [-q[0], q[1], q[2]]) });
       }
       const sigOf = (list) => list.map((s) => `${s.punten.length}|${s.straalCm}|${s.hardheid}|${s.dekking}|${s.gum}|${s.punten[0]}|${s.punten[s.punten.length - 1]}`).join(';');
       const all = sigOf(strokes);
       for (const t of this.targets) {
         if (t.brush.sig[k] === all) continue;
-        const per = planeX !== undefined ? 2 : 1;
+        const per = mirrored ? 2 : 1;
         const earlier = sigOf(strokes.slice(0, Math.max(0, strokes.length - per)));
         const layerFb = this.fb(t.brush.tex, k);
         gl.viewport(0, 0, t.w, t.h);

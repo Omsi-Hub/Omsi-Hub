@@ -81,6 +81,26 @@ export function mirrorPlace(place, planeX, image) {
   return { place: { ...place, zijde: place.zijde === 'L' ? 'R' : 'L', midden: [2 * planeX - place.midden[0], place.midden[1], place.midden[2]], draai: -(place.draai || 0) }, flip: image };
 }
 
+/** Whether a layer can have a copy on the other side: a brush, a decal on a side. */
+export function canMirror(layer) {
+  return layer.soort === 'penseel' || ((layer.plaats?.zijde === 'L' || layer.plaats?.zijde === 'R') && isDecal(layer));
+}
+
+/** Whether a layer is copied onto the other side while the livery mirrors (a brush's `spiegel`,
+ * a decal's coupling). */
+export function layerMirrors(layer) {
+  if (layer.soort === 'penseel') return layer.spiegel !== false;
+  return canMirror(layer) && (layer.plaats.spiegel || 'gekoppeld') === 'gekoppeld';
+}
+
+/** Turn a layer's copy on the other side on or off (in place). */
+export function setLayerMirrors(layer, on) {
+  if (layer.soort === 'penseel') {
+    if (on) delete layer.spiegel;
+    else layer.spiegel = false;
+  } else if (layer.plaats) layer.plaats.spiegel = on ? 'gekoppeld' : 'los';
+}
+
 /** The mirror plane (x, metres) of a project on a bus of `dims`; none when it does not mirror. */
 export function mirrorPlane(project, dims) {
   const m = project.spiegel || { aan: true };

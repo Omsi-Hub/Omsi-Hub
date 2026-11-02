@@ -61,6 +61,14 @@ function App() {
 
 async function start() {
   document.documentElement.classList.add('hub');
+  // (a file from the computer let go where nothing takes it - the livery editor's view does - is
+  // not opened in the window in place of the app)
+  addEventListener('dragover', (e) => {
+    if (e.defaultPrevented || !e.dataTransfer?.types?.includes('Files')) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'none';
+  });
+  addEventListener('drop', (e) => e.dataTransfer?.types?.includes('Files') && e.preventDefault());
   render(html`<${App} />`, document.getElementById('app'));
   const b = await boot().catch((e) => {
     document.getElementById('app').textContent = String(e);

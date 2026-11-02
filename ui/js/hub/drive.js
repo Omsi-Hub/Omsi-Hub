@@ -62,8 +62,11 @@ export function startDrive(boot) {
   loadContent();
 }
 
+// (after a drive the bus step begins at its makers again, not in the submenu last open)
+const busHome = () => ({ ...S.hub, busLevel: [], busView: 'tiles' });
+
 function running(mode) {
-  set({ game: { running: true, mode: mode || S.game?.mode || null }, gameStarted: true, liveDash: { hidden: false }, poll: { ...S.poll, instances: [{ running: true }] } });
+  set({ game: { running: true, mode: mode || S.game?.mode || null }, gameStarted: true, liveDash: { hidden: false }, poll: { ...S.poll, instances: [{ running: true }] }, hub: busHome() });
 }
 
 let listening = false;
@@ -72,7 +75,7 @@ export function watchGame() {
   if (listening) return;
   listening = true;
   on('game-ended', (p) => {
-    set({ game: { running: false, ended: p || null }, gameStarted: false, live: null, poll: { ...S.poll, instances: [] } });
+    set({ game: { running: false, ended: p || null }, gameStarted: false, live: null, poll: { ...S.poll, instances: [] }, hub: busHome() });
     loadSituations();
   });
   // (any drive started - a shift, a tour, a free drive, a company's duty: its live dashboard,

@@ -98,6 +98,7 @@
 .le-leg > i { position: absolute; left: 13.5px; top: -4px; width: 1.5px; height: 28px; opacity: 0.5; }
 .le-leg span { flex: 1; }
 .le-leg span.bad { color: var(--hub-danger); }
+.le-leg span.far { color: var(--hub-warn); display: flex; align-items: center; gap: 3px; }
 /* (the way back made from the outbound: what came of it, and the mark of a stop across the road
    of a name like the outbound's, or of none there) */
 .ed-para.le-ok { color: var(--hub-ok); }

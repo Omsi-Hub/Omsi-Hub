@@ -469,10 +469,10 @@ pub fn prepare(layers: &[Layer], cx: &Context, cache: &mut RasterCache) -> Vec<P
         let mut push = |op: Op| push_as(op, false);
         match &l.kind {
             Kind::Fill { centre, radius, group, colour, gradient } => push(Op::Fill { lab: *centre, radius: *radius, group: *group, colour: Colour::of(colour, gradient.as_ref()) }),
-            Kind::Brush { colour, strokes } => {
-                // (copied onto the other side as the decals are)
+            Kind::Brush { colour, strokes, mirror } => {
+                // (copied onto the other side as the decals are, unless the layer is not)
                 let mut all: Vec<BrushStroke> = strokes.iter().map(|st| BrushStroke::new(st, None)).collect();
-                if let Some(plane) = cx.mirror {
+                if let Some(plane) = cx.mirror.filter(|_| *mirror) {
                     all.extend(strokes.iter().map(|st| BrushStroke::new(st, Some(plane))));
                     // (the copy of each stroke right after it: an eraser takes both)
                     let n = strokes.len();
@@ -1289,7 +1289,7 @@ mod tests {
         // a stroke along the right side, 1.0 m up, from y -2 to 2, 20 cm wide
         let stroke =
             |erase: bool, y0: f32, y1: f32| model::Stroke { points: vec![[1.25, y0, 1.3], [1.25, y1, 1.3]], normals: vec![[1.0, 0.0, 0.0]; 2], radius_cm: 10.0, hardness: 1.0, opacity: 1.0, erase };
-        let mut l = layer("Brush", Kind::Brush { colour: "#ff0000".into(), strokes: vec![stroke(false, -2.0, 2.0)] });
+        let mut l = layer("Brush", Kind::Brush { colour: "#ff0000".into(), strokes: vec![stroke(false, -2.0, 2.0)], mirror: true });
         l.detail = 0.0;
         let ops = prepare(std::slice::from_ref(&l), &Context { mirror: None, ..cx(dims) }, &mut RasterCache::default());
         let (rgba, _) = composite(&cv, &ops, &dims, None, None);
@@ -1313,6 +1313,14 @@ mod tests {
         let (rgba, _) = composite(&cv, &ops, &dims, None, None);
         let left_rear = ((6.0 - -1.0) / 12.0 * 64.0) as u32;
         assert_eq!(px(&rgba, 128, left_rear, y)[..3], [255, 0, 0]);
+        // a layer that does not mirror stays on its own side, the livery's mirror on or not
+        if let Kind::Brush { mirror, .. } = &mut l.kind {
+            *mirror = false;
+        }
+        let ops = prepare(std::slice::from_ref(&l), &cx(dims), &mut RasterCache::default());
+        let (rgba, _) = composite(&cv, &ops, &dims, None, None);
+        assert_eq!(px(&rgba, 128, left_rear, y), px(&base, 128, left_rear, y), "not on the left side");
+        assert_eq!(px(&rgba, 128, rear, y)[..3], [255, 0, 0], "still on the right");
     }
 
     #[test]

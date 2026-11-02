@@ -296,6 +296,9 @@ pub enum Kind {
         colour: String,
         #[serde(rename = "streken", default)]
         strokes: Vec<Stroke>,
+        /// Whether its strokes are copied onto the other side (while the livery mirrors).
+        #[serde(rename = "spiegel", default = "yes", skip_serializing_if = "is_true")]
+        mirror: bool,
     },
 }
 

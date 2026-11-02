@@ -177,16 +177,24 @@ fn stops_tab(v: &mut LineEditorView) -> Value {
     let legs: Vec<Value> = d
         .legs
         .iter()
-        .map(|g| {
-            let text = match (g.ok, g.map_way.is_some()) {
-                (true, true) => crate::lineeditor::ui::tr("%{n} m · as the map drives it").replace("%{n}", &format!("{:.0}", g.length)),
-                (true, false) => format!("{:.0} m", g.length),
+        .enumerate()
+        .map(|(k, g)| {
+            let far = far_round(d, k);
+            let text = match (g.ok, g.map_way.is_some(), far) {
+                (true, true, _) => crate::lineeditor::ui::tr("%{n} m · as the map drives it").replace("%{n}", &format!("{:.0}", g.length)),
+                (true, false, Some(straight)) => crate::lineeditor::ui::tr("%{n} m · %{straight} m as the crow flies").replace("%{n}", &format!("{:.0}", g.length)).replace("%{straight}", &format!("{straight:.0}")),
+                (true, false, None) => format!("{:.0} m", g.length),
                 _ => crate::lineeditor::ui::tr("no way over the roads").to_string(),
             };
-            json!({ "ok": g.ok, "text": text, "vias": g.vias.len() })
+            json!({ "ok": g.ok, "far": far.is_some(), "text": text, "vias": g.vias.len() })
         })
         .collect();
+    let far = (0..d.legs.len()).filter(|&k| far_round(d, k).is_some()).count();
+    let far_note = (far > 0).then(|| {
+        crate::lineeditor::ui::tr("%{n} leg(s) drive far round (marked): the map has no shorter way from the stop before. A stop on the other side of the road, or another platform, may lie on a better way.").replace("%{n}", &far.to_string())
+    });
     json!({
+        "far_note": far_note,
         "two": two,
         "rows": d.stops.iter().map(|s| s.name.clone()).collect::<Vec<_>>(),
         "times": d.times.iter().map(|t| format!("{t:.0}'")).collect::<Vec<_>>(),
@@ -196,6 +204,24 @@ fn stops_tab(v: &mut LineEditorView) -> Value {
         "dest": dest,
         "back": back,
     })
+}
+
+/// How much further than the straight line a routed leg may drive (times, and metres more)
+/// before the Stops tab says it goes far round.
+const FAR_TIMES: f64 = 3.0;
+const FAR_MORE: f64 = 300.0;
+
+/// Leg `k` of `d` routed over the roads far round its two stops (not a leg as the map drives
+/// it, nor one from a stop back to itself): the straight distance between them. Hohenkirchen's
+/// Bahnhof B1 to the Klinikum, 190 m apart, is 1.2 km: the station lets a bus out eastwards only.
+fn far_round(d: &Direction, k: usize) -> Option<f64> {
+    let g = d.legs.get(k)?;
+    let (a, b) = (d.stops.get(k)?, d.stops.get(k + 1)?);
+    if !g.ok || g.map_way.is_some() || (a.id == b.id && a.tile == b.tile) {
+        return None;
+    }
+    let straight = (dv(b.at) - dv(a.at)).length();
+    (g.length as f64 > straight * FAR_TIMES + FAR_MORE).then_some(straight)
 }
 
 /// The way back's choice on the Stops tab (`back_mode`): whether the line editor makes it
@@ -611,4 +637,45 @@ fn table(s: &Session) -> Value {
         "note": note, "note_tone": tone(colour),
         "away": (away > 0).then(|| crate::lineeditor::ui::tr("%{n} trips on days %{kind} does not run: kept, not driven.").replace("%{n}", &away.to_string()).replace("%{kind}", &crate::lineeditor::ui::tr(kind.label()))),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::launcher::lines::Leg;
+
+    fn stop(id: i64, x: f64) -> StopRef {
+        StopRef { id, at: [x, 0.0], ..Default::default() }
+    }
+
+    #[test]
+    fn a_leg_far_round_its_stops_is_said_to_be() {
+        let leg = |length: f32| Leg { length, ok: true, ..Default::default() };
+        // Bahnhof B1 to the Klinikum: 190 m apart, 1245 m driven; and back, 251 m
+        let mut d = Direction { stops: vec![stop(1, 0.0), stop(2, 190.0), stop(1, 0.0)], legs: vec![leg(1245.0), leg(251.0)], ..Default::default() };
+        assert_eq!(far_round(&d, 0).map(|s| s.round()), Some(190.0));
+        assert_eq!(far_round(&d, 1), None);
+        // not a leg as the map drives it, nor one without a way
+        d.legs[0].map_way = Some([1, 2]);
+        assert_eq!(far_round(&d, 0), None);
+        d.legs[0] = Leg { length: 1245.0, ..Default::default() };
+        assert_eq!(far_round(&d, 0), None);
+        // nor a leg from a stop round to itself
+        let round = Direction { stops: vec![stop(1, 0.0), stop(1, 0.0)], legs: vec![leg(900.0)], ..Default::default() };
+        assert_eq!(far_round(&round, 0), None);
+    }
+
+    #[test]
+    fn the_far_round_texts_are_translated() {
+        let keys = [
+            "%{n} m · %{straight} m as the crow flies",
+            "%{n} leg(s) drive far round (marked): the map has no shorter way from the stop before. A stop on the other side of the road, or another platform, may lie on a better way.",
+        ];
+        for lang in ["nl", "de", "fr", "ru", "uk", "pl", "es"] {
+            for k in keys {
+                assert!(crate::launcher::i18n::table(lang).contains_key(k), "{lang}: {k}");
+            }
+        }
+    }
 }

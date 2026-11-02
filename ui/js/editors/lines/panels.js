@@ -93,10 +93,11 @@ function StopsTab() {
               <span class="out"><${IconBtn} icon="close" size=${10} title="Take the stop out" onClick=${() => le('remove', { i })} /></span>
             </span>
           </${Row}>
-          ${leg && html`<div class="le-leg"><i style=${`background:${colour}`}></i><span class=${leg.ok ? '' : 'bad'}>${leg.text}</span>
+          ${leg && html`<div class="le-leg"><i style=${`background:${colour}`}></i><span class=${leg.ok ? (leg.far ? 'far' : '') : 'bad'}>${leg.far && html`<${Icon} name="warning" size=${10} />`}${leg.text}</span>
             ${leg.vias > 0 && html`<${IconBtn} icon="restart_alt" size=${9} title="Straighten the leg (its dragged points go)" onClick=${() => le('clear_vias', { i })} />`}</div>`}`;
       })}
     </div>
+    ${t.far_note && html`<p class="ed-para small ed-warn">${t.far_note}</p>`}
     <p class="ed-para faint">${tr('Click a stop on the map to put it in, and again to take it out. Shift+click puts in a stop the line has already, as a loop needs.')}</p>
     <div class="le-total"><span>${t.total}</span>
       <${IconBtn} icon="remove" size=${12} title="The whole trip a minute shorter" onClick=${() => le('total', { by: -1 })} />

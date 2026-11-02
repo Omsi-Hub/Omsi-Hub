@@ -38,6 +38,89 @@
       "port": 54329
     },
     {
+      "name": "admin-standin-mcp",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["C:/Omsi-hub/Omsi-Hub-Website-mcp/tools/admin-standin.mjs", "C:/Omsi-hub/Omsi-Hub-Website-mcp", "54329"],
+      "port": 54329
+    },
+    {
+      "name": "cms-mcp",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["C:/Omsi-hub/Omsi-hub-CMS-/node_modules/next/dist/bin/next", "dev", "C:/Omsi-hub/Omsi-hub-CMS-", "-p", "5184"],
+      "env": { "SUPABASE_STANDIN": "http://localhost:54329" },
+      "port": 5184
+    },
+    {
+      "name": "standin-format",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["C:/Omsi-hub/Omsi-Hub-Website-mcp/tools/admin-standin.mjs", "C:/Omsi-hub/Omsi-Hub-Website-mcp", "54330"],
+      "port": 54330
+    },
+    {
+      "name": "cms-format",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["C:/Omsi-hub/Omsi-hub-CMS-format/node_modules/next/dist/bin/next", "dev", "C:/Omsi-hub/Omsi-hub-CMS-format", "-p", "5185"],
+      "env": { "SUPABASE_STANDIN": "http://localhost:54330" },
+      "port": 5185
+    },
+    {
+      "name": "website-format",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["C:/Omsi-hub/Omsi-Hub-Website-format/node_modules/next/dist/bin/next", "dev", "C:/Omsi-hub/Omsi-Hub-Website-format", "-p", "5186"],
+      "env": { "SUPABASE_STANDIN": "http://localhost:54330" },
+      "port": 5186
+    },
+    {
+      "name": "website-report",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["C:/Omsi-hub/Omsi-Hub-Website-report-account/node_modules/next/dist/bin/next", "dev", "C:/Omsi-hub/Omsi-Hub-Website-report-account", "-p", "5187"],
+      "port": 5187
+    },
+    {
+      "name": "website-zigzag",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["C:/Omsi-hub/Omsi-Hub-Website-zigzag/node_modules/next/dist/bin/next", "dev", "C:/Omsi-hub/Omsi-Hub-Website-zigzag", "-p", "5188"],
+      "port": 5188
+    },
+    {
+      "name": "standin-zigzag",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["C:/Omsi-hub/Omsi-Hub-Website-zigzag/tools/admin-standin.mjs", "C:/Omsi-hub/Omsi-Hub-Website-zigzag", "54331"],
+      "port": 54331
+    },
+    {
+      "name": "standin-highlight",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["C:/Omsi-hub/Omsi-Hub-Website-highlight/tools/admin-standin.mjs", "C:/Omsi-hub/Omsi-Hub-Website-highlight", "54332"],
+      "port": 54332
+    },
+    {
+      "name": "cms-highlight",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["C:/Omsi-hub/Omsi-hub-CMS-highlight/node_modules/next/dist/bin/next", "dev", "C:/Omsi-hub/Omsi-hub-CMS-highlight", "-p", "5189"],
+      "env": { "SUPABASE_STANDIN": "http://localhost:54332" },
+      "port": 5189
+    },
+    {
+      "name": "website-highlight",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["C:/Omsi-hub/Omsi-Hub-Website-highlight/node_modules/next/dist/bin/next", "dev", "C:/Omsi-hub/Omsi-Hub-Website-highlight", "-p", "5190"],
+      "port": 5190
+    },
+    {
+      "name": "standin-people",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["C:/Omsi-hub/Omsi-Hub-Website-ticket-people/tools/admin-standin.mjs", "C:/Omsi-hub/Omsi-Hub-Website-ticket-people", "54333"],
+      "port": 54333
+    },
+    {
+      "name": "cms-people",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["C:/Omsi-hub/Omsi-hub-CMS-ticket-people/node_modules/next/dist/bin/next", "dev", "C:/Omsi-hub/Omsi-hub-CMS-ticket-people", "-p", "5191"],
+      "env": { "SUPABASE_STANDIN": "http://localhost:54333" },
+      "port": 5191
+    },
+    {
       "name": "fakegame-web",
       "runtimeExecutable": "cargo",
       "runtimeArgs": ["run", "-p", "hub-plugin-harness", "--example", "fakegame"],

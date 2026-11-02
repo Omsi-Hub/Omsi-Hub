@@ -412,7 +412,10 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![call, call_bytes, pick_folder, pick_file, open_url, open_path, selftest_report])
         .setup(move |app| {
-            let mut w = tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App("index.html".into())).title("Omsi-Hub").inner_size(1280.0, 820.0).min_inner_size(1024.0, 680.0).center();
+            let mut w = tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App("index.html".into())).title("Omsi-Hub").inner_size(1280.0, 820.0).min_inner_size(1024.0, 680.0).center()
+                // (files dragged in from the computer go to the page - the livery editor puts a
+                // picture let go over the bus on it - not to Tauri's own drop events, which nothing uses)
+                .disable_drag_drop_handler();
             if selftest {
                 w = w.initialization_script("window.__OMSIHUB_SELFTEST__ = true;");
                 // (the first-run setup tried on fake folders: `fixtures/` of the repository)

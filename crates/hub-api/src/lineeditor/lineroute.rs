@@ -162,6 +162,18 @@ impl Router {
                 let penalty = if kerb { d as f32 + if on_kerb { 0.0 } else { WRONG_SIDE } } else { d as f32 * VIA_WEIGHT };
                 out.push(Anchor { lane: i, s, lateral, penalty, beside: None });
             }
+            // (a lane met at its very end where a lane after it is met too is the same way at
+            // the same place: left out, or a way cut into short pieces at the stop fills every
+            // place and the way the other way round is never tried - Hohenkirchen's Klinikum
+            // sent a line to the Bahnhof 400 m the wrong way to turn round first)
+            let met: Vec<usize> = out.iter().map(|a| a.lane).collect();
+            let same_way = |a: &Anchor| {
+                let l = &self.net.lanes[a.lane];
+                a.s >= l.length() - 0.5 && l.next.iter().any(|n| met.contains(n))
+            };
+            if out.iter().any(|a| !same_way(a)) {
+                out.retain(|a| !same_way(a));
+            }
             if !out.is_empty() {
                 out.sort_by(|a, b| a.penalty.total_cmp(&b.penalty));
                 out.truncate(ANCHORS);
@@ -653,6 +665,34 @@ mod tests {
         // without it, the way stays in its lane
         let plain = r.leg(DVec2::new(5.0, -5.0), DVec2::new(250.0, -5.0), &[], None).unwrap();
         assert!(!plain.lanes.contains(&6));
+    }
+
+    #[test]
+    fn a_way_cut_short_at_the_stop_leaves_room_for_the_other_way() {
+        // eastbound along y = -2 in one lane; westbound along y = 2 cut into short pieces just
+        // before x 100 (as a map's splines are at a stop), the last on to x 0 with no way round
+        let piece = |x0: f64, x1: f64, y: f64, id: i64| {
+            let n = ((x1 - x0).abs() / 1.0).ceil().max(1.0) as usize;
+            let mut l = LaneBuilder::polyline((0..=n).map(|i| DVec3::new(x0 + (x1 - x0) * i as f64 / n as f64, y, 0.0)).collect(), LaneKind::Street, 3.0);
+            l.key = Some(LaneKey { tile: (0, 0), id, path: 0 });
+            l
+        };
+        let mut lanes = vec![piece(0.0, 300.0, -2.0, 0)];
+        let cuts = [300.0, 110.0, 105.0, 103.0, 101.0, 0.0];
+        for (k, w) in cuts.windows(2).enumerate() {
+            lanes.push(piece(w[0], w[1], 2.0, 10 + k as i64));
+        }
+        let mut net = Network { lanes, ..Default::default() };
+        net.link(1.5);
+        let r = router(net);
+        // a stop on the north kerb at x 100: its own way first, the eastbound among the rest
+        let a = r.anchors(DVec2::new(100.0, 5.0), true);
+        assert_eq!(a[0].lane, 5);
+        assert!(a.iter().any(|x| x.lane == 0), "{a:?}");
+        // and so to a stop east of it on the south kerb: eastbound, not west into nothing
+        let leg = r.leg(DVec2::new(100.0, 5.0), DVec2::new(250.0, -5.0), &[], None).expect("a way east");
+        assert_eq!(leg.lanes, vec![0]);
+        assert!((leg.length - 150.0).abs() < 1.0, "{}", leg.length);
     }
 
     #[test]

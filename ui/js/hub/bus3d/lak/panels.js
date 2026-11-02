@@ -4,10 +4,9 @@
 // ends: a slider let go, a field left).
 
 import { html, useState } from '../../../../vendor/preact-htm.js';
-import { call } from '../../../api.js';
 import { Btn, ColourPicker, Drop, Field, Icon, LiveField, Toggle, tr } from '../../../editors/kit.js';
 import * as M from './model.js';
-import { change, choosePicture, endMaking, say, settle } from './studio.js';
+import { call, change, choosePicture, endMaking, say, settle } from './studio.js';
 
 const STRIPES = [
   ['onderband', 'Skirt band'],
@@ -212,8 +211,8 @@ function LayerPanel({ me, l }) {
     ${gradable && html`<${Toggle} label="Gradient" checked=${!!l.verloop} onChange=${(v) => edit((x) => (v ? (x.verloop = { soort: 'lineair', kleur2: '#ffffff', hoek: 0 }) : delete x.verloop))} />`}
     ${gradable && l.verloop && html`<div class="lak-row">
       <${Drop} value=${l.verloop.soort || 'lineair'} options=${[['lineair', 'Linear'], ['radiaal', 'Radial']]} onChange=${(v) => edit((x) => (x.verloop.soort = v))} />
-      <${Range} label="Direction" value=${l.verloop.hoek || 0} min=${-180} max=${180} step=${1} digits=${0} unit="°" onInput=${(v) => edit((x) => (x.verloop.hoek = v), true)} onDone=${done} />
-    </div>`}
+    </div>
+    <${Range} label="Direction" value=${l.verloop.hoek || 0} min=${-180} max=${180} step=${1} digits=${0} unit="°" onInput=${(v) => edit((x) => (x.verloop.hoek = v), true)} onDone=${done} />`}
     ${l.soort === 'zone' && l.straal < 999 && html`<${Range} label="Colour range" value=${l.straal} min=${2} max=${60} step=${0.5} digits=${1} onInput=${(v) => edit((x) => (x.straal = v), true)} onDone=${done} />`}
     ${l.soort === 'strook' && html`<${StripePanel} me=${me} l=${l} edit=${edit} done=${done} />`}
     ${l.soort === 'tekst' && html`<${TextPanel} me=${me} l=${l} edit=${edit} done=${done} />`}
@@ -270,7 +269,7 @@ function PlacePanel({ me, l, edit, done }) {
       <${Toggle} label="Keep proportions" checked=${p.verhoudingVast !== false} onChange=${(v) => edit((x) => (v ? delete x.plaats.verhoudingVast : (x.plaats.verhoudingVast = false)))} />`}
     <${Range} label="Rotation" value=${p.draai || 0} min=${-180} max=${180} step=${1} digits=${0} unit="°" onInput=${(v) => edit((x) => (x.plaats.draai = v), true)} onDone=${done} />
     ${(p.zijde === 'L' || p.zijde === 'R') && html`
-      <${Toggle} label="Also on the other side" checked=${(p.spiegel || 'gekoppeld') === 'gekoppeld'} onChange=${(v) => edit((x) => (x.plaats.spiegel = v ? 'gekoppeld' : 'los'))} />
+      <${Toggle} label="Also on the other side" checked=${M.layerMirrors(l)} onChange=${(v) => edit((x) => M.setLayerMirrors(x, v))} />
       ${(p.spiegel || 'gekoppeld') === 'gekoppeld' && html`<${Toggle} label="Mirror image on the other side" checked=${image} onChange=${(v) => edit((x) => ((x.plaats.spiegelbeeld = v), v ? delete x.plaats.zelfdeRichting : (x.plaats.zelfdeRichting = true)))} />`}`}`;
 }
 
@@ -309,5 +308,6 @@ function BrushLayer({ me, l, edit }) {
       me.colour = l.kleur;
       me.tick();
     }} />
-    <${Btn} kind="ghost" label="Take back the last stroke" disabled=${!(l.streken || []).length} onClick=${() => edit((x) => x.streken.pop())} />`;
+    <${Btn} kind="ghost" label="Take back the last stroke" disabled=${!(l.streken || []).length} onClick=${() => edit((x) => x.streken.pop())} />
+    <${Toggle} label="Also on the other side" checked=${M.layerMirrors(l)} onChange=${(v) => edit((x) => M.setLayerMirrors(x, v))} />`;
 }

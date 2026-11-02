@@ -13,7 +13,8 @@
 
 import { html, useEffect, useRef, useState } from '../../../../vendor/preact-htm.js';
 import { S, set, useStore } from '../../../store.js';
-import { call } from '../../../api.js';
+import { call as ask } from '../../../api.js';
+import { language } from '../../../i18n.js';
 import { choose } from '../../drive.js';
 import { Btn, Field, Icon, IconBtn, status, tr } from '../../../editors/kit.js';
 import { Bus3D } from '../viewer.js';
@@ -31,6 +32,9 @@ if (!document.querySelector('link[data-lak-css]')) {
   l.dataset.lakCss = '1';
   document.head.appendChild(l);
 }
+
+/** A command of the studio in the page's language (its labels, costs, errors and progress). */
+export const call = (cmd, args = {}) => ask(cmd, { ...args, lang: language() });
 
 /** The kinds of layer "Create layer" offers: what it makes, its name, what it is, its icon. */
 export const KINDS = [
@@ -166,9 +170,16 @@ export function LakStudio() {
     <${Top} me=${me} />
     <div class="lak-main">
       <${Layers} me=${me} />
-      <div class="lak-view" ref=${(el) => (me.viewEl = el)}>
+      <div
+        class="lak-view"
+        ref=${(el) => (me.viewEl = el)}
+        onDragOver=${(e) => bringsFiles(e) && (e.preventDefault(), (e.dataTransfer.dropEffect = 'copy'), !me.dropping && ((me.dropping = true), tick()))}
+        onDragLeave=${(e) => me.dropping && !e.currentTarget.contains(e.relatedTarget) && ((me.dropping = false), tick())}
+        onDrop=${(e) => bringsFiles(e) && (e.preventDefault(), dropPicture(me, e))}
+      >
         ${me.bus && p && html`<${Bus3D} ...${viewerProps} />`}
         <${Overlay} me=${me} />
+        ${me.dropping && html`<div class="lak-drop"><span><${Icon} name="livery_image" size=${18} />${tr('Let go to put the picture here as an image layer')}</span></div>`}
         ${me.making !== 'none' && html`<div class="lak-making">
           <span>${tr(MAKING_LINE[me.making === 'brush' && me.brush.gum ? 'erase' : me.making] || '')}</span>
           ${me.making === 'own' && me.pen.nodes.length >= 3 && html`<${Btn} kind="primary" label="Done" onClick=${() => finishPen(me)} />`}
@@ -464,8 +475,9 @@ async function spot(me) {
   return { side, p: on };
 }
 
-/** Add a layer: on top (a base colour under the others), chosen, one step to undo. */
-function addLayer(me, l) {
+/** Add a layer: on top (a base colour under the others), chosen, one step to undo; a decal says
+ * `line` (else that it is on the side looked at). */
+function addLayer(me, l, line = 'Made on the side you look at: drag it on the bus to where it goes.') {
   endMaking(me, true);
   me.kinds = false;
   change(me, (p) => {
@@ -473,7 +485,7 @@ function addLayer(me, l) {
     else p.lagen.push(l);
   });
   me.selected = l.id;
-  if (M.isDecal(l)) say(me, 'Made on the side you look at: drag it on the bus to where it goes.');
+  if (M.isDecal(l)) say(me, line);
   me.tick();
 }
 
@@ -504,37 +516,68 @@ export async function create(me, kind) {
   if (kind === 'image') {
     const pic = await choosePicture(me);
     if (!pic) return;
-    return addLayer(me, M.layer('Image', { soort: 'afbeelding', beeld: pic.hash, witDoorzichtig: pic.whiteClear, verhouding: pic.aspect, plaats: { zijde: side, midden: p, breedteM: 1, draai: 0, spiegel: 'gekoppeld', zelfdeRichting: true } }));
+    return addLayer(me, imageLayer(pic, side, p));
   }
 }
+
+/** An image layer of `pic` (`lak_picture_add`'s answer) on `side` at `p`, a metre wide. */
+function imageLayer(pic, side, p) {
+  return M.layer('Image', { soort: 'afbeelding', beeld: pic.hash, witDoorzichtig: pic.whiteClear, verhouding: pic.aspect, plaats: { zijde: side, midden: p, breedteM: 1, draai: 0, spiegel: 'gekoppeld', zelfdeRichting: true } });
+}
+
+/** The pictures `lak_picture_add` takes. */
+const PICTURE_FILES = ['.png', '.jpg', '.jpeg', '.bmp', '.tga', '.svg', '.dds'];
 
 /** A picture from the computer, kept with the project (`lak_picture_add`). */
 export function choosePicture(me) {
   return new Promise((done) => {
     const input = document.createElement('input');
     input.type = 'file';
-    input.accept = '.png,.jpg,.jpeg,.bmp,.tga,.svg,.dds';
-    input.onchange = async () => {
+    input.accept = PICTURE_FILES.join(',');
+    input.onchange = () => {
       const f = input.files?.[0];
       if (!f) return done(null);
-      if (f.size > 20 << 20) {
-        say(me, 'The picture is larger than 20 MB.', true);
-        return done(null);
-      }
-      const data = await new Promise((ok) => {
-        const r = new FileReader();
-        r.onload = () => ok(String(r.result).replace(/^data:[^,]*,/, ''));
-        r.readAsDataURL(f);
-      });
-      try {
-        done(await call('lak_picture_add', { id: me.project.id, name: f.name, data }));
-      } catch (x) {
-        say(me, x.message || String(x), true);
-        done(null);
-      }
+      addPicture(me, f).then(done);
     };
     input.click();
   });
+}
+
+/** The file `f` kept with the project as a picture: its answer, or none (said why). */
+async function addPicture(me, f) {
+  if (f.size > 20 << 20) {
+    say(me, 'The picture is larger than 20 MB.', true);
+    return null;
+  }
+  const data = await new Promise((ok) => {
+    const r = new FileReader();
+    r.onload = () => ok(String(r.result).replace(/^data:[^,]*,/, ''));
+    r.readAsDataURL(f);
+  });
+  try {
+    return await call('lak_picture_add', { id: me.project.id, name: f.name, data });
+  } catch (x) {
+    say(me, x.message || String(x), true);
+    return null;
+  }
+}
+
+/** Whether a drag over the view brings files from the computer. */
+const bringsFiles = (e) => [...(e.dataTransfer?.types || [])].includes('Files');
+
+/** A picture dragged from the computer and let go over the bus: an image layer where it was
+ * let go, on the side the bus faces there (off the bus: the side the view looks at). */
+async function dropPicture(me, e) {
+  me.dropping = false;
+  const f = [...(e.dataTransfer?.files || [])].find((x) => PICTURE_FILES.some((ext) => x.name.toLowerCase().endsWith(ext)));
+  if (!f) return say(me, 'Only a picture can be put on the bus: PNG, JPG, BMP, TGA, SVG or DDS.', true);
+  if (me.phase !== 'ready' || !me.engineReady || !me.prep || !me.viewEl) return say(me, 'Preparing the paint…');
+  const r = me.viewEl.getBoundingClientRect();
+  const ndc = [((e.clientX - r.left) / Math.max(1, r.width)) * 2 - 1, 1 - ((e.clientY - r.top) / Math.max(1, r.height)) * 2];
+  const hit = await pickAt(me, ndc);
+  const at = hit ? { side: M.sideOfNormal(hit.n), p: hit.p } : await spot(me);
+  const pic = await addPicture(me, f);
+  if (pic) addLayer(me, imageLayer(pic, at.side, at.p), hit ? 'Put where you let it go: drag it on the bus to move it.' : undefined);
 }
 
 /** Stop drawing on the bus: the pen's corners make their shape when `keep` and there are three
@@ -1058,6 +1101,16 @@ function Layers({ me }) {
     const [l] = x.lagen.splice(i, 1);
     x.lagen.splice(j, 0, l);
   });
+  const mirrorOn = p?.spiegel?.aan !== false;
+  const mirrorButton = (l) => {
+    if (!M.canMirror(l)) return html`<span class="pad"></span>`;
+    const on = M.layerMirrors(l);
+    const title = !mirrorOn ? 'Mirror is off for the whole livery: turn it on at the top' : on ? 'Also on the other side' : 'Only on this side';
+    return html`<button type="button" class=${'mirror' + (on ? ' on' : '') + (mirrorOn ? '' : ' idle')} title=${tr(title)} onClick=${(e) => (e.stopPropagation(), change(me, (x) => {
+      const y = x.lagen.find((z) => z.id === l.id);
+      if (y && !y.vergrendeld) M.setLayerMirrors(y, !on);
+    }))}><${Icon} name="livery_mirror" size=${16} /></button>`;
+  };
   return html`<div class="lak-left">
     <div class="lak-create">
       <${Btn} kind="primary" icon="add" label="Create layer" onClick=${() => ((me.kinds = !me.kinds), me.tick())} />
@@ -1072,6 +1125,7 @@ function Layers({ me }) {
       ${list.map((l) => html`<div class=${'lak-layer' + (l.id === me.selected ? ' on' : '') + (l.zichtbaar === false ? ' off' : '')} onClick=${() => select(me, l.id)}>
         <i class="sw" style=${`background:${l.kleur || '#888'}`}></i>
         <span class="nm">${l.naam ? tr(l.naam) : tr(M.kindLabel(l))}</span>
+        ${mirrorButton(l)}
         <button type="button" title=${tr(l.zichtbaar === false ? 'Show' : 'Hide')} onClick=${(e) => (e.stopPropagation(), change(me, (x) => (x.lagen.find((y) => y.id === l.id).zichtbaar = l.zichtbaar === false)))}><${Icon} name=${l.zichtbaar === false ? 'livery_eye_off' : 'visibility'} size=${16} /></button>
         <button type="button" title=${tr(l.vergrendeld ? 'Unlock' : 'Lock')} onClick=${(e) => (e.stopPropagation(), change(me, (x) => {
           const y = x.lagen.find((z) => z.id === l.id);

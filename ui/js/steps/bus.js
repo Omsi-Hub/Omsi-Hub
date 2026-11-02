@@ -71,13 +71,11 @@ function Picker({ onBus }) {
   const s = useStore();
   const all = s.vehicles || [];
   const groups = useMemo(() => tree(all), [all]);
-  const [level, setLevel] = useState(s.hub.busLevel || []);
+  // (the level in the store: the step's back button goes up through it, a drive starts it anew)
+  const level = s.hub.busLevel || [];
   const [q, setQ] = useState('');
   const [favOnly, setFavOnly] = useState(false);
-  const keep = (lv) => {
-    setLevel(lv);
-    S.hub.busLevel = lv;
-  };
+  const keep = (lv) => set({ hub: { ...S.hub, busLevel: lv } });
   const cur = s.choice.bus;
   const fav = (b) => s.favourites.includes(favKey(b.v.file));
   const keepBus = (b) => !favOnly || fav(b) || b.v.file === cur;
@@ -225,10 +223,11 @@ export function BusStep() {
   const showing = s.hub.busView === 'bus' && curBus();
   // (the bus's depot files in the wide sheet: `hof.rs`, editors/hof.js)
   const depots = s.hub.busView === 'depots' && curBus();
-  const show = (view, level) => {
-    if (level) S.hub.busLevel = level;
-    set({ hub: { ...S.hub, busView: view } });
-  };
+  const show = (view, level) => set({ hub: { ...S.hub, busView: view, ...(level ? { busLevel: level } : {}) } });
+  // (back: from the depot files to the bus, from the bus to its versions, then up a level at a
+  // time - versions, models, makers - and from the makers to the step before)
+  const level = s.hub.busLevel || [];
+  const back = () => (depots ? show('bus') : showing ? show('tiles') : level.length ? set({ hub: { ...S.hub, busLevel: level.slice(0, -1) } }) : goStep(previousOf('bus')));
   const go = async (extra) => {
     setBusy(true);
     await hubStart(extra);
@@ -242,7 +241,7 @@ export function BusStep() {
       ? html`<${Chosen} onBack=${(level) => show('tiles', level || undefined)} onDepots=${() => show('depots')} />`
       : html`<${Picker} onBus=${(b) => (busPicked(b.v.file), b.v.file !== s.choice.bus && choose({ bus: b.v.file, paint: '', number: '', hof_manual: false }), show('bus'))} />`}
     <${DepotDialog} onOpen=${() => show('depots')} />
-    <${Actions} back onBack=${() => (depots ? show('bus') : showing ? show('tiles') : goStep(previousOf('bus')))} from=${showing ? 'calc(var(--hub-edge-in) + clamp(288px, 27.4cqw, 420px) + 14px)' : null}
+    <${Actions} back onBack=${back} from=${showing ? 'calc(var(--hub-edge-in) + clamp(288px, 27.4cqw, 420px) + 14px)' : null}
       extra=${[...(last ? [{ label: 'Continue last game', icon: 'history', onClick: () => go({ situation: last.file, lan: 'off' }), disabled: busy }] : []), ...(!showing && !depots && curBus() ? [{ label: 'View in 3D', icon: '360', onClick: () => show('bus') }] : [])]}
       main=${s.choice.free || !s.choice.line || (s.choice.composed && !(s.choice.legs || []).length) ? 'Drive' : 'Start the duty'} mainDisabled=${!curBus() || !s.choice.map} busy=${busy} onMain=${() => go()} />
   `;

@@ -38,13 +38,15 @@ fn in_game() -> bool {
     crate::launcher::list_instances().iter().any(|i| i.running)
 }
 
-/// The company `id`'s name, what saving `name` costs it (its design, and painting `vehicle`)
-/// and its cash; None when it is not the company open.
-fn company_cost(id: &str, vehicle: Option<u32>, name: &str) -> Option<(String, i64, i64)> {
+/// The company `id`'s name, what saving `name` costs it (its design, and painting `vehicle`),
+/// its cash and whether it can pay that (the sandbox's unlimited money, no bankruptcy: also
+/// below zero); None when it is not the company open.
+fn company_cost(id: &str, vehicle: Option<u32>, name: &str) -> Option<(String, i64, i64, bool)> {
     company::with(|s| {
         let c = s.company.as_ref().filter(|c| c.id == id)?;
         let paint = vehicle.and_then(|v| c.vehicle(v)).map(|v| co_livery::paint_cost(c, v)).unwrap_or(0);
-        Some((c.name.clone(), (co_livery::save_cost(c, name) + paint) as i64, c.cash as i64))
+        let cost = co_livery::save_cost(c, name) + paint;
+        Some((c.name.clone(), cost as i64, c.cash as i64, c.can_pay(cost)))
     })
 }
 
@@ -52,9 +54,9 @@ fn company_cost(id: &str, vehicle: Option<u32>, name: &str) -> Option<(String, i
 pub(super) fn cost(args: &Value) -> Answer {
     let id = arg_str(args, "company");
     let vehicle = args.get("vehicle").and_then(Value::as_u64).map(|v| v as u32);
-    let Some((name, cost, cash)) = company_cost(&id, vehicle, &arg_str(args, "name")) else { return Ok(Value::Null) };
+    let Some((name, cost, cash, enough)) = company_cost(&id, vehicle, &arg_str(args, "name")) else { return Ok(Value::Null) };
     Ok(json!({
-        "company": name, "cost": cost, "cash": cash, "enough": cash >= cost,
+        "company": name, "cost": cost, "cash": cash, "enough": enough,
         "label": tr("Save · %{amount}").replace("%{amount}", &eur(cost as _)),
         "tip": tr("For %{company}: the design and the painting cost %{amount}; it has %{cash}.").replace("%{company}", &name).replace("%{amount}", &eur(cost as _)).replace("%{cash}", &eur(cash as _)),
     }))
@@ -76,7 +78,7 @@ pub(super) fn place(args: &Value) -> Answer {
         return Err(tr("Go back to your own bus to save the livery."));
     }
     if let Some(id) = company_id.as_deref() {
-        if let Some((company, cost, cash)) = company_cost(id, vehicle, &name).filter(|x| x.2 < x.1) {
+        if let Some((company, cost, cash, _)) = company_cost(id, vehicle, &name).filter(|x| !x.3) {
             return Err(tr("%{company} has %{cash}: not enough for the livery (%{amount}). A loan on the company's Finances page helps.")
                 .replace("%{company}", &company)
                 .replace("%{cash}", &eur(cash as _))
