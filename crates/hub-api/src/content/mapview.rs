@@ -592,6 +592,8 @@ pub fn labels_near(map: &str, global: &Path, date: &str, at: [f64; 2], r: f64) -
     /// A name every so many metres along its road, the first this far in.
     const EVERY: f64 = 220.0;
     const FIRST: f64 = 40.0;
+    /// Two names nearer than this would lie over each other.
+    const APART: f64 = 30.0;
     let look = Look { map: map.to_string(), global: global.to_path_buf(), date: date.to_string(), trip: String::new(), entry: -1 };
     let roads = roads_of(&look);
     let at = DVec2::new(at[0], at[1]);
@@ -690,7 +692,12 @@ pub fn labels_near(map: &str, global: &Path, date: &str, at: [f64; 2], r: f64) -
                 }
                 want.next();
                 let p = a + (b - a) * ((d - along) / seg.max(1e-9));
-                let near_same = streets.iter().any(|(n, q, _)| n == name && DVec2::new(q[0], q[1]).distance(p) < 160.0);
+                // (a road's two ways are two lines, and a sign at a corner may name the crossing
+                // street's: never a name over another)
+                let near_same = streets.iter().any(|(n, q, _)| {
+                    let d = DVec2::new(q[0], q[1]).distance(p);
+                    d < APART || (n == name && d < 160.0)
+                });
                 if inside(p, 0.0) && !near_same {
                     streets.push((name.clone(), [p.x, p.y], (b.y - a.y).atan2(b.x - a.x).to_degrees()));
                 }
@@ -698,8 +705,30 @@ pub fn labels_near(map: &str, global: &Path, date: &str, at: [f64; 2], r: f64) -
             along += seg;
         }
     }
-    let entries = roads.entries.iter().filter(|e| inside(e.at, 0.0)).map(|e| (e.name.clone(), [e.at.x, e.at.y])).collect();
+    let entries = one_a_stop(roads.entries.iter().filter(|e| inside(e.at, 0.0)).map(|e| (e.name.clone(), e.at)));
     (streets, entries)
+}
+
+/// The entry points of one name close together (a stop's platforms, each its own entry point) as
+/// one, in their middle.
+fn one_a_stop(entries: impl Iterator<Item = (String, DVec2)>) -> Vec<(String, [f64; 2])> {
+    /// Entry points of one name within this many metres are one stop.
+    const ONE_STOP: f64 = 150.0;
+    let mut groups: Vec<(String, Vec<DVec2>)> = Vec::new();
+    for (name, at) in entries {
+        let mid = |ps: &[DVec2]| ps.iter().copied().sum::<DVec2>() / ps.len() as f64;
+        match groups.iter_mut().find(|(n, ps)| *n == name && mid(ps).distance(at) < ONE_STOP) {
+            Some((_, ps)) => ps.push(at),
+            None => groups.push((name, vec![at])),
+        }
+    }
+    groups
+        .into_iter()
+        .map(|(n, ps)| {
+            let m = ps.iter().copied().sum::<DVec2>() / ps.len() as f64;
+            (n, [m.x, m.y])
+        })
+        .collect()
 }
 
 /// The map metres of a place given by its tile (the grid's x and y) and the metres in it.
@@ -708,4 +737,35 @@ pub fn world_of(map: &str, global: &Path, date: &str, tile: [i64; 2], local: [f6
     let _ = roads_of(&Look { map: map.to_string(), global: global.to_path_buf(), date: date.to_string(), trip: String::new(), entry: -1 });
     let size = omsi_map::tile_size();
     [tile[0] as f64 * size + local[0], tile[1] as f64 * size + local[1]]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_stops_entry_points_are_one_label() {
+        let at = |x: f64, y: f64| DVec2::new(x, y);
+        let got = one_a_stop(
+            [
+                ("(301, SB1, N1) Hildegardplatz", at(100.0, 0.0)),
+                ("(301, SB1, N1) Hildegardplatz", at(112.0, -8.0)),
+                ("(Eurobus) Betriebshof Hildegardplatz", at(130.0, -60.0)),
+                ("(301, SB1, N1) Hildegardplatz", at(124.0, -16.0)),
+                ("(Eurobus) Betriebshof Hildegardplatz", at(140.0, -66.0)),
+                // (the same name far off: another stop)
+                ("(301, SB1, N1) Hildegardplatz", at(2000.0, 0.0)),
+            ]
+            .into_iter()
+            .map(|(n, p)| (n.to_string(), p)),
+        );
+        assert_eq!(
+            got,
+            [
+                ("(301, SB1, N1) Hildegardplatz".to_string(), [112.0, -8.0]),
+                ("(Eurobus) Betriebshof Hildegardplatz".to_string(), [135.0, -63.0]),
+                ("(301, SB1, N1) Hildegardplatz".to_string(), [2000.0, 0.0]),
+            ]
+        );
+    }
 }
