@@ -524,6 +524,12 @@ local function map_lines()
   return out
 end
 
+-- every second, also while the game is busy and the tick waits (main.lua): that the game is
+-- there, in one small datagram, so the phone does not take a hitch for a game that stopped
+function M.alive()
+  send({ t = "alive" })
+end
+
 -- every quarter of a second (main.lua): one of its jobs in a call. openOMSI stops a plugin when
 -- one call into it runs longer than 50 ms, the game's time inside the API counted, and all of
 -- them at once - as on the first tick, while the game is still busy loading - came near that.

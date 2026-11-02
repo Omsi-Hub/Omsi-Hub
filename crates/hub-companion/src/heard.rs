@@ -43,7 +43,7 @@ impl Paged {
 /// Everything heard, and when (seconds of a steady clock).
 #[derive(Debug, Clone, Default)]
 pub struct Heard {
-    /// The last `live` datagram, and when it came.
+    /// The last `live` datagram, and when the game was last heard (`live` or `alive`).
     pub live: Map<String, Value>,
     pub live_at: Option<f64>,
     /// The trip's stops, the duty's trips, the map's lines.
@@ -72,6 +72,13 @@ impl Heard {
                 self.live = m;
                 self.live_at = Some(now);
                 changed
+            }
+            // (the game busy: nothing new of it, but it is there; the devices told if they
+            // took it for gone)
+            Some("alive") => {
+                let back = !self.fresh(now, crate::state::GAME_FRESH);
+                self.live_at = Some(now);
+                back
             }
             Some("trip") => self.stops.take(&d, "stops"),
             Some("trips") => self.trips.take(&d, "trips"),
@@ -164,5 +171,16 @@ mod tests {
         assert_eq!(h.ack(7), Some((false, "wrong".into())));
         assert_eq!(h.ack(8), None);
         assert!(!h.hear(b"not json", 12.0));
+    }
+
+    #[test]
+    fn alive_keeps_the_game_there_and_leaves_what_was_heard_of_it() {
+        let mut h = Heard::default();
+        h.hear(&dg(json!({ "t": "live", "clock": 30240.0 })), 10.0);
+        assert!(!h.hear(&dg(json!({ "t": "alive" })), 14.0), "still there: nothing new");
+        assert!(h.fresh(18.0, 5.0));
+        assert_eq!(h.get("clock"), Some(&json!(30240.0)));
+        assert!(h.hear(&dg(json!({ "t": "alive" })), 30.0), "back after it was gone: the devices are told");
+        assert!(h.fresh(30.0, 5.0));
     }
 }

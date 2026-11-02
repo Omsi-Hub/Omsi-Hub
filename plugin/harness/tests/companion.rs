@@ -85,7 +85,9 @@ fn after_a_long_frame_the_companion_waits_until_the_game_runs_smoothly_again() {
     // (the world loading: a frame two seconds after the one before)
     h.state.borrow_mut().now += 2.0;
     h.frame().unwrap();
-    let before = h.state.borrow().sent.len();
+    // (all but that the game is there)
+    let news = |h: &Harness| h.state.borrow().sent.iter().filter(|(p, text)| *p == PORT && !text.contains("\"alive\"")).count();
+    let before = news(&h);
     let smooth = |h: &mut Harness, frames: usize| {
         for _ in 0..frames {
             h.state.borrow_mut().now += 0.1;
@@ -93,9 +95,34 @@ fn after_a_long_frame_the_companion_waits_until_the_game_runs_smoothly_again() {
         }
     };
     smooth(&mut h, 25);
-    assert_eq!(h.state.borrow().sent.len(), before, "nothing to the phone in the first seconds after it");
+    assert_eq!(news(&h), before, "nothing to the phone in the first seconds after it");
+    assert!(!sent(&h, "alive").is_empty(), "but that the game is there");
     smooth(&mut h, 10);
     assert!(sent(&h, "live").len() > 1, "and again once the frames came smoothly for three seconds");
+}
+
+#[test]
+fn a_game_that_keeps_hitching_is_heard_all_the_same() {
+    let dir = installed("alive");
+    queue(&dir, 5, json!([]));
+    let mut h = Harness::load(&dir, game()).unwrap();
+    h.frame().unwrap();
+    let t0 = h.state.borrow().now;
+    let mut last = t0;
+    // (a third of a second lost every two and a half seconds: never three seconds of smooth frames)
+    for frame in 0..300 {
+        {
+            let mut s = h.state.borrow_mut();
+            s.now += if frame % 25 == 0 { 0.3 } else { 0.1 };
+            s.sent.clear();
+        }
+        h.frame().unwrap();
+        let now = h.state.borrow().now;
+        if !sent(&h, "alive").is_empty() || !sent(&h, "live").is_empty() {
+            last = now;
+        }
+        assert!(now - last <= 2.0, "silent for {} s, the phone says the game stopped after 5", now - last);
+    }
 }
 
 #[test]

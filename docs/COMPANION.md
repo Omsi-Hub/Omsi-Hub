@@ -350,6 +350,7 @@ To `127.0.0.1:47812` (`companion_udp_port`), each one JSON object with `t`:
 | `t` | Every | Holds |
 | --- | --- | --- |
 | `live` | 0.5 s | `clock`, `paused`, `bus`, `bus_file` (the bus's `.bus`, relative to the game folder), `duty` (line, tour, trip n, delay, next stop index, at_stop, trip_done), the plugin's `signon` stage |
+| `alive` | 1 s | nothing: the game is there, also while it is busy and the others wait until its frames run smoothly again |
 | `trip` | on change | the trip's stops (paged: `page`, `pages`, ≤ 25 stops a page) |
 | `trips` | on change | the duty's trips |
 | `dev` | 0.5 s | the IBIS and printer variables and strings, `ticket_request`, `sales` |
