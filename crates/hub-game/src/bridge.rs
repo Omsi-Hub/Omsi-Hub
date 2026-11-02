@@ -1006,7 +1006,13 @@ mod tests {
     #[test]
     fn the_fleet_is_written_when_it_changed_and_cleared() {
         let d = dir("fleet");
-        let mut f = Fleet { at: 1.0, company: "c1".into(), map: "maps/Grundorf/global.cfg".into(), date: "2026-10-26".into(), trips: vec![FleetTrip { line: "1".into(), tour: "2".into(), departure: Some(36_000.0), delay: 120.0 }] };
+        let mut f = Fleet {
+            at: 1.0,
+            company: "c1".into(),
+            map: "maps/Grundorf/global.cfg".into(),
+            date: "2026-10-26".into(),
+            trips: vec![FleetTrip { line: "1".into(), tour: "2".into(), departure: Some(36_000.0), delay: 120.0 }],
+        };
         assert!(write_fleet(&d, &f).unwrap());
         assert_eq!(read_fleet(&d), Some(f.clone()));
         // (worked out again a moment later, the same: not written again)

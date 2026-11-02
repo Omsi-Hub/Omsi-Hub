@@ -557,7 +557,8 @@ mod tests {
         assert!(!newer(&[0, 2, 9], &[0, 2, 10]));
         assert!(!newer(&[0, 2], &[0, 2, 0]), "0.2 is 0.2.0");
         assert!(newer(&[1], &[0, 9, 9]));
-        assert!(is_test_build("0.2.0-beta3") && !is_test_build(current_version()));
+        // (not the running version: a test build of the app is one itself)
+        assert!(is_test_build("0.2.0-beta3") && !is_test_build("1.2.0"));
     }
 
     /// Drafts, pre-releases and test tags are never offered; the newest above this version is,

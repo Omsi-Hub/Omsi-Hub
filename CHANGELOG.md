@@ -2,6 +2,20 @@
 
 Each version of the Omsi-Hub add-on, newest first. The release on GitHub links here.
 
+## 1.2.0-beta.2
+
+The next test build for the beta testers, now for macOS too. It needs what 1.2.0-beta.1 needs,
+and has everything of it (below). The app does not update a test build: install the next
+version yourself.
+
+### Fixed
+
+- **The bus step no longer asks about the depot file before you pick a bus**: "This bus does
+  not know this map" came up as soon as the bus step opened, for the bus chosen already. It now
+  waits for a bus you pick, and a pick holds for the map it was made on.
+- **The Linux test build is there again**: a test build makes the AppImage and the `.deb`
+  (without the `.rpm`, whose version cannot hold a test build's name).
+
 ## 1.2.0-beta.1
 
 A test build for the beta testers. It needs **openOMSI 0.2.22 or newer** and an original
