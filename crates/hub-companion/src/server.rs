@@ -108,6 +108,22 @@ struct GroundCache {
     tried: Option<Instant>,
 }
 
+impl GroundCache {
+    /// The game's picture of `map` read (once a map: a second or so for a big one, the squares
+    /// waiting), again when the game wrote it anew or when it was not there a while ago.
+    fn read(&mut self, map: &str) {
+        let again = match &self.ground {
+            Some(x) => x.stale(),
+            // (not there when last looked for: the game may have written it since)
+            None => self.tried.is_none_or(|t| t.elapsed() > GROUND_RETRY),
+        };
+        if self.map != map || again {
+            let ground = ground::cache_file(map).and_then(|f| ground::Ground::open(&f)).map(Arc::new);
+            *self = GroundCache { map: map.to_string(), ground, squares: HashMap::new(), tried: Some(Instant::now()) };
+        }
+    }
+}
+
 /// How long a map without a picture is not looked for again.
 const GROUND_RETRY: Duration = Duration::from_secs(5);
 
@@ -391,18 +407,18 @@ impl Shared {
     /// A square of the map's ground, packed (`crate::ground`): `si`, `sj` count squares in the
     /// app's coordinates, the game's: the map's metres (the tiles' as the cache has them) moved by
     /// `off`.
+    /// The game's picture of `map`: every square with something in it (the phone's numbering, with
+    /// the offset `off`) and the version they are in.
+    fn ground_index(&self, map: &str, off: [f64; 2]) -> Option<(String, Vec<(i64, i64)>)> {
+        let mut g = self.ground.lock().unwrap_or_else(|e| e.into_inner());
+        g.read(map);
+        let ground = g.ground.as_ref()?;
+        Some((ground.version(), ground.squares(off)))
+    }
+
     fn ground_square(&self, map: &str, off: [f64; 2], si: i64, sj: i64, low: bool, dress: bool) -> Option<Packed> {
         let mut g = self.ground.lock().unwrap_or_else(|e| e.into_inner());
-        let again = match &g.ground {
-            Some(x) => x.stale(),
-            // (not there when last looked for: the game may have written it since)
-            None => g.tried.is_none_or(|t| t.elapsed() > GROUND_RETRY),
-        };
-        if g.map != map || again {
-            // (read once a map: a second or so for a big one, the other squares waiting)
-            let ground = ground::cache_file(map).and_then(|f| ground::Ground::open(&f)).map(Arc::new);
-            *g = GroundCache { map: map.to_string(), ground, squares: HashMap::new(), tried: Some(Instant::now()) };
-        }
+        g.read(map);
         if let Some(b) = g.squares.get(&(si, sj, low, dress)) {
             return Some(b.clone());
         }
@@ -716,7 +732,7 @@ pub fn handle(req: &Request, shared: &Arc<Shared>) -> Response {
                 .collect();
             Response::json(&json!({ "roads": roads, "water": [], "green": [], "names": names, "entries": entries, "lights": lights }))
         }
-        Route::Ground(si, sj, low, dress) => {
+        Route::Ground(si, sj, low, dress, gz) => {
             let (map, off, reference) = {
                 let i = shared.lock();
                 (i.heard.get("map").and_then(Value::as_str).unwrap_or("").to_string(), i.routing.off, i.heard.get("ref").cloned())
@@ -727,12 +743,28 @@ pub fn handle(req: &Request, shared: &Arc<Shared>) -> Response {
             let off = off.or_else(|| reference.and_then(|r| shared.offset(&map, &r))).unwrap_or([0.0, 0.0]);
             let gzip = req.header("accept-encoding").is_some_and(|v| v.split(',').any(|e| e.trim().starts_with("gzip")));
             match shared.ground_square(&map, off, si, sj, low, dress) {
+                // (the gzip as it is, to keep)
+                Some((_, packed)) if gz => Response::new(200, "application/gzip", packed.to_vec()),
                 Some((_, packed)) if gzip => {
                     let mut r = Response::new(200, "application/octet-stream", packed.to_vec());
                     r.encoding = Some("gzip");
                     r
                 }
                 Some((plain, _)) => Response::new(200, "application/octet-stream", plain.to_vec()),
+                None => Response::error(404, "not_found"),
+            }
+        }
+        Route::GroundIndex => {
+            let (map, off, reference) = {
+                let i = shared.lock();
+                (i.heard.get("map").and_then(Value::as_str).unwrap_or("").to_string(), i.routing.off, i.heard.get("ref").cloned())
+            };
+            if map.is_empty() {
+                return Response::error(404, "not_found");
+            }
+            let off = off.or_else(|| reference.and_then(|r| shared.offset(&map, &r))).unwrap_or([0.0, 0.0]);
+            match shared.ground_index(&map, off) {
+                Some((v, squares)) => Response::json(&json!({ "v": v, "size": ground::SQUARE, "squares": squares.iter().map(|(i, j)| [i, j]).collect::<Vec<_>>() })),
                 None => Response::error(404, "not_found"),
             }
         }

@@ -36,6 +36,9 @@ const RUN: usize = 2048;
 /// The houses' model triangles a square carries at most (openOMSI's small map allows 30 000 about
 /// the bus; a square is a part of what the phone shows).
 pub const MODEL_BUDGET: usize = 40_000;
+/// How squares are packed (part of [`Ground::version`]): raised when the packing changes, so the
+/// phones' kept squares are fetched again.
+const PACKING: u32 = 3;
 /// Which way the shadows fall, per metre of height (openOMSI's `SHADOW_DIR`): the light comes from
 /// the other way.
 const SHADOW_DIR: [f32; 2] = [0.34, -0.28];
@@ -263,6 +266,36 @@ impl Ground {
     /// Whether the game wrote the file anew since it was read.
     pub fn stale(&self) -> bool {
         stamp_of(&self.file) != Some(self.stamp)
+    }
+
+    /// Every square with something in it, as the phone numbers them (its lower corner at
+    /// `i`·[`SQUARE`], `j`·[`SQUARE`] in the phone's metres: the layers' plus the origin and
+    /// `off`), for the phone to fetch the whole map once and keep it.
+    pub fn squares(&self, off: [f64; 2]) -> Vec<(i64, i64)> {
+        let mut out = std::collections::BTreeSet::new();
+        let at = |v: f32, k: usize| ((v as f64 + self.origin[k] + off[k]) / SQUARE).floor() as i64;
+        for run in self.runs.iter().flatten() {
+            for i in at(run.lo[0], 0)..=at(run.hi[0], 0) {
+                for j in at(run.lo[1], 1)..=at(run.hi[1], 1) {
+                    out.insert((i, j));
+                }
+            }
+        }
+        out.into_iter().collect()
+    }
+
+    /// What this reading of the map is: the file, its length and time, and how the add-on packs
+    /// squares - a phone keeping the squares keeps them under it, and fetches them again when it
+    /// changes.
+    pub fn version(&self) -> String {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        self.file.hash(&mut h);
+        self.stamp.0.hash(&mut h);
+        self.stamp.1.and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok()).map(|d| d.as_secs()).hash(&mut h);
+        env!("CARGO_PKG_VERSION").hash(&mut h);
+        PACKING.hash(&mut h);
+        format!("{:016x}", h.finish())
     }
 
     /// The square with its lower corner at `corner` (the layers' metres, relative to
@@ -600,6 +633,10 @@ mod tests {
         let t = std::time::Instant::now();
         let g = Ground::open(&file).expect("the game's cache");
         println!("read in {:?}: {} houses, {} trees, {} lines", t.elapsed(), g.houses.len(), g.trees.len(), g.lines.len());
+        // the whole map, as a phone fetches it once
+        let squares = g.squares([0.0, 0.0]);
+        println!("{} squares of {} m, version {}", squares.len(), SQUARE, g.version());
+        assert!(!squares.is_empty());
         let mid = g.houses[g.houses.len() / 2].outline[0];
         let corner = [(mid[0] as f64 / SQUARE).floor() * SQUARE, (mid[1] as f64 / SQUARE).floor() * SQUARE];
         let t = std::time::Instant::now();
@@ -624,3 +661,4 @@ mod tests {
         println!("dumped about square {ci},{cj} to {dir:?}");
     }
 }
+
