@@ -30,6 +30,16 @@ Each version of the Omsi-Hub add-on, newest first. The release on GitHub links h
   fetch the whole map once and keep it (`GET /api/ground/index`, squares as their gzip). (The plugin
   is 1.19.0.)
 
+### Fixed
+
+- **The phone's 3D map** shows every house of a busy town in its own textures: a square's houses
+  share its models' budget (a big one comes with its biggest faces) instead of the first ones
+  taking it all and the rest standing plain - about Augustaplatz in Bad Hügelsdorf two houses in
+  five were plain. It writes each street's name once where it is said - never two names over
+  each other - and a stop's entry points (one for each of its platforms) as one label. A house's
+  texture keeps its number from one start of Omsi-Hub to the next, so the squares a phone keeps
+  still wear the right textures (a phone fetches its kept map once more).
+
 ## 1.2.0-beta.1
 
 A test build for the beta testers. It needs **openOMSI 0.2.22 or newer** and an original
