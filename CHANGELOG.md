@@ -19,7 +19,9 @@ Each version of the Omsi-Hub add-on, newest first. The release on GitHub links h
   the map where it stands; the phone hears of a red light run and a speed camera's flash with the
   fine, and of a speed camera on the lane ahead; the stops on the phone's map come with what stands
   at them - their shelters, signs, bins and benches, as the map's own models; and the houses wear
-  their own textures, as the game dresses them. (The plugin is 1.19.0.)
+  their own textures, as the game dresses them. A game paused in its menu or out of focus
+  (Alt+Tab) keeps the phone's navigator: it counts as there, paused, while it runs. (The plugin
+  is 1.19.0.)
 
 ## 1.2.0-beta.1
 
