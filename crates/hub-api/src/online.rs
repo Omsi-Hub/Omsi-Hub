@@ -108,9 +108,8 @@ pub(crate) fn trf(text: &str, vars: &[(&str, &str)]) -> String {
 // --- playing together ------------------------------------------------------------------------------
 
 /// The company session this app hosts now: its code, and whether the boss's friends may join it
-/// without an invite (the company's `together.friends_join`). Playing together is not ported yet
-/// (the `tg_` commands need a relay): until `tg_host_start` calls [`host`], none, so no invite can
-/// be sent and no friend's session joined.
+/// without an invite (the company's `together.friends_join`). `tg_host_start` sets it and the
+/// session's end clears it ([`host`]).
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Hosted {
     pub code: String,
@@ -124,7 +123,6 @@ fn hosted() -> Option<Hosted> {
 }
 
 /// The session hosted from now on (none: sharing stopped); the worker tells the friends at once.
-#[allow(dead_code)]
 pub(crate) fn host(h: Option<Hosted>) {
     *HOSTED.lock().unwrap_or_else(|e| e.into_inner()) = h;
 }
@@ -142,7 +140,7 @@ fn session_code() -> Option<String> {
 
 /// Whether playing together is there to join a friend's session.
 fn together_enabled() -> bool {
-    false
+    crate::together::enabled()
 }
 
 // --- the client --------------------------------------------------------------------------------------
@@ -1231,6 +1229,17 @@ mod tests {
         assert_eq!(presence_of(None, true), ("away", None));
         assert_eq!(presence_of(h(false), false), ("busy", None));
         assert_eq!(presence_of(h(true), true), ("busy", Some("HUB-ABC".into())));
+    }
+
+    /// A friend who shares his session can be joined from the list, while he is online.
+    #[test]
+    fn a_friend_in_a_session_can_be_joined() {
+        let friend =
+            |online, code: Option<&str>| Friend { user_id: "u2".into(), display_name: "Anna".into(), status: "busy".into(), online, session_code: code.map(String::from), ..Friend::default() };
+        let v = friend_json(&friend(true, Some("HUB-ABC")));
+        assert_eq!((v["state"].as_str(), v["session"].as_str(), v["join"].as_bool()), (Some("busy"), Some("HUB-ABC"), Some(true)));
+        assert_eq!(friend_json(&friend(true, None))["join"], false, "only by an invite");
+        assert_eq!(friend_json(&friend(false, Some("HUB-ABC")))["join"], false, "gone: the code is old");
     }
 
     /// "Play without an account" is kept in the data folder, and only that.

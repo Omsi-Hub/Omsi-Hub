@@ -16,6 +16,10 @@ merged but in no build yet is under Unreleased.
 
 ### Fixed
 
+- **Friends can join and invite again**: sharing your company did not reach the friends list, so
+  friends never saw "In a session", "Join" never appeared, and "Invite to my company" and the
+  invites stayed away. Now they work. To let friends join without an invite, turn on "Friends
+  can join without an invite" in the company's settings.
 - **The Companion no longer says the game is not running when the game hitches**: after a slow
   frame the plugin (1.18.1) waits for the game to run smoothly before it sends the phone
   anything, and a game that kept hitching looked stopped. It now says it is there every second
