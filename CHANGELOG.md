@@ -1,6 +1,18 @@
 # What changed
 
-Each version of the Omsi-Hub add-on, newest first. The release on GitHub links here.
+Each version of the Omsi-Hub add-on, newest first. The release on GitHub links here. What is
+merged but in no build yet is under Unreleased.
+
+## Unreleased
+
+### Added
+
+- **RosterFlow prints duty cards**: the print menu has **Duty cards (PDF)**, every duty of the
+  day as a depot prints them, two to an A4 sheet across to cut in two. Each card has the depot,
+  the day, the duty number, signing on and off, the longest break, the driving time and the
+  paid time, and then every piece: its running number and bus, every trip with each stop and
+  its time, the timing points marked, the reliefs (from which duty, to which) and the breaks.
+  The cards carry the company's logo picture (or its monogram and name) and its colour.
 
 ## 1.2.0-beta.2
 
@@ -32,12 +44,6 @@ The app does not update a test build: install the next version yourself.
   count those buses too. In a drive of your own the game runs the map's whole timetable as
   before. This needs an openOMSI that has `timetable.set_ai_trips`. With an older one the
   other buses are taken off the road as they come, and yours run on time. (The plugin is 1.17.0.)
-- **RosterFlow prints duty cards**: the print menu has **Duty cards (PDF)**, every duty of the
-  day as a depot prints them, two to an A4 sheet across to cut in two. Each card has the depot,
-  the day, the duty number, signing on and off, the longest break, the driving time and the
-  paid time, and then every piece: its running number and bus, every trip with each stop and
-  its time, the timing points marked, the reliefs (from which duty, to which) and the breaks.
-  The cards carry the company's logo picture (or its monogram and name) and its colour.
 - **RosterFlow's complete handbook**: the "?" in RosterFlow's title bar has **The complete
   handbook (English)**, which opens the whole handbook (PDF) in your browser.
 

@@ -29,3 +29,7 @@ desktop.ini
 
 # other cargo target folders (a second build beside the first)
 /target-*/
+
+# Claude's sessions: their worktrees and the PC's own settings (docs/WORKFLOW.md)
+/.claude/worktrees/
+/.claude/settings.local.json
