@@ -144,6 +144,24 @@ matches the processor in the name: `x64`, `amd64` or `x86_64`; `aarch64` or `arm
    version`) and `app/tauri.conf.json`'s. A draft or a pre-release is never offered. That makes
    a pre-release the place for a test build.
 
+## Signing the Mac app
+
+With a Developer ID signature and Apple's notarisation, macOS opens a downloaded app without
+"Open Anyway". The release workflow does both once these six repository secrets are set; with
+none of them the app is signed ad hoc, and with only some the release stops with an error.
+
+| Secret | What goes in it |
+|---|---|
+| `APPLE_CERTIFICATE` | The "Developer ID Application" certificate with its private key, exported as `.p12`, in base64 (`base64 -i cert.p12`) |
+| `APPLE_CERTIFICATE_PASSWORD` | The password given to that `.p12` |
+| `APPLE_SIGNING_IDENTITY` | The certificate's whole name: `Developer ID Application: <name> (<team id>)` |
+| `APPLE_API_ISSUER` | The issuer ID of the App Store Connect API key (Users and Access › Integrations) |
+| `APPLE_API_KEY` | That API key's key ID |
+| `APPLE_API_KEY_P8` | The contents of its `AuthKey_<key id>.p8`, which Apple lets you download once |
+
+`app/tauri.macos.conf.json` keeps `signingIdentity: "-"` for the builds without these secrets
+(CI's, a developer's); `APPLE_SIGNING_IDENTITY` overrides it.
+
 ## A pre-release (for testers)
 
 1. **Write what is in it** in `CHANGELOG.md` (the release links there), under the version.
@@ -186,7 +204,8 @@ What it means for players:
   choice are tested; the replacement is the plugin's and has not been tried yet.
 - That the NSIS installer starts the new version after a passive update on Windows.
 - That macOS Gatekeeper lets the replaced bundle start. Without an Apple Developer ID
-  signature and notarization (the bundle is signed ad hoc, `signingIdentity: "-"` in
-  app/tauri.macos.conf.json), the first start after a manual download already needs System
+  signature and notarization ("Signing the Mac app" above; the bundle is then signed ad hoc,
+  `signingIdentity: "-"` in app/tauri.macos.conf.json), the first start after a manual download
+  already needs System
   Settings › Privacy & Security › "Open Anyway" (macOS 15 no longer lets right-click → Open
   through). An update keeps the bundle's quarantine state, but this has not been tried yet.

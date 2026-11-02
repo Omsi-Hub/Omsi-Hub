@@ -13,6 +13,9 @@
 # in app/tauri.conf.json: docs/UPDATES.md "What Luc sets up"). Without them the installers are
 # built all the same, and the app offers "Download from GitHub" instead of installing itself.
 #
+# The Mac app is signed with the Developer ID and notarised once the six APPLE_* secrets are set up
+# (docs/UPDATES.md "Signing the Mac app"). Without them it is signed ad hoc, as CI's builds are.
+#
 # Runs on a pushed tag `v*` (the version in Cargo.toml and app/tauri.conf.json, checked), or by
 # hand (Actions → Release → Run workflow). Run again, it uploads to the same draft.
 name: Release
@@ -141,6 +144,43 @@ jobs:
             echo "json=false" >> "$GITHUB_OUTPUT"
           fi
 
+      # (the Mac app signed with the Developer ID and notarised only when all its secrets are set up,
+      # else ad hoc as before; on every system, as any job may be the one that writes the release's
+      # text; Tauri reads the APPLE_* variables, and an empty one would count as set)
+      - name: macOS signing set up?
+        id: notary
+        shell: bash
+        env:
+          CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          API_KEY: ${{ secrets.APPLE_API_KEY }}
+          API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: |
+          if [ -z "$CERTIFICATE$CERTIFICATE_PASSWORD$SIGNING_IDENTITY$API_ISSUER$API_KEY$API_KEY_P8" ]; then
+            echo "::notice::No Developer ID yet: the Mac app is signed ad hoc, not notarised (docs/UPDATES.md)."
+            echo "notarised=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ -z "$CERTIFICATE" ] || [ -z "$CERTIFICATE_PASSWORD" ] || [ -z "$SIGNING_IDENTITY" ] || [ -z "$API_ISSUER" ] || [ -z "$API_KEY" ] || [ -z "$API_KEY_P8" ]; then
+            echo "::error::Only some of the APPLE_* secrets are set: set all six (docs/UPDATES.md)."
+            exit 1
+          fi
+          echo "notarised=true" >> "$GITHUB_OUTPUT"
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            key="$RUNNER_TEMP/AuthKey_$API_KEY.p8"
+            printf '%s\n' "$API_KEY_P8" > "$key"
+            {
+              echo "APPLE_CERTIFICATE=$CERTIFICATE"
+              echo "APPLE_CERTIFICATE_PASSWORD=$CERTIFICATE_PASSWORD"
+              echo "APPLE_SIGNING_IDENTITY=$SIGNING_IDENTITY"
+              echo "APPLE_API_ISSUER=$API_ISSUER"
+              echo "APPLE_API_KEY=$API_KEY"
+              echo "APPLE_API_KEY_PATH=$key"
+            } >> "$GITHUB_ENV"
+          fi
+
       - name: Build and upload to the draft release
         uses: tauri-apps/tauri-action@v0
         env:
@@ -162,7 +202,7 @@ jobs:
             Needs openOMSI 0.2.22 or newer and an original OMSI 2. Omsi-Hub does not replace openOMSI: it builds on the openOMSI you have installed.
 
             - Windows: `Omsi-Hub_<version>_x64-setup.exe`
-            - macOS: `Omsi-Hub_<version>_aarch64.dmg` (Apple silicon; Intel Macs are not built). The app is not notarised: the first time macOS says it cannot check it, choose Done, then System Settings › Privacy & Security › "Open Anyway".
+            - macOS: `Omsi-Hub_<version>_aarch64.dmg` (Apple silicon; Intel Macs are not built).${{ steps.notary.outputs.notarised != 'true' && ' The app is not notarised: the first time macOS says it cannot check it, choose Done, then System Settings › Privacy & Security › "Open Anyway".' || '' }}
             - Linux: `Omsi-Hub_<version>_amd64.AppImage` (updates itself), or the `.deb` / `.rpm`.
           releaseDraft: true
           prerelease: ${{ steps.kind.outputs.prerelease == 'true' }}
