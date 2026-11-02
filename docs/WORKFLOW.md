@@ -37,6 +37,7 @@ C:\Omsi-Hub main folder\
 | `main` | what is done: CI passes, the changelog says what changed | always |
 | `feat/<topic>` | something new | until merged or dropped |
 | `fix/<topic>` | a fault | until merged or dropped |
+| `chore/<topic>` | the tools, the docs, CI, this workflow | until merged or dropped |
 | `claude/<name>` | a Claude session's work (the app names it) | until merged or dropped |
 | `release/<x.y>` | only when `main` must go on with work that is not for the testers | until `<x.y>.0` is out |
 

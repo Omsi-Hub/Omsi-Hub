@@ -2,7 +2,7 @@
 
 The whole workflow is in `docs/WORKFLOW.md`. What every session keeps to:
 
-- **Work in your own worktree and branch** (`claude/<name>`, `feat/<topic>`, `fix/<topic>`), from
+- **Work in your own worktree and branch** (`claude/<name>`, `feat/<topic>`, `fix/<topic>`, `chore/<topic>`), from
   the newest `origin/main`. Never commit on `main`; the clone at `Omsi-Hub\` stays on `main`,
   clean.
 - **Commit each step that works, and push the branch before the session ends.** Ask before
