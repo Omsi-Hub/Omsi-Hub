@@ -522,6 +522,13 @@ pub(crate) fn account_user() -> String {
     view().user.clone()
 }
 
+/// The account as the phone is told it (`companion`): signed in, its user id (empty: not
+/// fetched yet) and the profile's display name; never waits for a request that runs.
+pub(crate) fn account_brief() -> (bool, String, Option<String>) {
+    let v = view();
+    (v.signed_in, v.user.clone(), v.profile.as_ref().map(|p| p.display_name.clone()))
+}
+
 fn start_worker() {
     let mut v = view();
     if v.worker {

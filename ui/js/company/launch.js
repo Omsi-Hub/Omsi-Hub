@@ -4,6 +4,7 @@
 // start: the weather is the player's to choose, or why it cannot start yet. In RosterFlow's
 // look (its own palette in either look).
 
+import { on } from '../api.js';
 import { S, toast } from '../store.js';
 import { duty } from '../hub/drive.js';
 import { RouteMap } from '../hub/routemap.js';
@@ -34,6 +35,15 @@ export async function startDuty(dry = false, together = false) {
   }
   return act('launch_start', { base, dry, together });
 }
+
+// The phone's "Start duty" (the companion app, `companion::start_duty`, which checked first that
+// nothing keeps the duty from starting): the duty launcher opened on it, as "Drive" opens it, and
+// started as its button starts it, with the player's game options.
+on('companion-start-duty', async (p) => {
+  if (!p?.duty) return;
+  const r = await act('drive_duty', { duty: p.duty, from: 0 });
+  if (r && !r.popup) await startDuty();
+});
 
 /** The RosterFlow button (`rf_button`): solid blue, else grey; its words in capitals. */
 const RfButton = ({ label, solid, onClick, style = '', title }) => html`<button type="button" class=${'co-rfbtn' + (solid ? ' solid' : '')} style=${style} title=${title} onClick=${onClick}>${label}</button>`;

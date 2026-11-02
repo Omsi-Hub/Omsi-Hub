@@ -113,6 +113,27 @@ fn sheet_now(s: &mut Session, c: &Company) -> Option<Sheet> {
     Some(sh)
 }
 
+/// The phone's "Start duty" (`companion::start_duty`): the duty launcher opened on `r` as the
+/// page's "Drive" opens it, and what keeps it from being started now, in words (its title, what
+/// to do) - None when nothing does. Err: no company open, a game running, or the planning still
+/// being read.
+pub(crate) fn phone_check(s: &mut Session, r: DutyRef) -> Result<Option<(String, String)>, String> {
+    let Some(c) = s.company.clone() else { return Err("no_company".into()) };
+    if s.in_game() {
+        return Err("game_running".into());
+    }
+    if s.launch.as_ref().is_none_or(|x| x.duty != r) {
+        s.launch = Some(DutyLaunch::new(r, 0));
+        s.generation += 1;
+    }
+    let Some(sheet) = sheet_now(s, &c) else { return Err("reading".into()) };
+    Ok(sheet.hitches.first().map(|h| {
+        let (title, fix) = h.words();
+        let more = detail(h).map(|d| format!(" ({d})")).unwrap_or_default();
+        (format!("{}{more}", tr(title)), tr(fix))
+    }))
+}
+
 /// What a hitch is about in particular.
 fn detail(h: &Hitch) -> Option<String> {
     match h {

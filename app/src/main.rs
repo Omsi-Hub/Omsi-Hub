@@ -341,7 +341,9 @@ fn main() {
                 hub_api::update::set_installer(Arc::new(Updates(app.handle().clone())));
             }
             hub_core::log_line(&format!("app {} started", env!("CARGO_PKG_VERSION")));
-            // (the phone and tablet companion, when the player has it on)
+            // (the phone and tablet companion, when the player has it on; its "Start duty" told
+            // to the page)
+            hub_api::companion::set_platform(Arc::new(App(app.handle().clone())));
             hub_api::companion::start_if_on();
             let _ = app.get_webview_window("main");
             Ok(())

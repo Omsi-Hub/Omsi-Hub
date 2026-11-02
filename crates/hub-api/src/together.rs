@@ -35,6 +35,9 @@ use serde_json::{json, Value};
 
 pub use host::{boss_along, boss_out_of_world, boss_place, boss_world_code, closing_company, give_to_guest, guest_buses, online_guests, quit, rail_badge, tile_line};
 
+/// The session joined, as the phone is told it (`join::brief`).
+pub(crate) use join::brief as joined_brief;
+
 /// The code of the company session hosted now (None: none, or "Play together" switched off).
 pub fn session_code() -> Option<String> {
     host::session_code().filter(|_| enabled())

@@ -944,6 +944,33 @@ fn ended_json(j: &Joined, e: Ended) -> Value {
     json!({ "kind": e, "title": title, "text": text, "icon": icon, "driving": driving, "retry": e == Ended::Lost, "back": tr("Back to the menu"), "again": tr("Try again"), "company": company })
 }
 
+/// The session he joined, as the phone is told it (`companion`): the company (name, short name,
+/// colours), his role, the company's day and minute, and the duties that are his still to drive
+/// (None: in no session, or it ended).
+pub(crate) fn brief() -> Option<Value> {
+    let g = joined();
+    let j = g.as_ref().filter(|j| j.ended.is_none())?;
+    let s = j.snap.as_ref()?;
+    let role = s.you.as_ref().map(|y| y.role).unwrap_or_default();
+    let duties: Vec<Value> = s
+        .duties
+        .iter()
+        .filter(|d| matches!(d.state, DutyState::Mine | DutyState::Asked | DutyState::Driving | DutyState::Late))
+        .map(|d| {
+            json!({
+                "key": { "date": d.duty.date, "line": d.duty.line, "tour": d.duty.tour, "duty": d.duty.duty },
+                "date": d.duty.date, "line": d.number, "colour": d.colour, "tour": d.duty.tour, "duty": d.duty.duty + 1,
+                "start": d.from * 60, "end": d.to * 60, "first": d.first, "last": d.last, "trips": d.trips,
+                "bus": Some(d.bus.clone()).filter(|b| !b.is_empty()), "state": serde_json::to_value(d.state).unwrap_or(Value::Null),
+            })
+        })
+        .collect();
+    Some(json!({
+        "company": { "name": s.card.name, "short": s.card.short, "colours": s.card.colours },
+        "role": role.key(), "today": s.date, "now": s.minute * 60, "duties": duties,
+    }))
+}
+
 /// Whether he is in a session, and how it ended (every page of the boss's company asks:
 /// `session.js`).
 fn status() -> Value {

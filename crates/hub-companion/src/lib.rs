@@ -128,6 +128,18 @@ pub trait Source: Send + Sync {
     fn bus_model(&self, _bus_file: &str) -> Option<(PathBuf, PathBuf)> {
         None
     }
+    /// The launcher as the phone is told it (docs/COMPANION.md, "The launcher"): its mode, the
+    /// account, the company and the player's role in it, and his duties. Null: nothing to say.
+    /// Asked for every half second: kept ready, never worked out here.
+    fn hub(&self) -> Value {
+        Value::Null
+    }
+    /// Start the company's duty `duty` (`{date, line, tour, duty}`, as `hub.duties[].key` gives
+    /// it) as the launcher's "Start duty" does: Err with why it cannot now - a code
+    /// (`no_company`, `not_signed_in`, `game_running`, `not_found`) or the duty's hitch in words.
+    fn start_duty(&self, _duty: &Value) -> Result<(), String> {
+        Err("not_supported".into())
+    }
 }
 
 /// How the server runs.

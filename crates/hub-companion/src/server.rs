@@ -258,6 +258,7 @@ impl Shared {
             pause: brk,
             devices: if game { i.board.json() } else { json!([]) },
             alive,
+            hub: self.source.hub(),
         };
         let s = state::build(&i.heard, &facts, now);
         if s != i.state {
@@ -724,12 +725,7 @@ pub fn handle(req: &Request, shared: &Arc<Shared>) -> Response {
             let labels = shared.source.labels(&map, &date, [x - off[0], y - off[1]], r);
             let names: Vec<Value> = labels.streets.iter().map(|(n, p, a)| json!({ "name": n, "x": r1(p[0] + off[0]), "y": r1(p[1] + off[1]), "angle": r1(*a) })).collect();
             let entries: Vec<Value> = labels.entries.iter().map(|(n, p)| json!({ "name": n, "x": r1(p[0] + off[0]), "y": r1(p[1] + off[1]) })).collect();
-            let lights: Vec<Value> = shared
-                .source
-                .lights(&map, &date, [x - off[0], y - off[1]], r)
-                .into_iter()
-                .map(|(p, h, w)| json!([r1(p[0] + off[0]), r1(p[1] + off[1]), r1(h), r1(w)]))
-                .collect();
+            let lights: Vec<Value> = shared.source.lights(&map, &date, [x - off[0], y - off[1]], r).into_iter().map(|(p, h, w)| json!([r1(p[0] + off[0]), r1(p[1] + off[1]), r1(h), r1(w)])).collect();
             Response::json(&json!({ "roads": roads, "water": [], "green": [], "names": names, "entries": entries, "lights": lights }))
         }
         Route::Ground(si, sj, low, dress, gz) => {
@@ -848,6 +844,13 @@ pub fn handle(req: &Request, shared: &Arc<Shared>) -> Response {
 /// answered when the plugin acked it.
 pub fn run(shared: &Arc<Shared>, cmd: Command) -> Value {
     let refused = |e: &str| json!({ "ok": false, "error": e });
+    // (the launcher's, not the game's: asked of it before the server's lock is taken)
+    if let Command::StartDuty { duty } = &cmd {
+        return match shared.source.start_duty(duty) {
+            Ok(()) => json!({ "ok": true }),
+            Err(e) => refused(&e),
+        };
+    }
     let mut i = shared.lock();
     if cmd == Command::PauseEnd {
         i.pause.end();

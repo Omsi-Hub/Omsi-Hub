@@ -180,12 +180,47 @@ once after every answer (and backs off 2 s → 10 s after errors). `after` omitt
     "keys": ["ticketprinter_button_ticket_1", "…"],
     "change_keys": []              // the change dispenser's triggers, where the bus has one
   },
+  "hub": { "mode": "company", "…": "…" },   // the launcher (below)
   "features": { "ibis": true, "printer": true, "nav": true, "messages": true, "signon": true }
 }
 ```
 
 Every key may be missing or `null` where the game, the bus or the add-on does not know it; the
 app shows what it has and hides the rest.
+
+### The launcher
+
+`hub` is Omsi-Hub's own side, there with the game or without it (null from an Omsi-Hub before
+it). The phone follows the player through the launcher with it: a company's duties on its home,
+the menu, a game of his own.
+
+```jsonc
+"hub": {
+  "mode": "company",             // "company" (his own company open), "together" (a company joined
+                                 // with "Play together"), "free" (a game of his own), "menu"
+  "signed_in": true,             // the Omsi-Hub account on the PC
+  "user": "…",                   // its user id (null: signed out, or not fetched yet)
+  "account": "Sanne",            // its profile's display name
+  "company": { "name": "Stadtbus Grundorf", "short": "SBG", "colours": ["#1f68ea", "#ffffff"] },
+  "role": "owner",               // "owner", or a joined player's "driver" | "planner" | "manager" | "co_owner"
+  "today": "2026-11-06",         // the company's day, and the time of it (seconds)
+  "now": 27720,
+  "duties": [                    // his duties still to drive, the next first (two weeks at most)
+    {
+      "key": { "date": "2026-11-06", "line": "M29", "tour": "3", "duty": 0 },  // for start_duty
+      "date": "2026-11-06", "line": "29", "colour": "#e3000f", "tour": "3", "duty": 1,
+      "start": 30240, "end": 52200, "trips": 9,
+      "bus": "2604 MAN Lion's City",   // null: none planned yet; "rental"
+      "state": "mine"            // a joined player's only: mine, asked, driving, late
+    }
+  ]
+}
+```
+
+The company mode is the signed-in player's (Luc, 2 November 2026): signed out on the PC, the
+company is named and `duties` is empty, and `start_duty` answers `not_signed_in`. The app asks
+for the same account itself (its own sign-in, Supabase Auth) before it shows the company's part.
+`hub` is looked at every 3 s.
 
 ## Map
 
@@ -395,6 +430,7 @@ bus's devices' taps and keys are pressed; anything else is `unknown_key`.
 | `msg_quick` | `key` | A quick button to control |
 | `pause_end` | | Ends the break early |
 | `press` | `trigger`, `down?` | Presses a tap or key of one of `devices` (above) |
+| `start_duty` | `date`, `line`, `tour`, `duty` | Starts a company duty (a `hub.duties[].key`) as the launcher's "Start duty": the launcher's, there with the game or without it (below) |
 
 Only the keys the state lists can be pressed: the plugin refuses any other trigger. The game
 names a bus's triggers in lower case (`omsi.bus.triggers`, openOMSI 0.3.37) and presses them
@@ -405,6 +441,14 @@ The errors a command can answer: `game_not_running` (the plugin was not heard fo
 `sign_on` a minute), `wrong` (not the driver's number and code), `not_now` (no duty order to
 sign), `no_message`, `no_printer`, `not_supported` (this openOMSI lacks the function), or the
 game's own reason a duty could not be taken.
+
+`start_duty` is the launcher's, not the game's: it is checked at once and answered then. Its
+errors: `not_signed_in` (the PC's account), `no_company` (no company open in the launcher),
+`game_running`, `reading` (the planning is still being read: try again), `no_launcher`,
+`not_supported` (a joined company's duty, not yet), `not_found`, or what keeps the duty from
+starting in the launcher's words ("Nobody is planned on this duty. Plan yourself on it in
+RosterFlow …"). Started, the launcher opens its duty launcher on the duty and starts it with
+the player's game options, as its own button does; the game coming up shows in `game`.
 
 ## The plugin's datagrams (add-on internal)
 

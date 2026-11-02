@@ -16,11 +16,16 @@
 
 use crate::{arg, Answer, Platform};
 use hub_companion::{Companion, Config, Source};
+use hub_core::company::duty_launch::DutyRef;
+use hub_core::company::plan::{BusOf, MyDuty};
+use hub_core::company::{self as co, Company};
 use hub_core::settings::Settings;
 use hub_game::bridge::Assignment;
 use serde_json::{json, Value};
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::Duration;
 
 /// The settings' keys.
 const ON: &str = "companion";
@@ -227,6 +232,97 @@ static FAILED: Mutex<String> = Mutex::new(String::new());
 /// The assignment the plugin was last given (`addon::give`).
 static ASSIGNED: Mutex<Option<Assignment>> = Mutex::new(None);
 
+/// The launcher as the phone is told it (`Source::hub`), worked out every few seconds on a thread
+/// of its own (`watch_hub`): the server's look never waits for the company or the account.
+static HUB: Mutex<Value> = Mutex::new(Value::Null);
+/// The app, to hand its page the phone's "Start duty" (`start_duty`); set as the app starts.
+static PLATFORM: OnceLock<Arc<dyn Platform>> = OnceLock::new();
+/// How often the launcher is looked at for the phone.
+const HUB_EVERY: Duration = Duration::from_secs(3);
+/// The player's duties told: the next two weeks' at most.
+const HUB_DUTIES: usize = 14;
+
+/// The app, whose page starts the duties the phone asks for (`main.rs`, as it starts).
+pub fn set_platform(p: Arc<dyn Platform>) {
+    let _ = PLATFORM.set(p);
+}
+
+/// The launcher looked at for the phone while the server runs (started once).
+fn watch_hub() {
+    static ON: AtomicBool = AtomicBool::new(false);
+    if ON.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let _ = std::thread::Builder::new().name("companion hub".into()).spawn(|| loop {
+        if RUNNING.lock().unwrap_or_else(|e| e.into_inner()).is_some() {
+            // (busy: what was told last stands)
+            if let Some(v) = hub_now() {
+                *HUB.lock().unwrap_or_else(|e| e.into_inner()) = v;
+            }
+        }
+        std::thread::sleep(HUB_EVERY);
+    });
+}
+
+/// The launcher now (docs/COMPANION.md, "The launcher"): its mode - `company` (the player's own
+/// company open), `together` (a company joined with "Play together"), `free` (a game of his own),
+/// `menu` -, the account, and in a company its name and colours, the player's role and his duties
+/// still to drive, the company's day and the time of it. The company mode is the signed-in
+/// player's (Luc, 2 November 2026: "company kan alleen als mensen ingelogd zijn"): signed out, the
+/// company is named and no duty is told. None: the company busy, asked again next time.
+fn hub_now() -> Option<Value> {
+    let (signed_in, user, name) = crate::online::account_brief();
+    let game = crate::drive::state()["running"].as_bool().unwrap_or(false);
+    let mut v = json!({
+        "mode": if game { "free" } else { "menu" }, "signed_in": signed_in, "user": Some(user).filter(|u| !u.is_empty()), "account": name,
+        "company": null, "role": null, "today": null, "now": null, "duties": [],
+    });
+    let mut put = |b: Value, mode: &str| {
+        v["mode"] = json!(mode);
+        for k in ["company", "role", "today", "now", "duties"] {
+            v[k] = b[k].clone();
+        }
+        if !signed_in {
+            v["duties"] = json!([]);
+        }
+    };
+    if let Some(b) = crate::together::joined_brief() {
+        put(b, "together");
+        return Some(v);
+    }
+    if crate::company::peek(|s| s.company.is_some())? {
+        let b = crate::company::with(|s| {
+            let c = s.company.clone()?;
+            let (_, mine, _) = crate::company::career::my_duties(s);
+            let now = (co::clock::now(&c) - co::clock::moment(&c.date, 0)).clamp(0, 48 * 60) * 60;
+            Some(json!({
+                "company": { "name": c.name, "short": c.short, "colours": c.colours },
+                "role": "owner", "today": c.date, "now": now,
+                "duties": mine.iter().take(HUB_DUTIES).map(|d| duty_json(&c, d)).collect::<Vec<_>>(),
+            }))
+        });
+        if let Some(b) = b {
+            put(b, "company");
+        }
+    }
+    Some(v)
+}
+
+/// A duty of the player's own company for the phone: `key` is what `start_duty` takes back.
+fn duty_json(c: &Company, d: &MyDuty) -> Value {
+    let colour = c.lines.iter().find(|x| x.name.eq_ignore_ascii_case(&d.line)).map(|x| x.colour.clone()).unwrap_or_default();
+    let bus = match d.bus {
+        Some(BusOf::Own(id)) => c.vehicle(id).map(|v| format!("{} {}", v.number, v.name)),
+        Some(BusOf::Rental) => Some("rental".to_string()),
+        None => None,
+    };
+    json!({
+        "key": crate::company::career::duty_key(d),
+        "date": d.date, "line": d.number, "colour": colour, "tour": d.tour_no, "duty": d.duty + 1,
+        "start": d.from * 60, "end": d.to * 60, "trips": d.trips, "bus": bus,
+    })
+}
+
 /// The assignment just given to the plugin: the phone's duty card.
 pub fn assigned(a: &Assignment) {
     *ASSIGNED.lock().unwrap_or_else(|e| e.into_inner()) = Some(a.clone());
@@ -259,6 +355,30 @@ impl Source for Hub {
 
     fn assignment(&self) -> Option<Assignment> {
         ASSIGNED.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    fn hub(&self) -> Value {
+        HUB.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    /// As the launcher's "Start duty": what keeps the duty from starting checked here, then the
+    /// page asked to open the duty launcher on it and start it with the player's game options, as
+    /// its own button does (`companion-start-duty`, `ui/js/company/launch.js`).
+    fn start_duty(&self, duty: &Value) -> Result<(), String> {
+        if !crate::online::account_brief().0 {
+            return Err("not_signed_in".into());
+        }
+        // (a joined company's duties are driven from the boss's launcher's session: not yet)
+        if crate::together::joined_brief().is_some() {
+            return Err("not_supported".into());
+        }
+        let r: DutyRef = serde_json::from_value(duty.clone()).map_err(|_| "not_found".to_string())?;
+        let p = PLATFORM.get().ok_or_else(|| "no_launcher".to_string())?;
+        if let Some((title, fix)) = crate::company::with(|s| crate::company::phone_check(s, r))? {
+            return Err(format!("{title}. {fix}"));
+        }
+        p.emit("companion-start-duty", json!({ "duty": duty }));
+        Ok(())
     }
 
     fn route(&self, map: &str, date: &str, trip: &str) -> Option<Vec<[f64; 2]>> {
@@ -338,6 +458,7 @@ fn start(port: u16) -> Result<(), String> {
         Ok(c) => {
             hub_core::log_line(&format!("companion: listening on port {}", c.port()));
             *running = Some(c);
+            watch_hub();
             FAILED.lock().unwrap_or_else(|e| e.into_inner()).clear();
             Ok(())
         }

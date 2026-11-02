@@ -46,6 +46,7 @@ mod inbox;
 pub mod kit;
 pub mod late;
 mod launch;
+pub(crate) use launch::phone_check;
 mod ledger;
 mod lines;
 // (the control room's messages to the drivers, and theirs: docs/omsihub/MESSAGES.md)
@@ -448,6 +449,13 @@ pub(crate) fn with<T>(f: impl FnOnce(&mut Session) -> T) -> T {
     // (money in the open company's currency, as the language is the page's)
     words::set_currency(s.company.as_ref().map(|c| c.currency).unwrap_or_default());
     f(&mut s)
+}
+
+/// Read the session as it is, without the background's work, and only when it is free (None:
+/// busy): for a look from another thread that must never wait (`companion`).
+pub(crate) fn peek<T>(f: impl FnOnce(&Session) -> T) -> Option<T> {
+    let s = session().try_lock().ok()?;
+    Some(f(&s))
 }
 
 /// The data folder (`~/.openomsi`).

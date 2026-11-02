@@ -43,6 +43,8 @@ pub struct Facts {
     pub devices: Value,
     /// The game started from the add-on still runs (its plugin may be quiet: paused, out of focus).
     pub alive: bool,
+    /// The launcher ([`crate::Source::hub`]): its mode, the account, the company, the duties.
+    pub hub: Value,
 }
 
 fn f(v: Option<&Value>) -> Option<f64> {
@@ -92,6 +94,7 @@ pub fn build(h: &Heard, facts: &Facts, now: f64) -> Value {
         "ibis": if game { ibis(h, duty_live) } else { Value::Null },
         "printer": if game { printer(h, &facts.currency) } else { Value::Null },
         "devices": if game && facts.devices.is_array() { facts.devices.clone() } else { json!([]) },
+        "hub": facts.hub.clone(),
         "features": {
             "ibis": game && !keys(h, "ibis").is_empty(),
             "printer": game && h.keys.get("tickets").and_then(Value::as_array).is_some_and(|t| !t.is_empty()),
@@ -633,5 +636,13 @@ mod tests {
         let mut q = Pause::default();
         add(&mut h, json!({ "t": "live", "issued": 100, "clock": 29_000.0, "duty": { "trip": 2, "next": 0, "at_stop": true } }));
         assert_eq!(q.look(&h).unwrap()["until"], 29_900.0);
+    }
+
+    #[test]
+    fn the_launcher_is_told_as_it_is_with_the_game_or_without() {
+        let hub = json!({ "mode": "company", "signed_in": true, "company": { "name": "Stadtbus Grundorf" }, "role": "owner", "duties": [{ "line": "M29" }] });
+        let v = build(&Heard::default(), &Facts { hub: hub.clone(), ..Facts::default() }, 0.0);
+        assert_eq!((v["game"].as_bool(), &v["hub"]), (Some(false), &hub));
+        assert_eq!(build(&Heard::default(), &Facts::default(), 0.0)["hub"], Value::Null);
     }
 }

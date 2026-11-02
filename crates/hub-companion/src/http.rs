@@ -297,6 +297,11 @@ pub enum Command {
         trigger: String,
         down: Option<bool>,
     },
+    /// The company's duty started from the phone (`{date, line, tour, duty}`), as the launcher's
+    /// "Start duty": the launcher's, not the game's.
+    StartDuty {
+        duty: Value,
+    },
 }
 
 impl Command {
@@ -331,6 +336,11 @@ impl Command {
                     Some(d) => Some(d.as_bool()?),
                 },
             },
+            "start_duty" => {
+                let date = s("date").filter(|d| d.len() == 10 && d.bytes().all(|b| b.is_ascii_digit() || b == b'-'))?;
+                let duty = v.get("duty").and_then(Value::as_u64).filter(|n| *n < 1000)?;
+                Command::StartDuty { duty: json!({ "date": date, "line": s("line").filter(|x| name_ok(x))?, "tour": s("tour").filter(|x| name_ok(x))?, "duty": duty }) }
+            }
             _ => return None,
         })
     }
@@ -355,7 +365,7 @@ impl Command {
                 _ => json!({ "do": "msg", "kind": "reply", "id": id, "key": key }),
             },
             Command::MsgQuick { key } => json!({ "do": "msg", "kind": "quick", "key": key }),
-            Command::PauseEnd => return None,
+            Command::PauseEnd | Command::StartDuty { .. } => return None,
             Command::Press { trigger, down } => json!({ "do": "press", "key": trigger, "down": down }),
         })
     }
@@ -515,6 +525,12 @@ mod tests {
         assert_eq!(c(r#"{"do":"press","trigger":"almex_riegel","down":true}"#), Some(Command::Press { trigger: "almex_riegel".into(), down: Some(true) }));
         assert_eq!(c(r#"{"do":"press","trigger":"x y"}"#), None);
         assert_eq!(c(r#"{"do":"press","trigger":"IBIS_7","down":"yes"}"#), None);
+        // (the launcher's: a duty of the company's plan, never the plugin's)
+        let start = c(r#"{"do":"start_duty","date":"2026-11-06","line":"M29","tour":"3","duty":0}"#).unwrap();
+        assert_eq!(start, Command::StartDuty { duty: json!({ "date": "2026-11-06", "line": "M29", "tour": "3", "duty": 0 }) });
+        assert_eq!(start.for_plugin(), None);
+        assert_eq!(c(r#"{"do":"start_duty","date":"../../x","line":"M29","tour":"3","duty":0}"#), None);
+        assert_eq!(c(r#"{"do":"start_duty","date":"2026-11-06","line":"M29","tour":"3"}"#), None);
         assert_eq!(c(r#"{"do":"format_disk"}"#), None);
         assert_eq!(c(r#"{"number":"1"}"#), None);
     }

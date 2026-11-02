@@ -6,6 +6,12 @@ Each version of the Omsi-Hub add-on, newest first. The release on GitHub links h
 
 ### Added
 
+- **The Companion app follows the launcher**: it is told the launcher's mode (your own company,
+  a company joined with "Play together", a game of your own, the menu), whether you are signed
+  in to your Omsi-Hub account, your company and your role in it, and your duties still to drive;
+  and it can start a company duty as "Start duty" does (`start_duty`) - what keeps the duty from
+  starting said on the phone. The company mode on the phone needs the account, signed in on the
+  PC and in the app.
 - **The phone's navigator gets openOMSI's own map**: the add-on reads the picture of the map
   openOMSI keeps once its navigator has drawn it - the ground, the paving, the paint on the
   roads, the rails and rivers, the trees and the houses with their heights - and hands it to the

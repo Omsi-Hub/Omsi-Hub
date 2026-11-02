@@ -67,4 +67,8 @@ pub(super) mod join {
     pub(in crate::together) fn call(_: &str, _: &Value, _: &dyn Platform) -> Option<Answer> {
         None
     }
+
+    pub(crate) fn brief() -> Option<Value> {
+        None
+    }
 }
