@@ -104,21 +104,64 @@ impl MapTiles {
     }
 }
 
-/// The textures the houses wear, each once: its file and whether its clear parts are holes. A
-/// texture's id (`Look::skin`) is its place here plus one; the phone never sees a path.
-static SKINS: Mutex<Vec<(PathBuf, bool)>> = Mutex::new(Vec::new());
+/// The textures the houses wear, by their id (`Look::skin`): its file and whether its clear parts
+/// are holes; the phone never sees a path. An id is the texture's own - made from its file and
+/// its cut, not from the order squares were asked for in - and the ids given out are kept in
+/// [`SKINS_FILE`]: a phone keeps its squares from one run of the add-on to the next, and the
+/// textures they name are still the same ones.
+static SKINS: Mutex<Option<HashMap<u32, (PathBuf, bool)>>> = Mutex::new(None);
 /// A texture as the phone gets it: its bytes and their type.
 pub type Skin = Arc<(Vec<u8>, &'static str)>;
 /// The textures as the phone gets them, made once each.
 static MADE: Mutex<Option<HashMap<u32, Skin>>> = Mutex::new(None);
+/// The ids given out, a line each (`id`, `1` where cut, the file; tab apart), in Omsi-Hub's data
+/// folder.
+pub const SKINS_FILE: &str = "companion-skins.tsv";
+
+/// A texture's own id: FNV-1a of its file (in lower case, `/`) and its cut, never 0.
+fn own_id(path: &Path, cut: bool) -> u32 {
+    let key = format!("{}|{}", path.to_string_lossy().replace('\\', "/").to_lowercase(), cut as u8);
+    let h = key.bytes().fold(0x811c_9dc5u32, |h, b| (h ^ b as u32).wrapping_mul(0x0100_0193));
+    (h & 0x7fff_ffff).max(1)
+}
+
+/// The ids given out so far, read from [`SKINS_FILE`] the first time.
+fn skins() -> std::sync::MutexGuard<'static, Option<HashMap<u32, (PathBuf, bool)>>> {
+    let mut all = SKINS.lock().unwrap_or_else(|e| e.into_inner());
+    if all.is_none() {
+        let text = std::fs::read_to_string(hub_core::paths::data_dir().join(SKINS_FILE)).unwrap_or_default();
+        *all = Some(read_skins(&text));
+    }
+    all
+}
+
+fn read_skins(text: &str) -> HashMap<u32, (PathBuf, bool)> {
+    text.lines()
+        .filter_map(|l| {
+            let mut f = l.splitn(3, '\t');
+            Some((f.next()?.parse().ok()?, f.next()? == "1", PathBuf::from(f.next()?)))
+        })
+        .map(|(id, cut, p)| (id, (p, cut)))
+        .collect()
+}
 
 fn skin_id(path: &Path, cut: bool) -> u32 {
-    let mut all = SKINS.lock().unwrap_or_else(|e| e.into_inner());
-    let at = all.iter().position(|(p, c)| p == path && *c == cut).unwrap_or_else(|| {
-        all.push((path.to_path_buf(), cut));
-        all.len() - 1
-    });
-    at as u32 + 1
+    let mut guard = skins();
+    let all = guard.get_or_insert_with(HashMap::new);
+    // (two files of one id - all but never - the next free one)
+    let mut id = own_id(path, cut);
+    loop {
+        match all.get(&id) {
+            Some((p, c)) if p == path && *c == cut => return id,
+            Some(_) => id = id.wrapping_add(1).max(1),
+            None => break,
+        }
+    }
+    all.insert(id, (path.to_path_buf(), cut));
+    let line = format!("{id}\t{}\t{}\n", cut as u8, path.display());
+    let file = hub_core::paths::data_dir().join(SKINS_FILE);
+    let _ = std::fs::OpenOptions::new().create(true).append(true).open(file).and_then(|mut f| std::io::Write::write_all(&mut f, line.as_bytes()));
+    id
 }
 
 /// The model of the object `file` (named from `root`) as the generator reads a house's (the most
@@ -260,7 +303,7 @@ pub fn skin(id: u32) -> Option<Skin> {
     if let Some(had) = MADE.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).get(&id) {
         return Some(had.clone());
     }
-    let (path, cut) = SKINS.lock().unwrap_or_else(|e| e.into_inner()).get((id as usize).checked_sub(1)?).cloned()?;
+    let (path, cut) = skins().as_ref()?.get(&id).cloned()?;
     let img = omsi_texture::decode_file(&path).ok()?;
     if img.width == 0 || img.height == 0 || img.rgba.len() < img.width as usize * img.height as usize * 4 {
         return None;
@@ -287,6 +330,152 @@ pub fn skin(id: u32) -> Option<Skin> {
 mod tests {
     use super::*;
     use hub_companion::ground::{cache_file, Ground, SQUARE};
+
+    #[test]
+    fn a_textures_id_is_its_own_whenever_it_is_asked_for() {
+        let wall = Path::new("C:/OMSI 2/Sceneryobjects/Haus/texture/wall.bmp");
+        // (the same file in another case or with the other slashes, any run of the add-on)
+        assert_eq!(own_id(wall, false), own_id(Path::new("c:\\omsi 2\\sceneryobjects\\haus\\texture\\WALL.bmp"), false));
+        assert_ne!(own_id(wall, false), own_id(wall, true));
+        assert_ne!(own_id(wall, false), own_id(Path::new("C:/OMSI 2/Sceneryobjects/Haus/texture/roof.bmp"), false));
+        assert!(own_id(wall, false) > 0 && own_id(wall, false) <= 0x7fff_ffff);
+        // the ids given out, read back as they were written
+        let line = format!("{}\t0\t{}\n{}\t1\t{}\nbroken\n", own_id(wall, false), wall.display(), 7, "C:/x/fence.tga");
+        let read = read_skins(&line);
+        assert_eq!(read.get(&own_id(wall, false)), Some(&(wall.to_path_buf(), false)));
+        assert_eq!(read.get(&7), Some(&(PathBuf::from("C:/x/fence.tga"), true)));
+        assert_eq!(read.len(), 2);
+    }
+
+    /// How the houses of the squares about a place come dressed, on a real map where a game left
+    /// its picture: `HUB_MAP=<global.cfg> HUB_NEAR=<an entry point's name> cargo test -p hub-api
+    /// --release -- --ignored --nocapture dressing_by_square` (Ahlheim's busiest square without).
+    /// Each square: its houses, those in their own textures and why the others are not.
+    #[test]
+    #[ignore]
+    fn dressing_by_square() {
+        let map = std::env::var("HUB_MAP").unwrap_or_else(|_| "maps/Ahlheim 5/global.cfg".into());
+        let Some(global) = hub_core::paths::resolve_content(&map).filter(|p| p.is_file()) else { return };
+        let Some(g) = cache_file(&map).and_then(|f| Ground::open(&f)) else { return };
+        let t0 = std::time::Instant::now();
+        // (the square of the entry point named, else of the most houses: map metres)
+        let near = std::env::var("HUB_NEAR").ok();
+        let centre = near
+            .as_deref()
+            .and_then(|n| super::super::mapview::labels_near(&map, &global, "", [0.0, 0.0], 1e7).1.into_iter().find(|(name, _)| name.contains(n)).map(|(_, p)| p))
+            .unwrap_or_else(|| {
+                let mut count: std::collections::HashMap<(i64, i64), usize> = std::collections::HashMap::new();
+                for h in &g.houses {
+                    let p = h.outline[0];
+                    *count.entry((((p[0] as f64 + g.origin[0]) / SQUARE).floor() as i64, ((p[1] as f64 + g.origin[1]) / SQUARE).floor() as i64)).or_default() += 1;
+                }
+                let (&(i, j), _) = count.iter().max_by_key(|(_, n)| **n).unwrap();
+                [(i as f64 + 0.5) * SQUARE, (j as f64 + 0.5) * SQUARE]
+            });
+        let (ci, cj) = ((centre[0] / SQUARE).floor() as i64, (centre[1] / SQUARE).floor() as i64);
+        println!("{map}: about {centre:?} (square {ci},{cj})");
+        let dress = |it: &hub_companion::ground::Instance| dressed_at(&global, [it.at[0] as f64 + g.origin[0], it.at[1] as f64 + g.origin[1]], it.heading);
+        let mut all: std::collections::BTreeSet<u32> = std::collections::BTreeSet::new();
+        let mut sum = hub_companion::ground::Dressing::default();
+        for dj in [1, 0, -1] {
+            for di in [-1, 0, 1] {
+                let (si, sj) = (ci + di, cj + dj);
+                let corner = [si as f64 * SQUARE - g.origin[0], sj as f64 * SQUARE - g.origin[1]];
+                let d = g.dressing(corner, &dress);
+                let bad = d.skins.iter().filter(|&&id| skin(id).is_none()).count();
+                println!(
+                    "  square {si},{sj}: {} houses ({} faces), {} textured, {} not: {} raised from the outline, {} over the budget, {} not found, {} without a texture; {} textures ({bad} not made); {} with their biggest faces",
+                    d.houses,
+                    d.faces,
+                    d.textured,
+                    d.houses - d.textured,
+                    d.plain,
+                    d.over_budget,
+                    d.not_found,
+                    d.untextured,
+                    d.skins.len(),
+                    d.trimmed
+                );
+                all.extend(d.skins.iter().copied());
+                sum.houses += d.houses;
+                sum.textured += d.textured;
+                sum.plain += d.plain;
+                sum.over_budget += d.over_budget;
+                sum.not_found += d.not_found;
+                sum.untextured += d.untextured;
+            }
+        }
+        println!(
+            "nine squares: {} houses, {} textured ({:.0}%), {} raised, {} over the budget, {} not found, {} without a texture; {} textures in all; {:?}",
+            sum.houses,
+            sum.textured,
+            100.0 * sum.textured as f64 / sum.houses.max(1) as f64,
+            sum.plain,
+            sum.over_budget,
+            sum.not_found,
+            sum.untextured,
+            all.len(),
+            t0.elapsed()
+        );
+        // the textures the phone's map wears at once: every square in full within 1.2 km of the
+        // middle of this one (the whole map kept on the phone)
+        let mut reach: std::collections::BTreeSet<u32> = std::collections::BTreeSet::new();
+        let mut squares = 0;
+        for dj in -3i64..=3 {
+            for di in -3i64..=3 {
+                let (si, sj) = (ci + di, cj + dj);
+                if ((si as f64 + 0.5) * SQUARE - centre[0]).hypot((sj as f64 + 0.5) * SQUARE - centre[1]) > 1200.0 {
+                    continue;
+                }
+                squares += 1;
+                reach.extend(g.dressing([si as f64 * SQUARE - g.origin[0], sj as f64 * SQUARE - g.origin[1]], &dress).skins);
+            }
+        }
+        println!("within 1.2 km: {squares} squares, {} textures worn at once", reach.len());
+        // what the phone showed, looking at the place: a square in full (its houses in their
+        // textures) when its middle was within 700 m - one far by its middle comes light, its
+        // houses raised from their outlines, plain - and what it shows now, a square in full when
+        // its nearest point is
+        for (name, full) in [("before", 700.0), ("after", 700.0)] {
+            let (mut houses, mut textured) = (0, 0);
+            let mut line = Vec::new();
+            for dj in [1i64, 0, -1] {
+                for di in [-1i64, 0, 1] {
+                    let (si, sj) = (ci + di, cj + dj);
+                    let far = if name == "before" {
+                        ((si as f64 + 0.5) * SQUARE - centre[0]).hypot((sj as f64 + 0.5) * SQUARE - centre[1])
+                    } else {
+                        let d = |lo: f64, v: f64| (lo - v).max(0.0).max(v - lo - SQUARE);
+                        d(si as f64 * SQUARE, centre[0]).hypot(d(sj as f64 * SQUARE, centre[1]))
+                    };
+                    let d = g.dressing([si as f64 * SQUARE - g.origin[0], sj as f64 * SQUARE - g.origin[1]], &dress);
+                    let shown = if far <= full { d.textured } else { 0 };
+                    houses += d.houses;
+                    textured += shown;
+                    line.push(format!("{si},{sj}{}: {shown}/{}", if far <= full { "" } else { " light" }, d.houses));
+                }
+            }
+            println!("  the phone {name}: {textured} of {houses} houses in their textures - {}", line.join(", "));
+        }
+        // (for the app's mock server: `HUB_GROUND_DUMP=<dir>` writes these squares dressed as
+        // <i>_<j>.bin, i from -3 to 2 and j from -3 to 3 about the place, and the textures they
+        // wear as skins/<id>.jpg or .png)
+        let Some(dir) = std::env::var_os("HUB_GROUND_DUMP").map(PathBuf::from) else { return };
+        std::fs::create_dir_all(dir.join("skins")).unwrap();
+        let mut worn: std::collections::BTreeSet<u32> = std::collections::BTreeSet::new();
+        for i in -3..=2 {
+            for j in -3..=3 {
+                let corner = [(ci + i) as f64 * SQUARE - g.origin[0], (cj + j) as f64 * SQUARE - g.origin[1]];
+                std::fs::write(dir.join(format!("{i}_{j}.bin")), g.square_dressed(corner, false, &[], Some(&dress)).unwrap()).unwrap();
+                worn.extend(g.dressing(corner, &dress).skins);
+            }
+        }
+        for &id in &worn {
+            let Some(s) = skin(id) else { continue };
+            std::fs::write(dir.join("skins").join(format!("{id}.{}", if s.1 == "image/png" { "png" } else { "jpg" })), &s.0).unwrap();
+        }
+        println!("dumped about square {ci},{cj} to {dir:?}: {} textures", worn.len());
+    }
 
     /// What dressing the houses would cost, on a real map where a game left its picture:
     /// `cargo test -p hub-api --release -- --ignored --nocapture houses_dressed`.
@@ -406,11 +595,11 @@ mod tests {
                 std::fs::write(dir.join(format!("{i}_{j}.bin")), g.square_dressed(corner, false, &[], Some(&dress)).unwrap()).unwrap();
             }
         }
-        let ids = SKINS.lock().unwrap().len() as u32;
-        for id in 1..=ids {
+        let ids: Vec<u32> = skins().as_ref().map(|m| m.keys().copied().collect()).unwrap_or_default();
+        for &id in &ids {
             let Some(s) = skin(id) else { continue };
             std::fs::write(dir.join("skins").join(format!("{id}.{}", if s.1 == "image/png" { "png" } else { "jpg" })), &s.0).unwrap();
         }
-        println!("dumped about square {ci},{cj} to {dir:?}: {ids} textures");
+        println!("dumped about square {ci},{cj} to {dir:?}: {} textures", ids.len());
     }
 }

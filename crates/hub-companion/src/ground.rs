@@ -7,8 +7,8 @@
 //! out by squares of [`SQUARE`] metres, packed small ([`Ground::square`]).
 //!
 //! The houses' own models (untextured, as openOMSI's 3D map draws the nearest ones) go with
-//! them, each triangle with the shade the game gives it, up to [`MODEL_BUDGET`] a square; a house
-//! whose model did not fit is raised from its outline.
+//! them, each triangle with the shade the game gives it, up to [`MODEL_BUDGET`] a square shared
+//! out among them: a big model comes with its biggest faces.
 //!
 //! The file is read once through: the houses, trees, lines and models are kept, and of the triangles
 //! (hundreds of megabytes on a big map) only where each run of [`RUN`] of them lies. The
@@ -34,11 +34,14 @@ const ALL: usize = 13;
 /// Triangles to a run.
 const RUN: usize = 2048;
 /// The houses' model triangles a square carries at most (openOMSI's small map allows 30 000 about
-/// the bus; a square is a part of what the phone shows).
-pub const MODEL_BUDGET: usize = 40_000;
+/// the bus; a square is a part of what the phone shows), shared out among its houses: every
+/// house has its model, a big one its biggest faces (Bad Hügelsdorf's old town wants some
+/// 106 000 a square - at 40 000, first come first served, two houses in three there were raised
+/// plain from their outline).
+pub const MODEL_BUDGET: usize = 80_000;
 /// How squares are packed (part of [`Ground::version`]): raised when the packing changes, so the
 /// phones' kept squares are fetched again.
-const PACKING: u32 = 3;
+const PACKING: u32 = 4;
 /// Which way the shadows fall, per metre of height (openOMSI's `SHADOW_DIR`): the light comes from
 /// the other way.
 const SHADOW_DIR: [f32; 2] = [0.34, -0.28];
@@ -354,36 +357,7 @@ impl Ground {
             }
             out[count_at..count_at + 4].copy_from_slice(&n.to_le_bytes());
         }
-        let houses: Vec<&House> = self
-            .houses
-            .iter()
-            .filter(|h| {
-                let n = h.outline.len().max(1) as f32;
-                let (sx, sy) = h.outline.iter().fold((0.0, 0.0), |(a, b), p| (a + p[0], b + p[1]));
-                h.outline.len() >= 3 && h.outline.len() <= u16::MAX as usize && inside(sx / n, sy / n)
-            })
-            .collect();
-        // the houses' models that fit the budget, nearest the square's middle first
-        let mid = [(lo[0] + hi[0]) / 2.0, (lo[1] + hi[1]) / 2.0];
-        let mut wanted: Vec<u32> = houses.iter().filter_map(|h| h.model).filter(|&i| (i as usize) < self.instances.len()).collect();
-        wanted.sort_by(|a, b| {
-            let d = |i: &u32| {
-                let at = self.instances[*i as usize].at;
-                (at[0] - mid[0]).hypot(at[1] - mid[1])
-            };
-            d(a).total_cmp(&d(b))
-        });
-        wanted.dedup();
-        let mut drawn = std::collections::HashSet::new();
-        let mut spent = 0;
-        for i in wanted {
-            let faces = self.models[self.instances[i as usize].model as usize].0.len();
-            if low || spent + faces > MODEL_BUDGET || drawn.contains(&i) {
-                continue;
-            }
-            spent += faces;
-            drawn.insert(i);
-        }
+        let (houses, drawn) = self.houses_in(corner, low);
         out.extend_from_slice(&(houses.len() as u32).to_le_bytes());
         for h in houses {
             out.extend_from_slice(&(h.outline.len() as u16).to_le_bytes());
@@ -397,7 +371,7 @@ impl Ground {
                 t.iter().for_each(|i| out.extend_from_slice(&i.to_le_bytes()));
             }
             out.extend_from_slice(&((h.height * 10.0).round().clamp(0.0, u16::MAX as f32) as u16).to_le_bytes());
-            let modelled = h.model.is_some_and(|i| drawn.contains(&i));
+            let modelled = h.model.is_some_and(|i| drawn.contains_key(&i));
             out.push(h.open as u8 | (modelled as u8) << 1);
         }
         let trees: Vec<&[f32; 3]> = self.trees.iter().filter(|t| !low && inside(t[0], t[1])).collect();
@@ -444,23 +418,24 @@ impl Ground {
         let model_at = out.len();
         out.extend_from_slice(&0u32.to_le_bytes());
         let mut n = 0u32;
-        let mut ids: Vec<&u32> = drawn.iter().collect();
+        let mut ids: Vec<(&u32, &usize)> = drawn.iter().collect();
         ids.sort();
         // (each model's triangles placed, with the middle its walls face away from; a dressed
         // one with its texture coordinates and looks)
         let mut placed: Vec<(Vec<[[f32; 3]; 3]>, [f32; 3])> = Vec::new();
         let mut dressed: Vec<crate::dress::Placed> = Vec::new();
-        for &i in ids {
+        for (&i, &cap) in ids {
             let it = self.instances[i as usize];
             let (faces, centre) = &self.models[it.model as usize];
             let a = -(it.heading as f64).to_radians();
             let (sn, cs) = (a.sin() as f32, a.cos() as f32);
             let place = |v: [f32; 3]| [v[0] * cs - v[1] * sn + it.at[0], v[0] * sn + v[1] * cs + it.at[1], v[2]];
+            // (a model over its share of the budget: its biggest faces - a dressed one's come so)
             if let Some(d) = dress.and_then(|f| f(&it)) {
-                dressed.push((d.faces.iter().map(|(p, uv, look)| (p.map(place), *uv, *look)).collect(), d.looks.clone(), place([centre[0], centre[1], 0.0])));
+                dressed.push((d.faces.iter().take(cap).map(|(p, uv, look)| (p.map(place), *uv, *look)).collect(), d.looks.clone(), place([centre[0], centre[1], 0.0])));
                 continue;
             }
-            placed.push((faces.iter().map(|t| t.map(place)).collect(), place([centre[0], centre[1], 0.0])));
+            placed.push((biggest(faces, cap).into_iter().map(|t| t.map(place)).collect(), place([centre[0], centre[1], 0.0])));
         }
         if !low {
             placed.extend(props.iter().filter(|(c, _)| inside(c[0], c[1])).map(|(c, faces)| (faces.clone(), [c[0], c[1], 0.0])));
@@ -483,6 +458,122 @@ impl Ground {
         }
         Some(out)
     }
+
+    /// The houses of the square at `corner` (their middle in it), and the placed models of
+    /// theirs with the faces each may have (none far off): all of them, [`MODEL_BUDGET`] shared
+    /// out - every model small enough whole, the big ones their biggest faces, so many that all
+    /// fit ([`share`]).
+    fn houses_in(&self, corner: [f64; 2], low: bool) -> (Vec<&House>, std::collections::HashMap<u32, usize>) {
+        let lo = [corner[0] as f32, corner[1] as f32];
+        let hi = [(corner[0] + SQUARE) as f32, (corner[1] + SQUARE) as f32];
+        let houses: Vec<&House> = self
+            .houses
+            .iter()
+            .filter(|h| {
+                let n = h.outline.len().max(1) as f32;
+                let (x, y) = h.outline.iter().fold((0.0, 0.0), |(a, b), p| (a + p[0] / n, b + p[1] / n));
+                h.outline.len() >= 3 && h.outline.len() <= u16::MAX as usize && x >= lo[0] && x < hi[0] && y >= lo[1] && y < hi[1]
+            })
+            .collect();
+        if low {
+            return (houses, std::collections::HashMap::new());
+        }
+        let mut wanted: Vec<u32> = houses.iter().filter_map(|h| h.model).filter(|&i| (i as usize) < self.instances.len()).collect();
+        wanted.sort();
+        wanted.dedup();
+        let sizes: Vec<usize> = wanted.iter().map(|&i| self.models[self.instances[i as usize].model as usize].0.len()).collect();
+        let cap = share(&sizes, MODEL_BUDGET);
+        (houses, wanted.into_iter().zip(sizes).map(|(i, n)| (i, n.min(cap))).collect())
+    }
+
+    /// How the houses of the square at `corner` come dressed (`?dress=1`): each house counted
+    /// once, by what the phone gets for it.
+    pub fn dressing(&self, corner: [f64; 2], dress: Dresser) -> Dressing {
+        let (houses, drawn) = self.houses_in(corner, false);
+        let mut out = Dressing { houses: houses.len(), ..Dressing::default() };
+        let mut models: Vec<u32> = houses.iter().filter_map(|h| h.model).filter(|&i| (i as usize) < self.instances.len()).collect();
+        models.sort();
+        models.dedup();
+        out.faces = models.iter().map(|&i| self.models[self.instances[i as usize].model as usize].0.len()).sum();
+        let mut of = std::collections::HashMap::new();
+        for h in houses {
+            let Some(i) = h.model.filter(|&i| (i as usize) < self.instances.len()) else {
+                out.plain += 1;
+                continue;
+            };
+            let Some(&cap) = drawn.get(&i) else {
+                out.over_budget += 1;
+                continue;
+            };
+            if cap < self.models[self.instances[i as usize].model as usize].0.len() {
+                out.trimmed += 1;
+            }
+            match of.entry(i).or_insert_with(|| dress(&self.instances[i as usize])) {
+                None => out.not_found += 1,
+                Some(d) => {
+                    let worn: Vec<u32> = d.faces.iter().filter_map(|f| d.looks.get(f.2 as usize)).map(|l| l.skin).filter(|&s| s != 0).collect();
+                    if worn.is_empty() {
+                        out.untextured += 1;
+                    } else {
+                        out.textured += 1;
+                        out.skins.extend(worn);
+                    }
+                }
+            }
+        }
+        out
+    }
+}
+
+/// How a square's houses come dressed ([`Ground::dressing`]): how many there are, and of them
+/// how many wear textures, are raised from their outline (no model of their own in the game's
+/// picture), did not fit the square's [`MODEL_BUDGET`], were not found on the map again, or
+/// were found with no texture to be had; the textures they wear; the faces of all their models;
+/// how many came with their biggest faces only (their share of the budget).
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct Dressing {
+    pub houses: usize,
+    pub faces: usize,
+    pub textured: usize,
+    pub plain: usize,
+    pub over_budget: usize,
+    pub trimmed: usize,
+    pub not_found: usize,
+    pub untextured: usize,
+    pub skins: std::collections::BTreeSet<u32>,
+}
+
+/// The faces each of models of `sizes` faces may have for all to fit `budget`: the most that
+/// keeps their sum within it (`usize::MAX`: all whole).
+fn share(sizes: &[usize], budget: usize) -> usize {
+    if sizes.iter().sum::<usize>() <= budget {
+        return usize::MAX;
+    }
+    let (mut lo, mut hi) = (0, sizes.iter().copied().max().unwrap_or(0));
+    while lo < hi {
+        let mid = (lo + hi).div_ceil(2);
+        if sizes.iter().map(|&n| n.min(mid)).sum::<usize>() <= budget {
+            lo = mid;
+        } else {
+            hi = mid - 1;
+        }
+    }
+    lo
+}
+
+/// A model's `cap` biggest faces (all of them where it has no more).
+fn biggest(faces: &[[[f32; 3]; 3]], cap: usize) -> Vec<[[f32; 3]; 3]> {
+    if faces.len() <= cap {
+        return faces.to_vec();
+    }
+    let area = |t: &[[f32; 3]; 3]| {
+        let (u, v) = ([t[1][0] - t[0][0], t[1][1] - t[0][1], t[1][2] - t[0][2]], [t[2][0] - t[0][0], t[2][1] - t[0][1], t[2][2] - t[0][2]]);
+        let c = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+        c[0] * c[0] + c[1] * c[1] + c[2] * c[2]
+    };
+    let mut by: Vec<&[[f32; 3]; 3]> = faces.iter().collect();
+    by.sort_by(|a, b| area(b).total_cmp(&area(a)));
+    by.into_iter().take(cap).copied().collect()
 }
 
 /// A placed model's triangle's shade: a wall's light (0..127) as it faces away from the house's
@@ -604,6 +695,21 @@ mod tests {
     }
 
     #[test]
+    fn the_budget_is_shared_so_every_house_has_its_model() {
+        // all fit: whole
+        assert_eq!(share(&[100, 200, 300], 1000), usize::MAX);
+        // too many: the small ones whole, the big ones cut to the same share
+        let cap = share(&[100, 200, 3000, 5000], 2000);
+        assert_eq!(cap, 850);
+        assert_eq!([100usize, 200, 3000, 5000].iter().map(|&n| n.min(cap)).sum::<usize>(), 2000);
+        // the share a model gets: its biggest faces
+        let face = |s: f32| [[0.0, 0.0, 0.0], [s, 0.0, 0.0], [0.0, 0.0, s]];
+        let faces = [face(1.0), face(3.0), face(0.5), face(2.0)];
+        assert_eq!(biggest(&faces, 2), vec![face(3.0), face(2.0)]);
+        assert_eq!(biggest(&faces, 9).len(), 4);
+    }
+
+    #[test]
     fn another_version_or_a_short_file_is_not_read() {
         let dir = std::env::temp_dir().join(format!("hub-ground-bad-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -661,4 +767,3 @@ mod tests {
         println!("dumped about square {ci},{cj} to {dir:?}");
     }
 }
-
