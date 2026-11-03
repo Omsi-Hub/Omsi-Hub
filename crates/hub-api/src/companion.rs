@@ -289,6 +289,10 @@ impl Source for Hub {
         crate::content::housetex::dressed_at(&global_of(map)?, at, heading)
     }
 
+    fn paved(&self, map: &str, lo: [f64; 2]) -> Option<Arc<hub_companion::dress::Paved>> {
+        crate::content::roadtex::paved_in(&global_of(map)?, lo, hub_companion::ground::SQUARE)
+    }
+
     fn skin(&self, id: u32) -> Option<(Vec<u8>, &'static str)> {
         crate::content::housetex::skin(id).map(|s| (s.0.clone(), s.1))
     }

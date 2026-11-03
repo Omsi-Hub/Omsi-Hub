@@ -244,7 +244,8 @@ triangles above and come after everything in a section of their own - the same f
 ```
 "SKN1"  u16 looks: u32 texture (its id for /api/ground/skin, 0: none - the colour alone),
                  4 × u8 colour (r, g, b, a: the material's where it has no texture),
-                 u8 flags (1: the texture's clear parts are holes)
+                 u8 flags (1: the texture's clear parts are holes; 2: it is seen through
+                 as far as it is clear - glass on a house is drawn whole)
 u32 n   triangles: 3 × (i16 x, i16 y, i16 z), 3 × (i16 u, i16 v) - where on the texture,
                  2048 a repeat (it repeats: each triangle's moved by whole repeats to start
                  near 0) - u16 look, u8 shade (as a model triangle's)
@@ -253,6 +254,27 @@ u32 n   triangles: 3 × (i16 x, i16 y, i16 z), 3 × (i16 u, i16 v) - where on th
 The textures come apart, once each however many houses wear them; the app keeps them on its GPU
 while a square it shows wears them. A house whose object is not found (or an add-on from before
 it, which leaves out the section) comes as a model triangle, untextured.
+
+The roads come the same way after them (`dress=1`, not far off): every spline's surface as the
+game builds it - the carriageways with the markings painted in their textures, the pavements,
+the kerbs, the marking splines laid over the road - and the flat faces of the road objects (the
+crossings, the bus bays) and of the objects covering 30 m² or more of the ground. The map lies
+flat: a spline is laid as though its curve ran level, and what lies within 0.3 m of the ground
+is laid flat, in the order the game lays it - the opaque surfaces of the splines, then those of
+the objects, then what is seen through (a mark, a kerb's or a pavement's edge) of each. What
+stands higher (a wall, a railing) comes with the dressed houses in `SKN1`.
+
+```
+"PAV1"  u16 looks: as SKN1's
+u32 n   triangles in the order they are laid: 3 × (i16 x, i16 y), 3 × (i16 u, i16 v) - as
+                 SKN1's -, u16 look
+```
+
+The app draws them over the ground, and where a square has them it leaves out its own roads,
+the paint and the rails under them. A phone that keeps the whole map keeps the textures its
+squares wear with it (they keep their ids from one version of the map to the next), and a square
+shows once its textures are on the GPU. The packing changed with the roads: kept squares are
+fetched again.
 
 Each triangle, house and tree is in the square its middle is in. A line comes with every square
 it passes, by the stretch of it there.

@@ -58,6 +58,16 @@ impl MapTiles {
         Some(MapTiles { root, origin, size, tiles, chrono, placed: HashMap::new() })
     }
 
+    /// The side of a tile (m).
+    pub fn tile_size(&self) -> f64 {
+        self.size
+    }
+
+    /// Tile `t` as the game reads it on the day (its chrono changes), if the map has it.
+    pub fn tile(&self, t: (i32, i32)) -> Option<omsi_map::Tile> {
+        self.tiles.get(&t).and_then(|p| omsi_world::map_index::read_tile(p, &self.chrono))
+    }
+
     /// The tile a place (relative to the origin) lies in.
     fn tile_at(&self, at: [f32; 2]) -> (i32, i32) {
         let w = self.origin + DVec2::new(at[0] as f64, at[1] as f64);
@@ -65,7 +75,7 @@ impl MapTiles {
     }
 
     /// The objects of tile `t`, read once: its own and the rows along its splines.
-    fn objects(&mut self, t: (i32, i32)) -> &[Placed] {
+    pub fn objects(&mut self, t: (i32, i32)) -> &[Placed] {
         if !self.placed.contains_key(&t) {
             let mut out = Vec::new();
             if let Some(tile) = self.tiles.get(&t).and_then(|p| omsi_world::map_index::read_tile(p, &self.chrono)) {
@@ -145,7 +155,7 @@ fn read_skins(text: &str) -> HashMap<u32, (PathBuf, bool)> {
         .collect()
 }
 
-fn skin_id(path: &Path, cut: bool) -> u32 {
+pub(crate) fn skin_id(path: &Path, cut: bool) -> u32 {
     let mut guard = skins();
     let all = guard.get_or_insert_with(HashMap::new);
     // (two files of one id - all but never - the next free one)
@@ -164,63 +174,28 @@ fn skin_id(path: &Path, cut: bool) -> u32 {
     id
 }
 
+/// An object's model as the game shows it: every face of its most detailed level (x, y, z up from
+/// the object's place), with its texture coordinates and which of `looks` it wears.
+pub struct Worn {
+    pub tris: Vec<([Vec3; 3], [Vec2; 3], u16)>,
+    pub looks: Vec<Look>,
+    /// A piece of road: an object with lanes of its own (a crossing, a bus bay) or a surface.
+    pub road: bool,
+}
+
+/// The id of texture `id`'s picture without its alpha (drawn whole).
+fn opaque(id: u32) -> u32 {
+    let path = skins().as_ref().and_then(|all| all.get(&id).map(|(p, _)| p.clone()));
+    path.map_or(id, |p| skin_id(&p, false))
+}
+
 /// The model of the object `file` (named from `root`) as the generator reads a house's (the most
 /// detailed level's meshes, the faces above its ground, the biggest [`FACES`]: the same faces as
 /// the game's picture keeps), dressed: each face's texture coordinates and look.
 pub fn dressed(root: &Path, file: &str) -> Option<Dressed> {
-    let path = omsi_cfg::resolve_path(root, file);
-    let sco = omsi_scenery::sco::SceneryObject::load(&path).ok()?;
-    let sco_dir = path.parent()?.to_path_buf();
-    let (model, model_dir) = match &sco.model_file {
-        Some(m) => {
-            let mp = omsi_cfg::resolve_path(&sco_dir, m);
-            (omsi_model::Model::load(&mp).ok()?, mp.parent()?.to_path_buf())
-        }
-        None => (sco.model.clone(), sco_dir.clone()),
-    };
-    if model.lods.is_empty() {
-        return None;
-    }
-    // (where the game looks for a scenery object's textures)
-    let mut dirs: Vec<PathBuf> = vec![omsi_cfg::resolve_path(&sco_dir, "texture"), omsi_cfg::resolve_path(&model_dir, "texture"), model_dir.clone()];
-    if let Some(p) = model_dir.parent() {
-        dirs.push(omsi_cfg::resolve_path(p, "texture"));
-    }
-    dirs.push(omsi_cfg::resolve_path(root, "Texture"));
-    let dir_refs: Vec<&Path> = dirs.iter().map(PathBuf::as_path).collect();
-    let mut looks: Vec<Look> = Vec::new();
-    let mut by_name: HashMap<(String, [u32; 4], bool), u16> = HashMap::new();
-    let mut tris: Vec<([Vec3; 3], [Vec2; 3], u16)> = Vec::new();
-    for md in model.lod_meshes(0) {
-        if md.mouse_event.is_some() || md.is_shadow {
-            continue;
-        }
-        let mp = omsi_cfg::resolve_path(&omsi_cfg::resolve_path(&model_dir, "model"), &md.file);
-        let mp = if omsi_cfg::vfs::is_file(&mp) { mp } else { omsi_cfg::resolve_path(&model_dir, &md.file) };
-        let Ok(m) = omsi_o3d::load_mesh(&mp) else { continue };
-        // (a material that tests its texture's alpha, `[matl_alpha] 1`: a fence, leaves - the
-        // clear parts holes; a blended one, glass, is drawn whole)
-        let cut_of = |tex: &str| md.materials.iter().filter(|d| d.texture.eq_ignore_ascii_case(tex.trim())).map(|d| d.alpha).next_back() == Some(1);
-        // (as the generator reads it: its y the height)
-        let swap = |v: Vec3| Vec3::new(v.x, v.z, v.y);
-        for t in &m.triangles {
-            let p = t.indices.map(|i| m.vertices.get(i as usize).map(|v| swap(v.position)).unwrap_or(Vec3::ZERO));
-            let uv = t.indices.map(|i| m.vertices.get(i as usize).map(|v| v.uv).unwrap_or(Vec2::ZERO));
-            let (tex, colour) = m.materials.get(t.material as usize).map(|mt| (mt.texture.as_str(), mt.diffuse)).unwrap_or(("", [0.8, 0.8, 0.8, 1.0]));
-            let cut = cut_of(tex);
-            let name = (tex.to_ascii_lowercase(), colour.map(f32::to_bits), cut);
-            let look = *by_name.entry(name).or_insert_with(|| {
-                let found = (!tex.trim().is_empty() && !super::bus3d::pack::is_null_texture(tex)).then(|| omsi_texture::find_texture(tex, &dir_refs)).flatten();
-                let c = |k: usize| (colour[k].clamp(0.0, 1.0) * 255.0).round() as u8;
-                looks.push(match found {
-                    Some(p) => Look { skin: skin_id(&p, cut), colour: [255; 4], cut },
-                    None => Look { skin: 0, colour: [c(0), c(1), c(2), 255], cut: false },
-                });
-                (looks.len() - 1).min(u16::MAX as usize) as u16
-            });
-            tris.push((p, uv, look));
-        }
-    }
+    let Worn { tris, looks, .. } = worn(root, file)?;
+    // (a house's glass drawn whole: its texture without the alpha)
+    let looks: Vec<Look> = looks.into_iter().map(|l| if l.blend { Look { skin: opaque(l.skin), blend: false, ..l } } else { l }).collect();
     let (mut lo, mut hi) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
     for (t, ..) in &tris {
         for p in t {
@@ -243,6 +218,66 @@ pub fn dressed(root: &Path, file: &str) -> Option<Dressed> {
     faces.sort_by(|a, b| b.0.total_cmp(&a.0));
     faces.truncate(FACES);
     Some(Dressed { faces: faces.into_iter().map(|(_, f)| f).collect(), looks })
+}
+
+/// The model of the object `file` (named from `root`), every face of its most detailed level with
+/// its texture coordinates and look ([`Worn`]).
+pub fn worn(root: &Path, file: &str) -> Option<Worn> {
+    let path = omsi_cfg::resolve_path(root, file);
+    let sco = omsi_scenery::sco::SceneryObject::load(&path).ok()?;
+    let sco_dir = path.parent()?.to_path_buf();
+    let (model, model_dir) = match &sco.model_file {
+        Some(m) => {
+            let mp = omsi_cfg::resolve_path(&sco_dir, m);
+            (omsi_model::Model::load(&mp).ok()?, mp.parent()?.to_path_buf())
+        }
+        None => (sco.model.clone(), sco_dir.clone()),
+    };
+    if model.lods.is_empty() {
+        return None;
+    }
+    // (where the game looks for a scenery object's textures)
+    let mut dirs: Vec<PathBuf> = vec![omsi_cfg::resolve_path(&sco_dir, "texture"), omsi_cfg::resolve_path(&model_dir, "texture"), model_dir.clone()];
+    if let Some(p) = model_dir.parent() {
+        dirs.push(omsi_cfg::resolve_path(p, "texture"));
+    }
+    dirs.push(omsi_cfg::resolve_path(root, "Texture"));
+    let dir_refs: Vec<&Path> = dirs.iter().map(PathBuf::as_path).collect();
+    let mut looks: Vec<Look> = Vec::new();
+    let mut by_name: HashMap<(String, [u32; 4], i32), u16> = HashMap::new();
+    let mut tris: Vec<([Vec3; 3], [Vec2; 3], u16)> = Vec::new();
+    for md in model.lod_meshes(0) {
+        if md.mouse_event.is_some() || md.is_shadow {
+            continue;
+        }
+        let mp = omsi_cfg::resolve_path(&omsi_cfg::resolve_path(&model_dir, "model"), &md.file);
+        let mp = if omsi_cfg::vfs::is_file(&mp) { mp } else { omsi_cfg::resolve_path(&model_dir, &md.file) };
+        let Ok(m) = omsi_o3d::load_mesh(&mp) else { continue };
+        // (a material that tests its texture's alpha, `[matl_alpha] 1`: a fence, leaves - the
+        // clear parts holes; one that blends it, `2`: glass, a mark laid on the road)
+        let alpha_of = |tex: &str| md.materials.iter().filter(|d| d.texture.eq_ignore_ascii_case(tex.trim())).map(|d| d.alpha).next_back().unwrap_or(0);
+        // (as the generator reads it: its y the height)
+        let swap = |v: Vec3| Vec3::new(v.x, v.z, v.y);
+        for t in &m.triangles {
+            let p = t.indices.map(|i| m.vertices.get(i as usize).map(|v| swap(v.position)).unwrap_or(Vec3::ZERO));
+            let uv = t.indices.map(|i| m.vertices.get(i as usize).map(|v| v.uv).unwrap_or(Vec2::ZERO));
+            let (tex, colour) = m.materials.get(t.material as usize).map(|mt| (mt.texture.as_str(), mt.diffuse)).unwrap_or(("", [0.8, 0.8, 0.8, 1.0]));
+            let alpha = alpha_of(tex);
+            let (cut, blend) = (alpha == 1, alpha >= 2);
+            let name = (tex.to_ascii_lowercase(), colour.map(f32::to_bits), alpha);
+            let look = *by_name.entry(name).or_insert_with(|| {
+                let found = (!tex.trim().is_empty() && !super::bus3d::pack::is_null_texture(tex)).then(|| omsi_texture::find_texture(tex, &dir_refs)).flatten();
+                let c = |k: usize| (colour[k].clamp(0.0, 1.0) * 255.0).round() as u8;
+                looks.push(match found {
+                    Some(p) => Look { skin: skin_id(&p, cut || blend), colour: [255; 4], cut, blend },
+                    None => Look { skin: 0, colour: [c(0), c(1), c(2), 255], cut: false, blend: false },
+                });
+                (looks.len() - 1).min(u16::MAX as usize) as u16
+            });
+            tris.push((p, uv, look));
+        }
+    }
+    Some(Worn { tris, looks, road: sco.surface || !sco.paths.is_empty() })
 }
 
 /// The houses of the map `global` dressed, read as they are asked for: the tiles once, each
@@ -310,7 +345,7 @@ pub fn skin(id: u32) -> Option<Skin> {
     }
     let side = SKIN as usize;
     let px = area_resize(&img.rgba, img.width as usize, img.height as usize, side, side);
-    let holes = cut && img.has_alpha && px.as_chunks::<4>().0.iter().any(|p| p[3] < 128);
+    let holes = cut && img.has_alpha && px.as_chunks::<4>().0.iter().any(|p| p[3] < 250);
     let mut bytes = Vec::new();
     use image::ImageEncoder;
     let kind = if holes {
@@ -457,17 +492,21 @@ mod tests {
             }
             println!("  the phone {name}: {textured} of {houses} houses in their textures - {}", line.join(", "));
         }
-        // (for the app's mock server: `HUB_GROUND_DUMP=<dir>` writes these squares dressed as
-        // <i>_<j>.bin, i from -3 to 2 and j from -3 to 3 about the place, and the textures they
-        // wear as skins/<id>.jpg or .png)
+        // (for the app's mock server: `HUB_GROUND_DUMP=<dir>` writes these squares dressed, their
+        // roads in their textures, as <i>_<j>.bin, i from -3 to 2 and j from -3 to 3 about the
+        // place, and the textures they wear as skins/<id>.jpg or .png)
         let Some(dir) = std::env::var_os("HUB_GROUND_DUMP").map(PathBuf::from) else { return };
         std::fs::create_dir_all(dir.join("skins")).unwrap();
         let mut worn: std::collections::BTreeSet<u32> = std::collections::BTreeSet::new();
         for i in -3..=2 {
             for j in -3..=3 {
                 let corner = [(ci + i) as f64 * SQUARE - g.origin[0], (cj + j) as f64 * SQUARE - g.origin[1]];
-                std::fs::write(dir.join(format!("{i}_{j}.bin")), g.square_dressed(corner, false, &[], Some(&dress)).unwrap()).unwrap();
+                let paved = super::super::roadtex::paved_in(&global, [corner[0] + g.origin[0], corner[1] + g.origin[1]], SQUARE);
+                std::fs::write(dir.join(format!("{i}_{j}.bin")), g.square_dressed(corner, false, &[], Some(&dress), paved.as_deref()).unwrap()).unwrap();
                 worn.extend(g.dressing(corner, &dress).skins);
+                if let Some(p) = &paved {
+                    worn.extend(p.looks.iter().chain(p.standing.iter().flat_map(|s| s.1.iter())).map(|l| l.skin).filter(|&s| s != 0));
+                }
             }
         }
         for &id in &worn {
@@ -558,7 +597,7 @@ mod tests {
             };
             let t = std::time::Instant::now();
             let dress = |it: &hub_companion::ground::Instance| dressed_at(&global, [it.at[0] as f64 + g.origin[0], it.at[1] as f64 + g.origin[1]], it.heading);
-            let worn = g.square_dressed(corner, false, &[], Some(&dress)).unwrap();
+            let worn = g.square_dressed(corner, false, &[], Some(&dress), None).unwrap();
             let plain = g.square(corner, false).unwrap();
             println!(
                 "square {si},{sj}: {} models wanted, {found} found; faces: layers {faces_cache}, ours {faces_ours} ({untextured} untextured); {} textures; boxes off {bounds_off}; bytes {} KB gz {} KB, dressed {} KB gz {} KB ({:?})",
@@ -592,7 +631,7 @@ mod tests {
         for i in -3..=2 {
             for j in -3..=3 {
                 let corner = [(ci + i) as f64 * SQUARE, (cj + j) as f64 * SQUARE];
-                std::fs::write(dir.join(format!("{i}_{j}.bin")), g.square_dressed(corner, false, &[], Some(&dress)).unwrap()).unwrap();
+                std::fs::write(dir.join(format!("{i}_{j}.bin")), g.square_dressed(corner, false, &[], Some(&dress), None).unwrap()).unwrap();
             }
         }
         let ids: Vec<u32> = skins().as_ref().map(|m| m.keys().copied().collect()).unwrap_or_default();

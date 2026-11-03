@@ -438,7 +438,9 @@ impl Shared {
         };
         // (the houses in their textures, for an app that draws them: `crate::dress`)
         let dressed = |it: &ground::Instance| self.source.dressed(map, [it.at[0] as f64 + o[0], it.at[1] as f64 + o[1]], it.heading);
-        let plain = ground.square_dressed(corner, low, &props, dress.then_some(&dressed as crate::dress::Dresser))?;
+        // (and its roads in their own textures)
+        let paved = if dress && !low { self.source.paved(map, [corner[0] + o[0], corner[1] + o[1]]) } else { None };
+        let plain = ground.square_dressed(corner, low, &props, dress.then_some(&dressed as crate::dress::Dresser), paved.as_deref())?;
         // (gzipped once: a square is a megabyte or two of mostly small numbers)
         let mut z = flate2::write::GzEncoder::new(Vec::with_capacity(plain.len() / 3), flate2::Compression::fast());
         std::io::Write::write_all(&mut z, &plain).ok()?;
@@ -724,12 +726,7 @@ pub fn handle(req: &Request, shared: &Arc<Shared>) -> Response {
             let labels = shared.source.labels(&map, &date, [x - off[0], y - off[1]], r);
             let names: Vec<Value> = labels.streets.iter().map(|(n, p, a)| json!({ "name": n, "x": r1(p[0] + off[0]), "y": r1(p[1] + off[1]), "angle": r1(*a) })).collect();
             let entries: Vec<Value> = labels.entries.iter().map(|(n, p)| json!({ "name": n, "x": r1(p[0] + off[0]), "y": r1(p[1] + off[1]) })).collect();
-            let lights: Vec<Value> = shared
-                .source
-                .lights(&map, &date, [x - off[0], y - off[1]], r)
-                .into_iter()
-                .map(|(p, h, w)| json!([r1(p[0] + off[0]), r1(p[1] + off[1]), r1(h), r1(w)]))
-                .collect();
+            let lights: Vec<Value> = shared.source.lights(&map, &date, [x - off[0], y - off[1]], r).into_iter().map(|(p, h, w)| json!([r1(p[0] + off[0]), r1(p[1] + off[1]), r1(h), r1(w)])).collect();
             Response::json(&json!({ "roads": roads, "water": [], "green": [], "names": names, "entries": entries, "lights": lights }))
         }
         Route::Ground(si, sj, low, dress, gz) => {

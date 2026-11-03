@@ -20,7 +20,7 @@ use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-use crate::dress::Dresser;
+use crate::dress::{Dresser, Paved};
 
 /// The side of a square the phone asks for (m).
 pub const SQUARE: f64 = 500.0;
@@ -41,7 +41,7 @@ const RUN: usize = 2048;
 pub const MODEL_BUDGET: usize = 80_000;
 /// How squares are packed (part of [`Ground::version`]): raised when the packing changes, so the
 /// phones' kept squares are fetched again.
-const PACKING: u32 = 4;
+const PACKING: u32 = 5;
 /// Which way the shadows fall, per metre of height (openOMSI's `SHADOW_DIR`): the light comes from
 /// the other way.
 const SHADOW_DIR: [f32; 2] = [0.34, -0.28];
@@ -315,13 +315,15 @@ impl Ground {
     /// file's coordinates (relative to [`Ground::origin`]; z up from the ground), sent with the
     /// houses' models (not in a square far off).
     pub fn square_with(&self, corner: [f64; 2], low: bool, props: &[([f32; 2], Vec<[[f32; 3]; 3]>)]) -> Option<Vec<u8>> {
-        self.square_dressed(corner, low, props, None)
+        self.square_dressed(corner, low, props, None, None)
     }
 
     /// [`Ground::square_with`], the houses' models dressed where `dress` has a placed model's
     /// own (its faces with their textures, `crate::dress`): those go in a section of their own
-    /// after the models, the others as before.
-    pub fn square_dressed(&self, corner: [f64; 2], low: bool, props: &[([f32; 2], Vec<[[f32; 3]; 3]>)], dress: Option<Dresser>) -> Option<Vec<u8>> {
+    /// after the models, the others as before. `paved`: the square's ground in its own textures
+    /// (`crate::dress::Paved`, x, y from the square's corner), in a section of its own after them,
+    /// and what stands of it with the dressed houses.
+    pub fn square_dressed(&self, corner: [f64; 2], low: bool, props: &[([f32; 2], Vec<[[f32; 3]; 3]>)], dress: Option<Dresser>, paved: Option<&Paved>) -> Option<Vec<u8>> {
         let lo = [corner[0] as f32, corner[1] as f32];
         let hi = [(corner[0] + SQUARE) as f32, (corner[1] + SQUARE) as f32];
         let inside = |x: f32, y: f32| x >= lo[0] && x < hi[0] && y >= lo[1] && y < hi[1];
@@ -453,8 +455,16 @@ impl Ground {
             }
         }
         out[model_at..model_at + 4].copy_from_slice(&n.to_le_bytes());
-        if dress.is_some() {
+        // (what stands of the roads - a wall, a railing - with the houses: from the square's corner)
+        if let Some(p) = paved.filter(|_| !low) {
+            let at = |v: [f32; 3]| [v[0] + corner[0] as f32, v[1] + corner[1] as f32, v[2]];
+            dressed.extend(p.standing.iter().map(|(faces, looks, c)| (faces.iter().map(|(f, uv, l)| (f.map(at), *uv, *l)).collect(), looks.clone(), at(*c))));
+        }
+        if dress.is_some() || paved.is_some() {
             crate::dress::write_section(&mut out, &dressed, corner, UNITS, &shade_of);
+        }
+        if let Some(p) = paved.filter(|_| !low) {
+            crate::dress::write_paved(&mut out, p, UNITS);
         }
         Some(out)
     }

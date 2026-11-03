@@ -18,8 +18,10 @@ Each version of the Omsi-Hub add-on, newest first. The release on GitHub links h
   speed limit of the lane the bus drives on; the map's roads come with every traffic light of
   the map where it stands; the phone hears of a red light run and a speed camera's flash with the
   fine, and of a speed camera on the lane ahead; the stops on the phone's map come with what stands
-  at them - their shelters, signs, bins and benches, as the map's own models; and the houses wear
-  their own textures, as the game dresses them. A game paused in its menu or out of focus
+  at them - their shelters, signs, bins and benches, as the map's own models; the houses wear
+  their own textures, as the game dresses them, and the roads theirs - every carriageway,
+  pavement and kerb as the game lays it, with the markings painted in it, and the crossings and
+  bus bays. A game paused in its menu or out of focus
   (Alt+Tab) keeps the phone's navigator: it counts as there, paused, while it runs. The phone can
   fetch the whole map once and keep it (`GET /api/ground/index`, squares as their gzip). (The plugin
   is 1.19.0.)

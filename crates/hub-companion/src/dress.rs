@@ -3,6 +3,9 @@
 //! from the map's objects by the app), sent with a square (`?dress=1`, see the protocol's
 //! `GET /api/ground`) instead of the untextured model of the game's picture; the textures
 //! themselves are fetched apart, once each, small ([`SKIN`] pixels a side: `GET /api/ground/skin`).
+//! The roads come the same way ([`Paved`], `Source::paved`): their surfaces flat in their own
+//! textures - the markings are painted in them - in a section of their own (`PAV1`), what stands of
+//! them (a wall, a railing) with the houses.
 
 /// The side of a house's texture as the phone gets it (px): every one the same, a layer of the
 /// phone's texture array.
@@ -32,12 +35,77 @@ pub struct Dressed {
 }
 
 /// What a face wears: a texture (its id for `GET /api/ground/skin`, 0: none - the colour only)
-/// and the material's colour; `cut`: the texture's clear parts are holes (a fence, leaves).
+/// and the material's colour; `cut`: the texture's clear parts are holes (a fence, leaves);
+/// `blend`: it is seen through as far as it is clear (glass - drawn whole on a house -, a mark
+/// laid over the road, a pavement's edge fading into the grass).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Look {
     pub skin: u32,
     pub colour: [u8; 4],
     pub cut: bool,
+    pub blend: bool,
+}
+
+impl Look {
+    /// Its flags on the wire: 1 cut, 2 blended.
+    pub fn flags(&self) -> u8 {
+        self.cut as u8 | (self.blend as u8) << 1
+    }
+}
+
+/// A face of the paved ground: its corners (x, y from the square's corner), their texture
+/// coordinates, its look.
+pub type Flat = ([[f32; 2]; 3], [[f32; 2]; 3], u16);
+
+/// A square's ground in its own textures: the faces of the roads, the pavements and what is laid
+/// on them (the splines' surfaces, the flat faces of the crossings and bus bays), flat (x, y from
+/// the square's corner, m), in the order they are laid - each over those before it -, with their
+/// texture coordinates and which of `looks` they wear; and what stands of them (a wall, a railing,
+/// x, y from the corner and z up from the ground), lit as a house's faces are.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Paved {
+    pub faces: Vec<Flat>,
+    pub looks: Vec<Look>,
+    pub standing: Vec<Placed>,
+}
+
+/// The looks of a section on the wire: how many, then each one's texture, colour and flags.
+fn write_looks(out: &mut Vec<u8>, looks: &[Look]) {
+    out.extend_from_slice(&(looks.len().min(u16::MAX as usize) as u16).to_le_bytes());
+    for l in looks.iter().take(u16::MAX as usize) {
+        out.extend_from_slice(&l.skin.to_le_bytes());
+        out.extend_from_slice(&l.colour);
+        out.push(l.flags());
+    }
+}
+
+/// A face's texture coordinates on the wire, whole repeats off (the texture repeats, the numbers
+/// stay small).
+fn write_uv(out: &mut Vec<u8>, uv: &[[f32; 2]; 3]) {
+    let (du, dv) = (uv.iter().map(|t| t[0]).fold(f32::MAX, f32::min).floor(), uv.iter().map(|t| t[1]).fold(f32::MAX, f32::min).floor());
+    for t in uv {
+        for w in [t[0] - du, t[1] - dv] {
+            out.extend_from_slice(&((w * UV_UNITS).round().clamp(i16::MIN as f32, i16::MAX as f32) as i16).to_le_bytes());
+        }
+    }
+}
+
+/// The paved ground's section of a square: `PAV1`, its looks, then its faces in the order they are
+/// laid - each corner x, y at `units` a metre from the square's corner, where on its texture, its look.
+pub fn write_paved(out: &mut Vec<u8>, paved: &Paved, units: f64) {
+    out.extend_from_slice(b"PAV1");
+    write_looks(out, &paved.looks);
+    let n = paved.faces.len().min(u32::MAX as usize);
+    out.extend_from_slice(&(n as u32).to_le_bytes());
+    let q = |v: f32| (v as f64 * units).round().clamp(i16::MIN as f64, i16::MAX as f64) as i16;
+    for (p, uv, look) in &paved.faces[..n] {
+        for v in p {
+            out.extend_from_slice(&q(v[0]).to_le_bytes());
+            out.extend_from_slice(&q(v[1]).to_le_bytes());
+        }
+        write_uv(out, uv);
+        out.extend_from_slice(&look.to_le_bytes());
+    }
 }
 
 /// The dressed models' section of a square: `SKN1`, the looks the square's faces wear, then the
@@ -61,12 +129,7 @@ pub fn write_section(out: &mut Vec<u8>, placed: &[Placed], corner: [f64; 2], uni
                 .collect()
         })
         .collect();
-    out.extend_from_slice(&(looks.len().min(u16::MAX as usize) as u16).to_le_bytes());
-    for l in looks.iter().take(u16::MAX as usize) {
-        out.extend_from_slice(&l.skin.to_le_bytes());
-        out.extend_from_slice(&l.colour);
-        out.push(l.cut as u8);
-    }
+    write_looks(out, &looks);
     let count_at = out.len();
     out.extend_from_slice(&0u32.to_le_bytes());
     let q = |v: f32, c: f64| ((v as f64 - c) * units).round().clamp(i16::MIN as f64, i16::MAX as f64) as i16;
@@ -79,13 +142,7 @@ pub fn write_section(out: &mut Vec<u8>, placed: &[Placed], corner: [f64; 2], uni
                 out.extend_from_slice(&q(v[1], corner[1]).to_le_bytes());
                 out.extend_from_slice(&((v[2] as f64 * units).round().clamp(i16::MIN as f64, i16::MAX as f64) as i16).to_le_bytes());
             }
-            // (whole repeats off: the texture repeats, the numbers stay small)
-            let (du, dv) = (uv.iter().map(|t| t[0]).fold(f32::MAX, f32::min).floor(), uv.iter().map(|t| t[1]).fold(f32::MAX, f32::min).floor());
-            for t in uv {
-                for w in [t[0] - du, t[1] - dv] {
-                    out.extend_from_slice(&((w * UV_UNITS).round().clamp(i16::MIN as f32, i16::MAX as f32) as i16).to_le_bytes());
-                }
-            }
+            write_uv(out, uv);
             out.extend_from_slice(&map.get(*look as usize).copied().unwrap_or(0).to_le_bytes());
             out.push(shade);
             n += 1;
@@ -100,8 +157,8 @@ mod tests {
 
     #[test]
     fn a_dressed_face_goes_with_its_look_and_where_on_its_texture() {
-        let look = Look { skin: 7, colour: [255; 4], cut: false };
-        let plain = Look { skin: 0, colour: [200, 10, 10, 255], cut: false };
+        let look = Look { skin: 7, colour: [255; 4], cut: false, blend: false };
+        let plain = Look { skin: 0, colour: [200, 10, 10, 255], cut: false, blend: false };
         // a wall 3 m wide and 2 m high at 10 m east of the corner, its texture repeated, and a face
         // of no size (left out)
         let faces = vec![([[10.0, 5.0, 0.0], [13.0, 5.0, 0.0], [13.0, 5.0, 2.0]], [[2.0, 3.5], [3.5, 3.5], [3.5, 2.25]], 1), ([[0.0; 3]; 3], [[0.0; 2]; 3], 0)];
@@ -122,5 +179,33 @@ mod tests {
         assert_eq!(u16::from_le_bytes([out[f + 30], out[f + 31]]), 1);
         assert_eq!(out[f + 32], 42);
         assert_eq!(out.len(), f + 33);
+    }
+
+    #[test]
+    fn the_paved_ground_goes_in_the_order_it_is_laid() {
+        let road = Look { skin: 9, colour: [255; 4], cut: false, blend: false };
+        let mark = Look { skin: 11, colour: [255; 4], cut: false, blend: true };
+        let paved = Paved {
+            faces: vec![([[0.0, 0.0], [7.0, 0.0], [7.0, 20.0]], [[0.0, 0.0], [1.0, 0.0], [1.0, 4.0]], 0), ([[3.0, 0.0], [3.2, 0.0], [3.2, 3.0]], [[5.0, 1.0], [5.5, 1.0], [5.5, 1.5]], 1)],
+            looks: vec![road, mark],
+            standing: Vec::new(),
+        };
+        let mut out = Vec::new();
+        write_paved(&mut out, &paved, 16.0);
+        assert_eq!(&out[..4], b"PAV1");
+        assert_eq!(u16::from_le_bytes([out[4], out[5]]), 2);
+        // (the second look blended)
+        assert_eq!(out[6 + 9 + 8], 2);
+        let at = 6 + 2 * 9;
+        assert_eq!(u32::from_le_bytes(out[at..at + 4].try_into().unwrap()), 2);
+        let f = at + 4;
+        let i16_at = |k: usize| i16::from_le_bytes([out[f + k], out[f + k + 1]]);
+        // the road first: its far corner 7 m east, 20 m north; 4 repeats along it
+        assert_eq!((i16_at(8), i16_at(10)), (112, 320));
+        assert_eq!(i16_at(22), 4 * UV_UNITS as i16);
+        assert_eq!(u16::from_le_bytes([out[f + 24], out[f + 25]]), 0);
+        // the mark over it, wearing the second look
+        assert_eq!(u16::from_le_bytes([out[f + 26 + 24], out[f + 26 + 25]]), 1);
+        assert_eq!(out.len(), f + 2 * 26);
     }
 }

@@ -39,6 +39,8 @@ pub mod fonts;
 pub mod housetex;
 #[cfg(feature = "native")]
 pub mod mapview;
+#[cfg(feature = "native")]
+pub mod roadtex;
 // (the website: the maps as the desktop app exported them into the cloud save's content)
 #[cfg(not(feature = "native"))]
 #[path = "content/mapview_web.rs"]

@@ -115,8 +115,13 @@ pub trait Source: Send + Sync {
     fn dressed(&self, _map: &str, _at: [f64; 2], _heading: f32) -> Option<std::sync::Arc<dress::Dressed>> {
         None
     }
+    /// The ground of the square of [`ground::SQUARE`] metres with its lower corner at `lo` (map
+    /// metres) as the game paves it: its roads in their own textures (`dress::Paved`).
+    fn paved(&self, _map: &str, _lo: [f64; 2]) -> Option<std::sync::Arc<dress::Paved>> {
+        None
+    }
     /// A house's texture by its id (`dress::Look::skin`), [`dress::SKIN`] pixels a side: its
-    /// bytes and their type (a JPEG, or a PNG where its clear parts are holes).
+    /// bytes and their type (a JPEG, or a PNG where its clear parts are holes or are seen through).
     fn skin(&self, _id: u32) -> Option<(Vec<u8>, &'static str)> {
         None
     }
