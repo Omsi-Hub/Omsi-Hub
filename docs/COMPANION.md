@@ -201,7 +201,8 @@ the menu, a game of his own.
   "signed_in": true,             // the Omsi-Hub account on the PC
   "user": "…",                   // its user id (null: signed out, or not fetched yet)
   "account": "Sanne",            // its profile's display name
-  "company": { "name": "Stadtbus Grundorf", "short": "SBG", "colours": ["#1f68ea", "#ffffff"] },
+  "company": { "name": "Stadtbus Grundorf", "short": "SBG", "colours": ["#1f68ea", "#ffffff"],
+               "slot": 1 },        // the account's cloud slot it is kept in (null: a local save, a joined company)
   "role": "owner",               // "owner", or a joined player's "driver" | "planner" | "manager" | "co_owner"
   "today": "2026-11-06",         // the company's day, and the time of it (seconds)
   "now": 27720,
@@ -220,6 +221,12 @@ the menu, a game of his own.
 The company mode is the signed-in player's (Luc, 2 November 2026): signed out on the PC, the
 company is named and `duties` is empty, and `start_duty` answers `not_signed_in`. The app asks
 for the same account itself (its own sign-in, Supabase Auth) before it shows the company's part.
+
+The phone shows one of the account's companies in the cloud, chosen on the phone (Luc, 3 November
+2026: "een keuze tegel van alle bedrijven die in de cloud staan"): it reads the account's two slots
+itself (Supabase Storage, `saves/users/<user id>/slot<n>/meta.json`, as the website's
+`/my-company`), and knows the launcher has the chosen one open by `company.slot`. Another one open,
+or none, it asks the launcher to open it with `open_company`.
 `hub` is looked at every 3 s.
 
 ## Map
@@ -431,6 +438,7 @@ bus's devices' taps and keys are pressed; anything else is `unknown_key`.
 | `pause_end` | | Ends the break early |
 | `press` | `trigger`, `down?` | Presses a tap or key of one of `devices` (above) |
 | `start_duty` | `date`, `line`, `tour`, `duty` | Starts a company duty (a `hub.duties[].key`) as the launcher's "Start duty": the launcher's, there with the game or without it (below) |
+| `open_company` | `slot`, `user` | Opens the account's company in cloud slot `slot` (1 or 2) in the launcher, as its chooser opens it - fetched from the cloud first when it is not on the PC; `user` is the phone's account, which must be the PC's (below) |
 
 Only the keys the state lists can be pressed: the plugin refuses any other trigger. The game
 names a bus's triggers in lower case (`omsi.bus.triggers`, openOMSI 0.3.37) and presses them
@@ -449,6 +457,12 @@ errors: `not_signed_in` (the PC's account), `no_company` (no company open in the
 starting in the launcher's words ("Nobody is planned on this duty. Plan yourself on it in
 RosterFlow …"). Started, the launcher opens its duty launcher on the duty and starts it with
 the player's game options, as its own button does; the game coming up shows in `game`.
+
+`open_company` is the launcher's too, answered at once and carried out after: the company coming
+up shows in `hub` (`mode` `company` and `company.slot`). Its errors: `not_signed_in`,
+`other_account` (the PC signed in with another account than `user`), `game_running`,
+`no_launcher`, `not_found` (nothing in that slot), `offline` (the cloud not reached), `busy` (a
+company opening already). An Omsi-Hub before it answers `bad_request`.
 
 ## The plugin's datagrams (add-on internal)
 

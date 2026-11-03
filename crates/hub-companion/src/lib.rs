@@ -140,6 +140,13 @@ pub trait Source: Send + Sync {
     fn start_duty(&self, _duty: &Value) -> Result<(), String> {
         Err("not_supported".into())
     }
+    /// Open the account's company in cloud slot `slot` as the launcher's chooser opens it, asked
+    /// by the phone of account `user`: Err with why it cannot now (`not_signed_in`,
+    /// `other_account`, `game_running`, `no_launcher`, `busy`). The company coming up shows in
+    /// [`Source::hub`].
+    fn open_company(&self, _slot: u8, _user: &str) -> Result<(), String> {
+        Err("not_supported".into())
+    }
 }
 
 /// How the server runs.

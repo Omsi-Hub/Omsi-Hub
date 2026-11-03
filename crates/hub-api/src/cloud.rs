@@ -1018,6 +1018,27 @@ pub(crate) fn companies() -> Value {
         .collect::<Vec<_>>())
 }
 
+/// The company on this computer kept in cloud slot `n` of account `user` (the phone's
+/// `open_company`), None when none here is.
+pub(crate) fn local_of(n: u8, user: &str) -> Option<String> {
+    let d = data();
+    read_book(&d).companies.into_iter().find(|(id, s)| s.linked(user) && s.slot == n && files::path_of(&d, id).exists()).map(|(id, _)| id)
+}
+
+/// The cloud slot company `id` is kept in, in account `user`'s cloud (the phone's
+/// `hub.company.slot`).
+pub(crate) fn slot_of(id: &str, user: &str) -> Option<u8> {
+    let s = sync_of(&data(), id);
+    s.linked(user).then_some(s.slot)
+}
+
+/// Cloud slot `n` fetched onto this computer as a company of its own (the phone's
+/// `open_company`, none here kept in it): its id, or why not in the page's words.
+pub(crate) fn fetch_slot(n: u8) -> Result<String, String> {
+    let v = download(n);
+    v["reread"].as_str().map(str::to_string).ok_or_else(|| v["error"].as_str().unwrap_or_default().to_string())
+}
+
 /// A copy's name: "<name> (this PC)".
 fn copy_name(id: &str) -> String {
     trf("%{name} (this PC)", &[("name", &name_of(id))])

@@ -302,6 +302,12 @@ pub enum Command {
     StartDuty {
         duty: Value,
     },
+    /// The account's company in cloud slot `slot` opened in the launcher, the phone's account
+    /// `user` (which must be the PC's): the launcher's, not the game's.
+    OpenCompany {
+        slot: u8,
+        user: String,
+    },
 }
 
 impl Command {
@@ -341,6 +347,11 @@ impl Command {
                 let duty = v.get("duty").and_then(Value::as_u64).filter(|n| *n < 1000)?;
                 Command::StartDuty { duty: json!({ "date": date, "line": s("line").filter(|x| name_ok(x))?, "tour": s("tour").filter(|x| name_ok(x))?, "duty": duty }) }
             }
+            "open_company" => Command::OpenCompany {
+                slot: v.get("slot").and_then(Value::as_u64).filter(|n| (1..=2).contains(n))? as u8,
+                // (an account's id: a uuid)
+                user: s("user").filter(|u| (1..=64).contains(&u.len()) && u.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-'))?.to_string(),
+            },
             _ => return None,
         })
     }
@@ -365,7 +376,7 @@ impl Command {
                 _ => json!({ "do": "msg", "kind": "reply", "id": id, "key": key }),
             },
             Command::MsgQuick { key } => json!({ "do": "msg", "kind": "quick", "key": key }),
-            Command::PauseEnd | Command::StartDuty { .. } => return None,
+            Command::PauseEnd | Command::StartDuty { .. } | Command::OpenCompany { .. } => return None,
             Command::Press { trigger, down } => json!({ "do": "press", "key": trigger, "down": down }),
         })
     }
@@ -531,6 +542,12 @@ mod tests {
         assert_eq!(start.for_plugin(), None);
         assert_eq!(c(r#"{"do":"start_duty","date":"../../x","line":"M29","tour":"3","duty":0}"#), None);
         assert_eq!(c(r#"{"do":"start_duty","date":"2026-11-06","line":"M29","tour":"3"}"#), None);
+        let open = c(r#"{"do":"open_company","slot":2,"user":"6f1c0a2e-0b1d-4c9a-9f00-1234567890ab"}"#).unwrap();
+        assert_eq!(open, Command::OpenCompany { slot: 2, user: "6f1c0a2e-0b1d-4c9a-9f00-1234567890ab".into() });
+        assert_eq!(open.for_plugin(), None);
+        assert_eq!(c(r#"{"do":"open_company","slot":3,"user":"x"}"#), None);
+        assert_eq!(c(r#"{"do":"open_company","slot":1,"user":"../x"}"#), None);
+        assert_eq!(c(r#"{"do":"open_company","slot":1}"#), None);
         assert_eq!(c(r#"{"do":"format_disk"}"#), None);
         assert_eq!(c(r#"{"number":"1"}"#), None);
     }

@@ -851,6 +851,12 @@ pub fn run(shared: &Arc<Shared>, cmd: Command) -> Value {
             Err(e) => refused(&e),
         };
     }
+    if let Command::OpenCompany { slot, user } = &cmd {
+        return match shared.source.open_company(*slot, user) {
+            Ok(()) => json!({ "ok": true }),
+            Err(e) => refused(&e),
+        };
+    }
     let mut i = shared.lock();
     if cmd == Command::PauseEnd {
         i.pause.end();

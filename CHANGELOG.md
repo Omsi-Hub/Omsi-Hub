@@ -12,6 +12,9 @@ Each version of the Omsi-Hub add-on, newest first. The release on GitHub links h
   and it can start a company duty as "Start duty" does (`start_duty`) - what keeps the duty from
   starting said on the phone. The company mode on the phone needs the account, signed in on the
   PC and in the app.
+- **Your company chosen on the phone**: the Companion app shows a tile for each of your
+  companies in the cloud, and "Open on my PC" opens the one you chose in Omsi-Hub, as the company
+  chooser opens it - fetched from the cloud first when it is not on this PC yet.
 - **The phone's navigator gets openOMSI's own map**: the add-on reads the picture of the map
   openOMSI keeps once its navigator has drawn it - the ground, the paving, the paint on the
   roads, the rails and rivers, the trees and the houses with their heights - and hands it to the

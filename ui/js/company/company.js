@@ -10,8 +10,8 @@
 // the strip's shell.
 
 import { useLayoutEffect, useRef, useState } from '../../vendor/preact-htm.js';
-import { S, useStore, set } from '../store.js';
-import { call } from '../api.js';
+import { S, useStore, set, toast } from '../store.js';
+import { call, on } from '../api.js';
 import { contrast } from '../hub/theme.js';
 import { dark } from '../hub/theme.js';
 import { flipLook } from '../hub/bar.js';
@@ -102,6 +102,29 @@ export function companyPage(part, id) {
   else if (part && part !== 'home') return enterCompany({ chooser: null, tab: HOME, want: id || null, handWant: part });
   enterCompany({ chooser: null, tab: HANDED.includes(tab) ? HOME : tab, want: id || null });
 }
+
+// The phone's "Open on my PC" (the companion app's company picker, `companion::open_company`):
+// the company kept in the cloud slot it chose - on this PC, or fetched from the cloud - opened as
+// the chooser opens it, from wherever the launcher is.
+on('companion-open-company', async (p) => {
+  if (p?.error) return toast(p.error, 'error');
+  const id = p?.id;
+  if (!id) return;
+  if (S.page !== 'company') return companyPage('home', id);
+  // (a friend's look at the boss's company: nothing of ours opens over it)
+  if (S.co.remote) return;
+  try {
+    // (fetched just now: the company's pages read it first)
+    await cmd('co_reread', { id }).catch(() => {});
+    await cloudBeforeOpen(id);
+    await cmd('co_open', { id });
+    takeShell(await cmd('co_tick', { modal: true, still: true }));
+  } catch (e) {
+    toast(e.message, 'error');
+    return;
+  }
+  setCo({ chooser: null, wizard: null, tab: HOME });
+});
 
 let stopTick = null;
 /** When the boss's launcher was last asked for the shell (a relayed tick goes over the network:

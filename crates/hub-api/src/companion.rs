@@ -274,7 +274,7 @@ fn hub_now() -> Option<Value> {
     let (signed_in, user, name) = crate::online::account_brief();
     let game = crate::drive::state()["running"].as_bool().unwrap_or(false);
     let mut v = json!({
-        "mode": if game { "free" } else { "menu" }, "signed_in": signed_in, "user": Some(user).filter(|u| !u.is_empty()), "account": name,
+        "mode": if game { "free" } else { "menu" }, "signed_in": signed_in, "user": Some(user.clone()).filter(|u| !u.is_empty()), "account": name,
         "company": null, "role": null, "today": null, "now": null, "duties": [],
     });
     let mut put = |b: Value, mode: &str| {
@@ -295,13 +295,18 @@ fn hub_now() -> Option<Value> {
             let c = s.company.clone()?;
             let (_, mine, _) = crate::company::career::my_duties(s);
             let now = (co::clock::now(&c) - co::clock::moment(&c.date, 0)).clamp(0, 48 * 60) * 60;
-            Some(json!({
-                "company": { "name": c.name, "short": c.short, "colours": c.colours },
-                "role": "owner", "today": c.date, "now": now,
-                "duties": mine.iter().take(HUB_DUTIES).map(|d| duty_json(&c, d)).collect::<Vec<_>>(),
-            }))
+            Some((
+                c.id.clone(),
+                json!({
+                    "company": { "name": c.name, "short": c.short, "colours": c.colours },
+                    "role": "owner", "today": c.date, "now": now,
+                    "duties": mine.iter().take(HUB_DUTIES).map(|d| duty_json(&c, d)).collect::<Vec<_>>(),
+                }),
+            ))
         });
-        if let Some(b) = b {
+        if let Some((id, mut b)) = b {
+            // (the account's cloud slot it is kept in: the phone's chosen company is this one)
+            b["company"]["slot"] = json!(crate::cloud::slot_of(&id, &user));
             put(b, "company");
         }
     }
@@ -378,6 +383,44 @@ impl Source for Hub {
             return Err(format!("{title}. {fix}"));
         }
         p.emit("companion-start-duty", json!({ "duty": duty }));
+        Ok(())
+    }
+
+    /// The company the phone chose (its cloud slot) opened as the launcher's chooser opens it
+    /// (`companion-open-company`, `ui/js/company/company.js`): the one on this computer kept in
+    /// that slot, else fetched from the cloud first - on a thread of its own, the phone seeing it
+    /// come in `hub`; what went wrong said on the PC.
+    fn open_company(&self, slot: u8, user: &str) -> Result<(), String> {
+        static OPENING: AtomicBool = AtomicBool::new(false);
+        let (signed_in, me, _) = crate::online::account_brief();
+        if !signed_in || me.is_empty() || !crate::drivers::plays_online() {
+            return Err("not_signed_in".into());
+        }
+        if me != user {
+            return Err("other_account".into());
+        }
+        if self.game_alive() {
+            return Err("game_running".into());
+        }
+        // (in a company joined with Play together: it is left on the PC)
+        if crate::together::joined_brief().is_some() {
+            return Err("not_supported".into());
+        }
+        let p = PLATFORM.get().ok_or_else(|| "no_launcher".to_string())?.clone();
+        if OPENING.swap(true, Ordering::SeqCst) {
+            return Err("busy".into());
+        }
+        let opened = std::thread::Builder::new().name("companion open company".into()).spawn(move || {
+            match crate::cloud::local_of(slot, &me).map_or_else(|| crate::cloud::fetch_slot(slot), Ok) {
+                Ok(id) => p.emit("companion-open-company", json!({ "id": id })),
+                Err(why) => p.emit("companion-open-company", json!({ "error": why })),
+            }
+            OPENING.store(false, Ordering::SeqCst);
+        });
+        if opened.is_err() {
+            OPENING.store(false, Ordering::SeqCst);
+            return Err("busy".into());
+        }
         Ok(())
     }
 
