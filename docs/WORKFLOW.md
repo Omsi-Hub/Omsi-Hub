@@ -15,6 +15,9 @@ C:\Omsi-Hub main folder\
 │  ├─ beta\<version>\                a pre-release's installers as GitHub built them
 │  ├─ release\<version>\             a release's installers as GitHub built them
 │  └─ test\<date>_<branch>_<commit>.exe   a branch's test build, made on this PC
+├─ Overig\                           the project's files that are not for git, by subject
+│  ├─ brand\                         pictures, liveries, wallpapers, video
+│  └─ companion-mockups\
 └─ <other repository>\               the website, the CMS, the companion app, the openOMSI fork:
                                      each its own clone beside this one, by the same rules
 ```
@@ -27,6 +30,9 @@ C:\Omsi-Hub main folder\
 - **`Builds\` is the only place for a build.** Never an exe in a folder of its own, never a copy
   of the repository ("Old", "-build", "-navmap"): git's history is the backup, `Builds\` the
   shelf.
+- **`Overig\` holds what belongs to the project but not in git**: large pictures, mockups,
+  material a tool made that can be made again. In a folder per subject, never loose; what the
+  app or a build needs goes in the repository instead.
 - `.claude/launch.json` still points at the other repositories under `C:/Omsi-hub/`; when they
   move beside this one, its paths move with them.
 

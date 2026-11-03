@@ -13,7 +13,7 @@ The whole workflow is in `docs/WORKFLOW.md`. What every session keeps to:
 - **Builds go in `Builds\` beside the clone, nowhere else**: a test build of a branch with
   `node tools/test-build.mjs`, a beta's or a release's installers with
   `node tools/get-release.mjs <version>`. Never an exe or a copy of the repository in a folder of
-  its own.
+  its own. Large files that are not for git (pictures, mockups) go in `Overig\<subject>\`.
 - **A beta or a release is a tag on `main`** (`v1.2.0-beta.3`), built by GitHub's Release
   workflow; the version commit and the tag are the user's call (docs/WORKFLOW.md, "A beta").
 - Write the repository's texts (code comments, docs, commit messages) in English, as the rest.
