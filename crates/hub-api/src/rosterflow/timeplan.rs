@@ -19,9 +19,9 @@ use crate::Answer;
 use hub_core::company::plandays::{self as pd, DayCopied, How, Template};
 use hub_core::company::timeplan::{self as tp, Level, RunSet, Side};
 use hub_core::company::{self as co, ownline, Company, CompanyLine};
+use hub_core::linehof;
 use hub_core::lines::{self as reg, LineDesign, StopRef, DAY_GROUPS};
 use hub_core::service::VehicleClass;
-use hub_core::{linehof, owndepot};
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
@@ -1555,23 +1555,7 @@ fn write_line(map: &str, path: &Path, mut line: LineDesign) -> Result<Option<Str
     *x = line;
     let global = global_of(map);
     let map_dir = global.parent().map(Path::to_path_buf).unwrap_or_default();
-    let groups = linehof::group_depots(&map_dir);
-    let (bases, original) = core::depot_roots();
-    let plan = linehof::prepare(&mut r, &groups, &bases);
-    owndepot::assign(&mut r, &owndepot::dir(), &groups, &bases);
-    reg::save_registry(path, &r)?;
-    let exported = reg::export_to_map(&content, &map_dir, &r);
-    let (_, err) = linehof::write(&content, original.as_deref(), &r, &groups, &plan);
-    let (_, own_err) = owndepot::write_lines(&r, &owndepot::dir(), Some(&content));
-    let err = err.or(own_err);
-    if err.is_none() && r.texts < reg::TEXTS_VERSION {
-        r.texts = reg::TEXTS_VERSION;
-        if let Err(e) = reg::save_registry(path, &r) {
-            core::log_to_file(&format!("rosterflow: the registry {} not saved after its depot files: {e}", path.display()));
-        }
-    }
-    exported?;
-    Ok(err)
+    reg::write_all(path, &mut r, &content, &map_dir)
 }
 
 /// Put line `line` back as a lesson found it (`timeplan::restore`): changes not saved dropped,

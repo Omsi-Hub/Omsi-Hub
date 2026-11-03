@@ -106,6 +106,11 @@ pub struct Registry {
     /// container's would be the current one).
     #[serde(default)]
     pub texts: u32,
+    /// The content folder its lines were last written into whole: their timetable files and
+    /// their blocks in the depot files. Another one (openOMSI moved, a new one unpacked) has
+    /// none of them, and a depot file copied beside a bus since (`depot_added`) not theirs:
+    /// "" then, and they are written again before the next drive (`needs_writing`).
+    pub written_to: String,
 }
 
 impl Default for Registry {
@@ -120,6 +125,7 @@ impl Default for Registry {
             school_holidays: Vec::new(),
             destinations: Vec::new(),
             texts: TEXTS_VERSION,
+            written_to: String::new(),
         }
     }
 }
@@ -2383,6 +2389,88 @@ pub fn export_to_map(content: &Path, map_dir: &Path, reg: &Registry) -> Result<(
     Ok((e.tours.len(), files))
 }
 
+/// Not all of the registry's lines are in the content folder `content`: one of them is written
+/// (`written`), and the registry was written whole into another folder, or not since a depot
+/// file was copied beside a bus (`Registry::written_to`).
+pub fn needs_writing(reg: &Registry, content: &Path) -> bool {
+    let key = |p: &str| p.replace('\\', "/").trim_end_matches('/').to_lowercase();
+    reg.lines.iter().any(|l| written(l.in_timetable())) && key(&reg.written_to) != key(&content.to_string_lossy())
+}
+
+/// The registry at `path` marked as written whole into the content folder `content` - its
+/// blocks made the way they are made now (`TEXTS_VERSION`) -, and saved when that changed it.
+pub fn mark_written(path: &Path, reg: &mut Registry, content: &Path) -> Result<(), String> {
+    let folder = content.to_string_lossy().into_owned();
+    if reg.texts >= TEXTS_VERSION && reg.written_to == folder {
+        return Ok(());
+    }
+    reg.texts = reg.texts.max(TEXTS_VERSION);
+    reg.written_to = folder;
+    save_registry(path, reg)
+}
+
+/// Every file of the lines of the registry at `path` written into the content folder `content`,
+/// as a save writes them: the codes in their depot files given and the registry saved, then the
+/// map's timetable (`export_to_map`), their blocks in the map's depot files (`linehof`) and in
+/// the player's own (`owndepot`) - and the registry marked so (`mark_written`) when all of it
+/// went well. Err: the registry or the timetable not written; else a depot file's error.
+pub fn write_all(path: &Path, reg: &mut Registry, content: &Path, map_dir: &Path) -> Result<Option<String>, String> {
+    let groups = crate::linehof::group_depots(map_dir);
+    let (bases, original) = (crate::paths::bases(), crate::paths::root());
+    let plan = crate::linehof::prepare(reg, &groups, &bases);
+    crate::owndepot::assign(reg, &crate::owndepot::dir(), &groups, &bases);
+    save_registry(path, reg)?;
+    let exported = export_to_map(content, map_dir, reg);
+    let (_, err) = crate::linehof::write(content, original.as_deref(), reg, &groups, &plan);
+    let (_, own_err) = crate::owndepot::write_lines(reg, &crate::owndepot::dir(), Some(content));
+    let err = err.or(own_err);
+    if exported.is_ok() && err.is_none() {
+        mark_written(path, reg, content)?;
+    }
+    exported?;
+    Ok(err)
+}
+
+/// Before a drive on the map `map` (its `global.cfg`, as the launcher names it): the player's
+/// lines of it written into the content folder when they are not all there (`needs_writing`) -
+/// openOMSI moved or unpacked anew, a depot file copied beside a bus. What was done, if anything.
+pub fn write_if_needed(map: &str) -> Option<String> {
+    let content = crate::content_dir()?;
+    let path = registry_path(&map_folder(map));
+    if !path.is_file() {
+        return None;
+    }
+    let mut reg = load_registry(&path);
+    // (destinations of before the depot editor: the line editor moves them first, `owndepot::migrate`)
+    if !reg.destinations.is_empty() || !needs_writing(&reg, &content) {
+        return None;
+    }
+    let map_dir = crate::resolve_content(map)?.parent()?.to_path_buf();
+    Some(match write_all(&path, &mut reg, &content, &map_dir) {
+        Ok(None) => format!("lines: the lines of {} written into {}", reg.map, content.display()),
+        Ok(Some(e)) | Err(e) => format!("lines: the lines of {} not all written into {}: {e}", reg.map, content.display()),
+    })
+}
+
+/// A copy of the depot file `name` was put beside a bus: the registries whose lines have their
+/// block in that depot file (`Registry::depots`) write them again before the next drive (the
+/// copy has none of them, `needs_writing`).
+pub fn depot_added(name: &str) {
+    for p in crate::paths::read_dir_paths(&crate::data_dir().join("lines")) {
+        if !p.extension().is_some_and(|e| e.eq_ignore_ascii_case("json")) {
+            continue;
+        }
+        let mut reg = load_registry(&p);
+        if reg.written_to.is_empty() || !reg.depots.iter().any(|d| d.trim().eq_ignore_ascii_case(name.trim())) {
+            continue;
+        }
+        reg.written_to.clear();
+        if let Err(e) = save_registry(&p, &reg) {
+            crate::log_line(&format!("lines: {} not marked to be written again: {e}", p.display()));
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3350,5 +3438,29 @@ mod tests {
         let mut l = l.clone();
         l.set_back_own(true);
         assert_eq!(l.back_days, l.days);
+    }
+
+    /// The lines are written again into a content folder they were not written into whole: a
+    /// registry of before the mark, another openOMSI's folder - not the one marked, in any case
+    /// or with a slash at its end; a registry without a line to write needs nothing.
+    #[test]
+    fn lines_are_written_again_into_a_content_folder_that_lacks_them() {
+        let mut reg = Registry::default();
+        let content = Path::new(r"E:\OpenOMSI");
+        assert!(!needs_writing(&reg, content), "no line");
+        line(&mut reg);
+        assert!(needs_writing(&reg, content), "never marked");
+        let base = std::env::temp_dir().join(format!("omsi_lines_written_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let path = base.join("Dorf.json");
+        mark_written(&path, &mut reg, content).unwrap();
+        assert_eq!(load_registry(&path).written_to, r"E:\OpenOMSI");
+        assert!(!needs_writing(&reg, content));
+        assert!(!needs_writing(&reg, Path::new("e:/openomsi/")));
+        assert!(needs_writing(&reg, Path::new(r"C:\openOMSI\dist\windows")), "another openOMSI");
+        // a depot file copied beside a bus since: the mark gone
+        reg.written_to.clear();
+        assert!(needs_writing(&reg, content));
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

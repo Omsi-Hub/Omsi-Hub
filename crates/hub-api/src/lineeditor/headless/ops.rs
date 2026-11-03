@@ -494,7 +494,7 @@ fn save_now(v: &mut LineEditorView, problems: &[reg::Problem]) -> (String, bool)
         Ok(_) => {
             maplines::saved(v);
             let depot_error = v.write_depots(&content, &prepared);
-            texts_written(&v.reg_path, &mut v.reg, depot_error.is_none());
+            texts_written(&v.reg_path, &mut v.reg, &content, depot_error.is_none());
             omsi_cfg::content_changed();
             let number = v.line().map(|x| x.number.clone()).unwrap_or_default();
             if let Some(e) = depot_error {
@@ -531,7 +531,7 @@ fn delete(s: &mut Session) -> (String, bool) {
     if let Some(e) = v.write_depots(&content, &prepared) {
         return (format!("{}: {e}", crate::lineeditor::ui::tr("A depot file could not be written (displays and IBIS)")), true);
     }
-    texts_written(&v.reg_path, &mut v.reg, true);
+    texts_written(&v.reg_path, &mut v.reg, &content, true);
     omsi_cfg::content_changed();
     s.go = Some(json!({ "reload_lines": true }));
     (crate::lineeditor::ui::tr("Line %{n} deleted").replace("%{n}", &number), false)
@@ -586,7 +586,7 @@ pub(super) fn restore(s: &mut Session) -> (String, bool) {
     if let Some(e) = v.write_depots(&content, &prepared) {
         return (format!("{}: {e}", crate::lineeditor::ui::tr("A depot file could not be written (displays and IBIS)")), true);
     }
-    texts_written(&v.reg_path, &mut v.reg, true);
+    texts_written(&v.reg_path, &mut v.reg, &content, true);
     omsi_cfg::content_changed();
     s.go = Some(json!({ "reload_lines": true }));
     (crate::lineeditor::ui::tr("Line %{n} is the map's own again: the game runs its original as before").replace("%{n}", &ttl), false)
