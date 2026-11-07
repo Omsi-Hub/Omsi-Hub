@@ -171,7 +171,11 @@ pub fn start(d: &Duty, p: &dyn Platform) -> Answer {
     let issued = assignment.as_ref().map(|a| a.issued);
     // (the player's lines of the map where the game reads them: written again into a content
     // folder that lacks them - openOMSI moved, a depot file copied beside a bus since)
-    if let Some(done) = Some(d.map.trim()).filter(|m| !m.is_empty()).and_then(hub_core::lines::write_if_needed) {
+    // - or, a duty of another's company in a company session, the boss's lines in their place
+    if let Some(done) = Some(d.map.trim()).filter(|m| !m.is_empty()).and_then(|m| match d.company_lines.as_deref() {
+        Some(company) => hub_core::lines::write_company_lines(m, company),
+        None => hub_core::lines::write_if_needed(m),
+    }) {
         hub_core::log_line(&done);
     }
     // (the company's buses for the game's AI only in a company's duty, written for it just now:

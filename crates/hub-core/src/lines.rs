@@ -2417,6 +2417,12 @@ pub fn mark_written(path: &Path, reg: &mut Registry, content: &Path) -> Result<(
 pub fn write_all(path: &Path, reg: &mut Registry, content: &Path, map_dir: &Path) -> Result<Option<String>, String> {
     let groups = crate::linehof::group_depots(map_dir);
     let (bases, original) = (crate::paths::bases(), crate::paths::root());
+    // (a company's lines written here for a drive of a company session: their blocks go too)
+    let folder = map_dir.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
+    let company = company_mark_path(&folder);
+    if let Some(m) = load_company_mark(&company) {
+        add_names(&mut reg.depots, &m.depots);
+    }
     let plan = crate::linehof::prepare(reg, &groups, &bases);
     crate::owndepot::assign(reg, &crate::owndepot::dir(), &groups, &bases);
     save_registry(path, reg)?;
@@ -2426,6 +2432,9 @@ pub fn write_all(path: &Path, reg: &mut Registry, content: &Path, map_dir: &Path
     let err = err.or(own_err);
     if exported.is_ok() && err.is_none() {
         mark_written(path, reg, content)?;
+        if company.is_file() {
+            std::fs::remove_file(&company).map_err(|e| format!("{}: {e}", company.display()))?;
+        }
     }
     exported?;
     Ok(err)
@@ -2433,22 +2442,132 @@ pub fn write_all(path: &Path, reg: &mut Registry, content: &Path, map_dir: &Path
 
 /// Before a drive on the map `map` (its `global.cfg`, as the launcher names it): the player's
 /// lines of it written into the content folder when they are not all there (`needs_writing`) -
-/// openOMSI moved or unpacked anew, a depot file copied beside a bus. What was done, if anything.
+/// openOMSI moved or unpacked anew, a depot file copied beside a bus, a company's lines written
+/// there for a drive of a company session (`write_company_lines`: his own, or none, take their
+/// place again). What was done, if anything.
 pub fn write_if_needed(map: &str) -> Option<String> {
     let content = crate::content_dir()?;
-    let path = registry_path(&map_folder(map));
-    if !path.is_file() {
+    let folder = map_folder(map);
+    let path = registry_path(&folder);
+    let company = company_written(&folder);
+    if !path.is_file() && !company {
         return None;
     }
     let mut reg = load_registry(&path);
+    if reg.map.trim().is_empty() {
+        reg.map = folder.clone();
+    }
     // (destinations of before the depot editor: the line editor moves them first, `owndepot::migrate`)
-    if !reg.destinations.is_empty() || !needs_writing(&reg, &content) {
+    if !reg.destinations.is_empty() || !(company || needs_writing(&reg, &content)) {
         return None;
     }
     let map_dir = crate::resolve_content(map)?.parent()?.to_path_buf();
     Some(match write_all(&path, &mut reg, &content, &map_dir) {
         Ok(None) => format!("lines: the lines of {} written into {}", reg.map, content.display()),
         Ok(Some(e)) | Err(e) => format!("lines: the lines of {} not all written into {}: {e}", reg.map, content.display()),
+    })
+}
+
+// --- a company's lines for a player of its session -----------------------------------------------
+
+/// A company's lines written into the content folder for a drive of a company session
+/// (`write_company_lines`), kept beside the registries (`lines/<map>.company`): the depot files
+/// their blocks went into. While it is there, the player's own lines of the map (or none) are
+/// written again before his next drive of his own and when the line editor opens the map
+/// (`write_if_needed`, `write_all`, which takes those blocks out and the file away).
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+#[serde(default)]
+pub struct CompanyMark {
+    /// The content folder they were written into.
+    pub content: String,
+    /// The depot files (by the name the depot groups give them) their blocks went into.
+    pub depots: Vec<String>,
+}
+
+/// Where the mark of a company's lines written for the map `map_folder` lies.
+pub fn company_mark_path(map_folder: &str) -> PathBuf {
+    crate::data_dir().join("lines").join(format!("{}.company", safe_name(map_folder)))
+}
+
+fn load_company_mark(path: &Path) -> Option<CompanyMark> {
+    std::fs::read(path).ok().map(|b| serde_json::from_slice(&b).unwrap_or_default())
+}
+
+/// A company's lines are in the content folder for the map `map_folder` instead of the
+/// player's own (`CompanyMark`).
+pub fn company_written(map_folder: &str) -> bool {
+    company_mark_path(map_folder).is_file()
+}
+
+/// `more` added to the depot files' names `names` (any case: once).
+fn add_names(names: &mut Vec<String>, more: &[String]) {
+    for n in more {
+        if !names.iter().any(|x| x.trim().eq_ignore_ascii_case(n.trim())) {
+            names.push(n.clone());
+        }
+    }
+}
+
+/// The boss's side of a company session: his registry of the map `map` for a player who drives
+/// one of the company's duties on it in his own game (whose launcher has none of these lines:
+/// `write_company_lines`). None when none of its lines is in the timetable.
+///
+/// The whole registry, as the boss's game has it: the file names the duty's line and tours go by
+/// (`stems`) follow from all of its lines, and the timetable's buses of the others drive along.
+pub fn for_company_drive(map: &str) -> Option<Registry> {
+    let path = registry_path(&map_folder(map));
+    if !path.is_file() {
+        return None;
+    }
+    let reg = load_registry(&path);
+    reg.lines.iter().any(|l| written(l.in_timetable())).then_some(reg)
+}
+
+/// A player's side of a company session: before his game starts on a duty of the boss's company,
+/// the boss's lines of the map `map` (`company`, `for_company_drive`) written into his content
+/// folder in place of his own - their timetable files and their blocks in the map's depot files,
+/// as the boss's game has them, so that the duty's line, its tours and its displays are there.
+/// His own registry is left as it is; the mark (`CompanyMark`) has his own lines written again
+/// before his next drive of his own. What was done, for the log.
+pub fn write_company_lines(map: &str, company: &Registry) -> Option<String> {
+    let content = crate::content_dir()?;
+    let folder = map_folder(map);
+    let map_dir = crate::resolve_content(map)?.parent()?.to_path_buf();
+    let mut reg = company.clone();
+    // (his own registry's name for the map, so that the blocks are his blocks' place)
+    let own_path = registry_path(&folder);
+    let own = own_path.is_file().then(|| load_registry(&own_path));
+    if let Some(m) = own.as_ref().map(|o| o.map.clone()).filter(|m| !m.trim().is_empty()) {
+        reg.map = m;
+    } else if reg.map.trim().is_empty() {
+        reg.map = folder.clone();
+    }
+    // (the blocks of his own lines, and of a company's written before, taken out with the rest)
+    let mark_path = company_mark_path(&folder);
+    let mut mark = load_company_mark(&mark_path).unwrap_or_default();
+    reg.depots.clear();
+    add_names(&mut reg.depots, &mark.depots);
+    if let Some(o) = own.as_ref() {
+        add_names(&mut reg.depots, &o.depots);
+    }
+    let groups = crate::linehof::group_depots(&map_dir);
+    let (bases, original) = (crate::paths::bases(), crate::paths::root());
+    let plan = crate::linehof::prepare(&mut reg, &groups, &bases);
+    // (marked before anything is written: a write that stops halfway is put right the next time)
+    mark.content = content.to_string_lossy().into_owned();
+    add_names(&mut mark.depots, &reg.depots);
+    let saved = serde_json::to_vec_pretty(&mark).map_err(|e| e.to_string()).and_then(|b| {
+        std::fs::create_dir_all(mark_path.parent().unwrap_or(Path::new(""))).map_err(|e| e.to_string())?;
+        std::fs::write(&mark_path, b).map_err(|e| e.to_string())
+    });
+    if let Err(e) = saved {
+        return Some(format!("lines: the company's lines of {folder} not written ({}: {e})", mark_path.display()));
+    }
+    let exported = export_to_map(&content, &map_dir, &reg);
+    let (_, err) = crate::linehof::write(&content, original.as_deref(), &reg, &groups, &plan);
+    Some(match (exported, err) {
+        (Ok((tours, files)), None) => format!("lines: the company's lines of {folder} written into {} ({tours} tours, {files} files)", content.display()),
+        (Ok(_), Some(e)) | (Err(e), _) => format!("lines: the company's lines of {folder} not all written into {}: {e}", content.display()),
     })
 }
 

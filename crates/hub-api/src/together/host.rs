@@ -250,8 +250,21 @@ fn handle(body: &str) -> String {
             company::changed(s);
         }
         tell_boss(s, h);
-        answered.body.to_string()
+        let mut body = answered.body;
+        with_company_lines(&mut body);
+        body.to_string()
     })
+}
+
+/// A duty's start for a player (`start`, `take_back`): with the boss's lines of its map
+/// (`lines`, `lines::for_company_drive`), which the player's launcher writes into his content
+/// folder before his game starts (`lines::write_company_lines`) - his has none of the company's
+/// own lines, nor the boss's edits of the map's.
+fn with_company_lines(body: &mut Value) {
+    let Some(map) = body.get("start").and_then(|s| s.get("map")).and_then(Value::as_str).map(str::to_string) else { return };
+    if let Some(reg) = hub_core::lines::for_company_drive(&map) {
+        body["lines"] = serde_json::to_value(reg).unwrap_or(Value::Null);
+    }
 }
 
 /// A page of the company relayed by a player's launcher (`relay`): run for him when his role

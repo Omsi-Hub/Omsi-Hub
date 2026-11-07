@@ -687,6 +687,9 @@ fn drive(args: &Value, p: &dyn Platform, what: &str) -> Answer {
     let base: core::Duty = serde_json::from_value(args.get("base").cloned().unwrap_or(Value::Null)).map_err(|e| format!("base: {e}"))?;
     let name = driver();
     let mut d = start.duty(base);
+    // (the boss's lines of the map - the company's own, his edits of the map's - written in place
+    // of the player's own before the game starts: `drive::start`)
+    d.company_lines = v.get("lines").and_then(|x| serde_json::from_value::<hub_core::lines::Registry>(x.clone()).ok()).map(Box::new);
     d.display_font = core::busfonts::BusFonts::load().font_for(&start.bus);
     d.set_vars = crate::content::busoptions::vars_for(&start.bus, &start.paint);
     // (together: the others see him by his name; the world his game opens needs the tunnel for
