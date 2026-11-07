@@ -28,6 +28,13 @@ merged but in no build yet is under Unreleased.
   copied beside a bus had none of your routes either. The bus then found no route for your
   line. Omsi-Hub now writes your lines again before the drive, and when the line editor opens
   the map, wherever they are missing.
+- **The company's own lines work for the other players of a company session**: a player who
+  drove a duty on one of the boss's own lines (or on a map line the boss changed) had none of
+  those lines in his game, which only the boss's computer had. His game then found no line or
+  no route for the duty. The boss's launcher now sends its lines of the map with the duty's
+  start, and the player's launcher writes them into his openOMSI before the game starts, with
+  their destinations for the displays and the IBIS. His own lines of the map are put back before
+  his next drive of his own, and when his line editor opens the map.
 
 ## 1.2.0-beta.2
 
