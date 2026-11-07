@@ -283,6 +283,11 @@ fn sniff(b: &[u8]) -> &'static str {
 }
 
 fn main() {
+    // (started again by itself with the administrator's rights only to let the phones through
+    // Windows' firewall: done, it ends before any window - `hub_api::companion::firewall`)
+    if let Some(code) = hub_api::companion::firewall::from_args() {
+        std::process::exit(code);
+    }
     let selftest = std::env::var_os(SELFTEST_ENV).is_some_and(|v| !v.is_empty() && v != "0");
     // (the selftest on the fixtures: a data folder of its own unless one is given, and the old
     // Omsi-Hub's saves from the fixture of an old ~/.openomsi, so the setup offers them)

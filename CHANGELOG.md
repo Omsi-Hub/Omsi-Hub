@@ -21,6 +21,11 @@ merged but in no build yet is under Unreleased.
   anything, and a game that kept hitching looked stopped. It now says it is there every second
   all the same. What the phone shows still waits for the smooth frames, and while the game does
   nothing at all for more than five seconds, as a long load can, the phone says so.
+- **Virus scanners no longer take Omsi-Hub for malware when the phone & tablet is on**: to let
+  the phones through Windows' firewall, Omsi-Hub started a hidden PowerShell with the
+  administrator's rights, and Norton and Windows Security put the app in quarantine for it. It
+  now reads and sets the firewall itself, without PowerShell. Windows still asks once whether
+  Omsi-Hub may change the firewall; the question now names Omsi-Hub instead of PowerShell.
 
 ## 1.2.0-beta.2
 
