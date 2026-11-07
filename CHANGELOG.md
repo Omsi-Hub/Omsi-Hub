@@ -5,6 +5,11 @@ merged but in no build yet is under Unreleased.
 
 ## Unreleased
 
+## 1.2.1
+
+A patch on 1.2.0, which closed at once as it started when the phone & tablet was on: 1.2.0 is
+withdrawn, and 1.2.1 has everything of it (below). It needs what 1.2.0 needs.
+
 ### Fixed
 
 - **Omsi-Hub starts again with the phone & tablet on**: 1.2.0 closed at once as it started
