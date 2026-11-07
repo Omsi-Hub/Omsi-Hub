@@ -122,7 +122,6 @@ pub fn fix(exe: &str, port: u16) -> Result<(), bool> {
 #[cfg(windows)]
 mod win {
     use super::{blocks, open, Rule, ABOUT, ARG, RULE};
-    use std::mem::ManuallyDrop;
     use windows::core::{Interface, BSTR, HSTRING, PCWSTR};
     use windows::Win32::Foundation::{CloseHandle, ERROR_CANCELLED, VARIANT_FALSE, VARIANT_TRUE};
     use windows::Win32::NetworkManagement::WindowsFirewall::*;
@@ -171,9 +170,10 @@ mod win {
         String::from_utf16_lossy(&buf[..got.saturating_sub(1)])
     }
 
-    /// Every rule of the firewall, with what the check reads of it.
-    fn rules(p: &INetFwPolicy2) -> windows::core::Result<Vec<(INetFwRule, Rule)>> {
-        let all = unsafe { p.Rules()?._NewEnum()? }.cast::<IEnumVARIANT>()?;
+    /// Every rule of the firewall's list `list`, with what the check reads of it (the list kept
+    /// by the caller while the rules are used).
+    fn rules(list: &INetFwRules) -> windows::core::Result<Vec<(INetFwRule, Rule)>> {
+        let all = unsafe { list._NewEnum()? }.cast::<IEnumVARIANT>()?;
         let mut out = Vec::new();
         loop {
             let mut v = [VARIANT::default()];
@@ -181,13 +181,16 @@ mod win {
             if unsafe { all.Next(&mut v, &mut got) }.is_err() || got == 0 {
                 break;
             }
-            let [mut v] = v;
-            // (the rule taken out of the VARIANT: released when it goes, the VARIANT then empty)
-            let inner = unsafe { &mut v.Anonymous.Anonymous };
+            let [v] = v;
+            // (the rule borrowed from the VARIANT, never taken out of it: the firewall's enumerator
+            // keeps the reference it hands out and releases it itself when it goes - taken and
+            // released here as well, every rule was released once too often, and Omsi-Hub 1.2.0
+            // crashed as it started with the phone & tablet on)
+            let inner = unsafe { &v.Anonymous.Anonymous };
             if inner.vt != VT_DISPATCH {
                 continue;
             }
-            let Some(d): Option<IDispatch> = (unsafe { ManuallyDrop::take(&mut inner.Anonymous.pdispVal) }) else { continue };
+            let Some(d): Option<IDispatch> = (unsafe { (*inner.Anonymous.pdispVal).clone() }) else { continue };
             let Ok(r) = d.cast::<INetFwRule>() else { continue };
             let read = unsafe {
                 Rule {
@@ -212,7 +215,8 @@ mod win {
     pub fn check(exe: &str, port: u16) -> windows::core::Result<bool> {
         let _com = Com::new();
         let p = policy()?;
-        let read: Vec<Rule> = rules(&p)?.into_iter().map(|(_, r)| r).collect();
+        let list = unsafe { p.Rules()? };
+        let read: Vec<Rule> = rules(&list)?.into_iter().map(|(_, r)| r).collect();
         Ok(open(profiles_on(&p), &read, exe, port))
     }
 
@@ -221,11 +225,11 @@ mod win {
     pub fn set_right(exe: &str, port: u16) -> windows::core::Result<()> {
         let _com = Com::new();
         let p = policy()?;
-        let all = rules(&p)?;
+        let list = unsafe { p.Rules()? };
+        let all = rules(&list)?;
         for (r, _) in all.iter().filter(|(_, x)| blocks(x, exe)) {
             unsafe { r.SetEnabled(VARIANT_FALSE)? };
         }
-        let list = unsafe { p.Rules()? };
         let name = BSTR::from(RULE);
         // (Remove takes one rule of the name at a time)
         for _ in 0..all.iter().filter(|(_, x)| x.name == RULE).count() {
@@ -330,5 +334,16 @@ mod tests {
         assert_eq!(port_of_args(&args(&["omsi-hub.exe", ARG])), Some(None));
         assert!(same_program("c:/users/o'brien/appdata/local/omsi-hub/OMSI-HUB.EXE", EXE));
         assert!(!same_program("", EXE));
+    }
+}
+
+#[cfg(all(test, windows))]
+mod on_windows {
+    /// Windows' own firewall read, as the app reads it when the phone & tablet is on: it answers
+    /// (the 1.2.0 app crashed here as it started).
+    #[test]
+    fn the_firewall_of_this_computer_is_read() {
+        let exe = std::env::current_exe().unwrap().to_string_lossy().into_owned();
+        assert!(super::check(&exe, 47811).is_some());
     }
 }
