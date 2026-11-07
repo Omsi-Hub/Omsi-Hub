@@ -2417,6 +2417,12 @@ pub fn mark_written(path: &Path, reg: &mut Registry, content: &Path) -> Result<(
 pub fn write_all(path: &Path, reg: &mut Registry, content: &Path, map_dir: &Path) -> Result<Option<String>, String> {
     let groups = crate::linehof::group_depots(map_dir);
     let (bases, original) = (crate::paths::bases(), crate::paths::root());
+    // (a company's lines written here for a drive of a company session: their blocks go too)
+    let folder = map_dir.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
+    let company = company_mark_path(&folder);
+    if let Some(m) = load_company_mark(&company) {
+        add_names(&mut reg.depots, &m.depots);
+    }
     let plan = crate::linehof::prepare(reg, &groups, &bases);
     crate::owndepot::assign(reg, &crate::owndepot::dir(), &groups, &bases);
     save_registry(path, reg)?;
@@ -2426,6 +2432,9 @@ pub fn write_all(path: &Path, reg: &mut Registry, content: &Path, map_dir: &Path
     let err = err.or(own_err);
     if exported.is_ok() && err.is_none() {
         mark_written(path, reg, content)?;
+        if company.is_file() {
+            std::fs::remove_file(&company).map_err(|e| format!("{}: {e}", company.display()))?;
+        }
     }
     exported?;
     Ok(err)
@@ -2433,22 +2442,187 @@ pub fn write_all(path: &Path, reg: &mut Registry, content: &Path, map_dir: &Path
 
 /// Before a drive on the map `map` (its `global.cfg`, as the launcher names it): the player's
 /// lines of it written into the content folder when they are not all there (`needs_writing`) -
-/// openOMSI moved or unpacked anew, a depot file copied beside a bus. What was done, if anything.
+/// openOMSI moved or unpacked anew, a depot file copied beside a bus, a company's lines written
+/// there for a drive of a company session (`write_company_lines`: his own, or none, take their
+/// place again). What was done, if anything.
 pub fn write_if_needed(map: &str) -> Option<String> {
     let content = crate::content_dir()?;
-    let path = registry_path(&map_folder(map));
-    if !path.is_file() {
+    let folder = map_folder(map);
+    let path = registry_path(&folder);
+    let company = company_written(&folder);
+    if !path.is_file() && !company {
         return None;
     }
     let mut reg = load_registry(&path);
+    if reg.map.trim().is_empty() {
+        reg.map = folder.clone();
+    }
     // (destinations of before the depot editor: the line editor moves them first, `owndepot::migrate`)
-    if !reg.destinations.is_empty() || !needs_writing(&reg, &content) {
+    if !reg.destinations.is_empty() || !(company || needs_writing(&reg, &content)) {
         return None;
     }
     let map_dir = crate::resolve_content(map)?.parent()?.to_path_buf();
     Some(match write_all(&path, &mut reg, &content, &map_dir) {
         Ok(None) => format!("lines: the lines of {} written into {}", reg.map, content.display()),
         Ok(Some(e)) | Err(e) => format!("lines: the lines of {} not all written into {}: {e}", reg.map, content.display()),
+    })
+}
+
+// --- a company's lines for a player of its session -----------------------------------------------
+
+/// A company's lines written into the content folder for a drive of a company session
+/// (`write_company_lines`), kept beside the registries (`lines/<map>.company`): the depot files
+/// their blocks went into. While it is there, the player's own lines of the map (or none) are
+/// written again before his next drive of his own and when the line editor opens the map
+/// (`write_if_needed`, `write_all`, which takes those blocks out and the file away).
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+#[serde(default)]
+pub struct CompanyMark {
+    /// The content folder they were written into.
+    pub content: String,
+    /// The depot files (by the name the depot groups give them) their blocks went into.
+    pub depots: Vec<String>,
+}
+
+/// Where the mark of a company's lines written for the map `map_folder` lies.
+pub fn company_mark_path(map_folder: &str) -> PathBuf {
+    crate::data_dir().join("lines").join(format!("{}.company", safe_name(map_folder)))
+}
+
+fn load_company_mark(path: &Path) -> Option<CompanyMark> {
+    std::fs::read(path).ok().map(|b| serde_json::from_slice(&b).unwrap_or_default())
+}
+
+/// A company's lines are in the content folder for the map `map_folder` instead of the
+/// player's own (`CompanyMark`).
+pub fn company_written(map_folder: &str) -> bool {
+    company_mark_path(map_folder).is_file()
+}
+
+/// `more` added to the depot files' names `names` (any case: once).
+fn add_names(names: &mut Vec<String>, more: &[String]) {
+    for n in more {
+        if !names.iter().any(|x| x.trim().eq_ignore_ascii_case(n.trim())) {
+            names.push(n.clone());
+        }
+    }
+}
+
+/// The boss's side of a company session: his registry of the map `map` for a player who drives
+/// one of the company's duties on it in his own game (whose launcher has none of these lines:
+/// `write_company_lines`). None when none of its lines is in the timetable.
+///
+/// The whole registry, as the boss's game has it: the file names the duty's line and tours go by
+/// (`stems`) follow from all of its lines, and the timetable's buses of the others drive along.
+pub fn for_company_drive(map: &str) -> Option<Registry> {
+    let path = registry_path(&map_folder(map));
+    if !path.is_file() {
+        return None;
+    }
+    let reg = load_registry(&path);
+    if !reg.lines.iter().any(|l| written(l.in_timetable())) {
+        return None;
+    }
+    company_lines_checked(reg).map_err(|e| crate::log_line(&format!("lines: the lines of {map} not sent with the duty: {e}"))).ok()
+}
+
+/// The most a company's registry for a drive may weigh as JSON (bytes): more stays home.
+pub const MAX_COMPANY_LINES: usize = 4 << 20;
+/// The most lines it may have.
+const MAX_COMPANY_LINE_COUNT: usize = 1000;
+
+/// A company's registry as it goes to a player of its session, and as his launcher takes it
+/// (`for_company_drive`, `write_company_lines`): it comes from another computer, so what it may
+/// name is checked - a line of the map's names the `.ttl` it is written over, which must be a
+/// plain file name of the map's `TTData`; the rest is written as data, its file names made with
+/// `safe_name`. What only means something on the boss's computer goes: the buses each line asks
+/// for, his own depot files, his old destinations. Err: why it is refused (for the log).
+pub fn company_lines_checked(mut reg: Registry) -> Result<Registry, String> {
+    let plain = |t: &str| {
+        let t = t.trim();
+        !t.is_empty() && t.len() <= 128 && !t.contains(['/', '\\', ':']) && !t.contains("..") && !t.chars().any(char::is_control)
+    };
+    if reg.lines.len() > MAX_COMPANY_LINE_COUNT {
+        return Err(format!("{} lines", reg.lines.len()));
+    }
+    let check = |l: &mut LineDesign| {
+        if l.number.len() > 64 {
+            return Err(format!("line {}: a number of {} characters", l.id, l.number.len()));
+        }
+        if let Some(m) = l.map.as_ref().filter(|m| !plain(&m.ttl)) {
+            return Err(format!("line {}: the map's line file {:?}", l.id, m.ttl));
+        }
+        l.vehicles = LineVehicles::default();
+        l.depot_file.clear();
+        Ok(())
+    };
+    for l in reg.lines.iter_mut() {
+        check(l)?;
+        if let Some(live) = l.live.as_deref_mut() {
+            check(live)?;
+        }
+    }
+    reg.destinations.clear();
+    let size = serde_json::to_vec(&reg).map_or(usize::MAX, |b| b.len());
+    if size > MAX_COMPANY_LINES {
+        return Err(format!("{size} bytes"));
+    }
+    Ok(reg)
+}
+
+/// A map's path as another computer names it (`maps/X/global.cfg`): within the game's folders.
+pub fn map_path_is_plain(map: &str) -> bool {
+    let m = map.trim();
+    !m.is_empty() && !m.contains("..") && !m.contains(':') && !m.starts_with(['/', '\\'])
+}
+
+/// A player's side of a company session: before his game starts on a duty of the boss's company,
+/// the boss's lines of the map `map` (`company`, `for_company_drive`) written into his content
+/// folder in place of his own - their timetable files and their blocks in the map's depot files,
+/// as the boss's game has them, so that the duty's line, its tours and its displays are there.
+/// His own registry is left as it is; the mark (`CompanyMark`) has his own lines written again
+/// before his next drive of his own. What was done, for the log.
+pub fn write_company_lines(map: &str, company: &Registry) -> Option<String> {
+    let folder = map_folder(map);
+    if !map_path_is_plain(map) {
+        return Some(format!("lines: the company's lines not written: the map {map:?} is not in the game's folders"));
+    }
+    let mut reg = match company_lines_checked(company.clone()) {
+        Ok(r) => r,
+        Err(e) => return Some(format!("lines: the company's lines of {folder} not written: {e}")),
+    };
+    let content = crate::content_dir()?;
+    let map_dir = crate::resolve_content(map)?.parent()?.to_path_buf();
+    // (his own registry's name for the map, so that the blocks are his blocks' place)
+    let own_path = registry_path(&folder);
+    let own = own_path.is_file().then(|| load_registry(&own_path));
+    reg.map = own.as_ref().map(|o| o.map.clone()).filter(|m| !m.trim().is_empty()).unwrap_or_else(|| folder.clone());
+    // (the blocks of his own lines, and of a company's written before, taken out with the rest)
+    let mark_path = company_mark_path(&folder);
+    let mut mark = load_company_mark(&mark_path).unwrap_or_default();
+    reg.depots.clear();
+    add_names(&mut reg.depots, &mark.depots);
+    if let Some(o) = own.as_ref() {
+        add_names(&mut reg.depots, &o.depots);
+    }
+    let groups = crate::linehof::group_depots(&map_dir);
+    let (bases, original) = (crate::paths::bases(), crate::paths::root());
+    let plan = crate::linehof::prepare(&mut reg, &groups, &bases);
+    // (marked before anything is written: a write that stops halfway is put right the next time)
+    mark.content = content.to_string_lossy().into_owned();
+    add_names(&mut mark.depots, &reg.depots);
+    let saved = serde_json::to_vec_pretty(&mark).map_err(|e| e.to_string()).and_then(|b| {
+        std::fs::create_dir_all(mark_path.parent().unwrap_or(Path::new(""))).map_err(|e| e.to_string())?;
+        std::fs::write(&mark_path, b).map_err(|e| e.to_string())
+    });
+    if let Err(e) = saved {
+        return Some(format!("lines: the company's lines of {folder} not written ({}: {e})", mark_path.display()));
+    }
+    let exported = export_to_map(&content, &map_dir, &reg);
+    let (_, err) = crate::linehof::write(&content, original.as_deref(), &reg, &groups, &plan);
+    Some(match (exported, err) {
+        (Ok((tours, files)), None) => format!("lines: the company's lines of {folder} written into {} ({tours} tours, {files} files)", content.display()),
+        (Ok(_), Some(e)) | (Err(e), _) => format!("lines: the company's lines of {folder} not all written into {}: {e}", content.display()),
     })
 }
 
@@ -3438,6 +3612,48 @@ mod tests {
         let mut l = l.clone();
         l.set_back_own(true);
         assert_eq!(l.back_days, l.days);
+    }
+
+    /// A company's registry as it comes from another computer: the owner's buses and depot files
+    /// taken out, a file name that leads out of the map's `TTData` refused, the map's path too.
+    #[test]
+    fn a_company_s_lines_from_another_computer_are_checked() {
+        let mut boss = Registry::default();
+        let id = line(&mut boss);
+        {
+            let l = boss.line_mut(id).unwrap();
+            l.depot_file = "oo_the_boss_s_own".into();
+            l.vehicles = LineVehicles { buses: vec![crate::service::BusPick::default()], ..LineVehicles::default() };
+        }
+        // (what only means something on the boss's computer goes; the line stays as it runs)
+        let sent = company_lines_checked(boss.clone()).unwrap();
+        assert!(sent.lines[0].depot_file.is_empty() && sent.lines[0].vehicles == LineVehicles::default());
+        assert_eq!(stems(&sent), stems(&boss), "the duty's file names");
+        // a line of the map's names the file it is written over: never one out of the TTData
+        for ttl in ["../../evil", "a/b", "a\\b", "C:evil", "", "x\ny"] {
+            let mut r = boss.clone();
+            r.lines[0].map = Some(MapSource { ttl: ttl.into(), ..MapSource::default() });
+            assert!(company_lines_checked(r).is_err(), "{ttl:?}");
+        }
+        let mut r = boss.clone();
+        r.lines[0].map = Some(MapSource { ttl: "Linie5".into(), ..MapSource::default() });
+        assert!(company_lines_checked(r).is_ok());
+        // a change waiting for its day as well
+        let mut r = boss.clone();
+        r.lines[0].live = Some(Box::new(LineDesign { map: Some(MapSource { ttl: "../x".into(), ..MapSource::default() }), ..r.lines[0].clone() }));
+        assert!(company_lines_checked(r).is_err());
+        let mut r = boss.clone();
+        r.lines[0].number = "9".repeat(65);
+        assert!(company_lines_checked(r).is_err());
+        // the number becomes a file name through `safe_name`
+        let mut r = boss;
+        r.lines[0].number = "../../evil".into();
+        assert!(stems(&company_lines_checked(r).unwrap()).values().all(|s| !s.contains(['/', '\\'])));
+        // the map's path
+        assert!(map_path_is_plain("maps/Grundorf/global.cfg") && map_path_is_plain("maps\\Grundorf\\global.cfg"));
+        for bad in ["../../x/global.cfg", "/etc/global.cfg", "\\\\host\\global.cfg", "C:\\x\\global.cfg", " "] {
+            assert!(!map_path_is_plain(bad), "{bad}");
+        }
     }
 
     /// The lines are written again into a content folder they were not written into whole: a

@@ -69,6 +69,11 @@ pub struct Duty {
     pub editor: bool,
     /// A duty of the player's bus company (its id); none: a drive of the player's own.
     pub company: Option<String>,
+    /// A duty of another's bus company in a company session: the boss's lines of the map
+    /// (`lines::for_company_drive`), written into the content folder in place of the player's own
+    /// before the game starts (`lines::write_company_lines`). Never in the page's JSON.
+    #[serde(skip)]
+    pub company_lines: Option<Box<crate::lines::Registry>>,
 }
 
 #[cfg(test)]

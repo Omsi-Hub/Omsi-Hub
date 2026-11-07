@@ -595,7 +595,9 @@ impl LineEditorView {
         // (`reg::needs_writing`) - and blocks in the depot files written the old way (a new
         // destination in every text: on both rows of a matrix), the texts the player typed his
         let old_texts = self.reg.texts < reg::TEXTS_VERSION && self.reg.lines.iter().any(|l| reg::written(l.in_timetable()));
-        if let Some(content) = core::content_dir().filter(|c| self.reg.destinations.is_empty() && (old_texts || reg::needs_writing(&self.reg, c))) {
+        // - and a company's lines written there for a drive of a company session (`reg::company_written`)
+        let company = reg::company_written(&self.folder);
+        if let Some(content) = core::content_dir().filter(|c| self.reg.destinations.is_empty() && (old_texts || company || reg::needs_writing(&self.reg, c))) {
             match reg::write_all(&self.reg_path, &mut self.reg, &content, &self.map_dir) {
                 Ok(None) => {}
                 Ok(Some(e)) | Err(e) => log::warn!("line editor: the files of {}'s lines not written again (tried again next time): {e}", self.folder),
