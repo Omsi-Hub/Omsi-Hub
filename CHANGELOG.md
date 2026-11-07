@@ -5,6 +5,13 @@ merged but in no build yet is under Unreleased.
 
 ## Unreleased
 
+### Fixed
+
+- **Omsi-Hub starts again with the phone & tablet on**: 1.2.0 closed at once as it started
+  whenever the phone & tablet was switched on. Its new look at Windows' firewall let go of the
+  firewall's rules once too often, and the app crashed. If 1.2.0 does not start for you, install
+  this version over it by hand: your settings and saves stay as they are.
+
 ## 1.2.0
 
 The new version for everyone after 1.1.1. It has everything of the test builds 1.2.0-beta.1
