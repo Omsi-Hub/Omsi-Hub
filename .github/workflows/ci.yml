@@ -1,7 +1,10 @@
-# Every push: the Rust checks on Linux and the page's scripts (the repository is private, and its
-# Actions minutes count: Windows' twice, macOS' ten times). Everything - the checks on Windows and
-# macOS too, and the app built with its installers on all three, the Linux selftest included - runs
-# by hand (Actions → CI → Run workflow) before a release, and the release builds all three anyway.
+# Every push: the Rust checks on Linux and on Windows, and the page's scripts (the repository is
+# private, and its Actions minutes count: Windows' twice, macOS' ten times). Windows every time
+# because most players are on it and its own code (`#[cfg(windows)]`, the firewall's COM in
+# `hub-firewall`) is compiled and tested nowhere else: 1.2.0 crashed as it started there, and only
+# a build from macOS had typechecked it. Everything else - the checks on macOS too, and the app
+# built with its installers on all three, the Linux selftest included - runs by hand (Actions →
+# CI → Run workflow) before a release, and the release builds all three anyway.
 name: CI
 
 on:
@@ -25,12 +28,14 @@ env:
 
 jobs:
   rust:
-    name: fmt, clippy, tests (${{ matrix.os }})
+    # (fmt on Linux alone: the code is the same everywhere. The Linux job keeps its old name, which
+    # the rule for main may ask for.)
+    name: ${{ matrix.os == 'ubuntu-latest' && 'fmt, clippy, tests' || 'clippy, tests' }} (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ fromJSON(github.event_name == 'workflow_dispatch' && '["windows-latest", "macos-latest", "ubuntu-latest"]' || '["ubuntu-latest"]') }}
+        os: ${{ fromJSON(github.event_name == 'workflow_dispatch' && '["windows-latest", "macos-latest", "ubuntu-latest"]' || '["windows-latest", "ubuntu-latest"]') }}
     steps:
       - uses: actions/checkout@v4
       - name: Linux packages
@@ -51,6 +56,7 @@ jobs:
       - run: rustup show
       - uses: Swatinem/rust-cache@v2
       - name: cargo fmt
+        if: runner.os == 'Linux'
         run: cargo fmt --all --check
       - name: cargo clippy
         # (warnings allowed at first: the ports bring their code as it is)
