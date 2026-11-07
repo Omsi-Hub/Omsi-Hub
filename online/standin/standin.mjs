@@ -37,7 +37,7 @@ const TTL = Number(process.env.STANDIN_TTL || 3600);
 const SECRET = crypto.randomBytes(32);
 const MAX_FILE = 26214400;
 // (as the schema has them: profiles.session_code and invites.session_code)
-const SESSION_MAX = Number(process.env.STANDIN_SESSION_MAX || 32);
+const SESSION_MAX = Number(process.env.STANDIN_SESSION_MAX || 128);
 const REDIRECTS = (process.env.STANDIN_REDIRECTS || 'http://127.0.0.1:*/callback*').split(',').map((g) => g.trim()).filter(Boolean);
 
 // --- the data -------------------------------------------------------------------------------------

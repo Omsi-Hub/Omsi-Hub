@@ -498,6 +498,7 @@ fn start(s: &mut Session) -> Answer {
     server.open_tunnel(key.clone());
     let text = code.encode();
     core::log_to_file(&format!("company: Play together for {} on port {}", c.id, server.port()));
+    crate::online::host(Some(crate::online::Hosted { code: text.clone(), friends_join: c.together.friends_join }));
     *hosting() = Some(Hosting { company: c.id.clone(), text, server, st: HostState::new(&c.id, &c.profile, secret), plan: None, told: 0, viewers: HashMap::new() });
     keep_watch(secret);
     Ok(json!({}))
@@ -514,6 +515,7 @@ fn stop(s: &mut Session) {
 fn end(s: &mut Session) {
     let gone = hosting().take();
     let Some(mut h) = gone else { return };
+    crate::online::host(None);
     core::log_to_file(&format!("company: Play together for {} ended", h.company));
     let now = unix_now();
     let expect: Vec<String> = s.company.as_ref().map(|c| h.st.online_now(now).filter_map(|o| c.together.guest(o.guest).map(|g| g.id.clone())).collect()).unwrap_or_default();
