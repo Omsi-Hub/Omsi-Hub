@@ -56,11 +56,15 @@ A player never deals with it. Windows lets nothing reach a program it has no rul
 first time a program listens it asks - for private networks only, while a home network is often
 called public - and a question clicked away leaves a rule that blocks the program for good. So
 on Windows the add-on looks, while the server runs, whether the phones get in (`hub-api`'s
-`companion::firewall`, PowerShell's `Get-NetFirewall*`, whatever language Windows speaks): its
-own rule *Omsi-Hub Phone & tablet* letting the port in, and no rule blocking the program. When
-the player turns Phone & tablet on and they would not get in, it sets that right once - the
-rules blocking the program removed, its own rule for the port on every kind of network - and
-Windows asks whether Omsi-Hub may (UAC). Clicked away, or found shut as the app starts, the
+`companion::firewall` and the crate `hub-firewall`, through the firewall's own API
+`INetFwPolicy2`, whatever language Windows speaks): its own rule *Omsi-Hub Phone & tablet*
+letting the port in, and no rule blocking the program. When the player turns Phone & tablet on
+and they would not get in, it sets that right once - the rules blocking the program switched
+off, its own rule for the port on every kind of network - by starting its own program again with
+the administrator's rights (`omsi-hub.exe --companion-firewall <port>`, which sets the rules and
+ends before any window), and Windows asks whether Omsi-Hub may (UAC). Never a script or
+PowerShell: a hidden PowerShell with the administrator's rights is what malware does, and virus
+scanners quarantined the app for it. Clicked away, or found shut as the app starts, the
 settings say so beside the pairing code with a button (`hub_companion_firewall`); the state's
 `firewall` is `checking`, `open`, `shut`, `asking` or `declined` (none off Windows). The server
 itself still lets only the home network in and only paired devices on.
