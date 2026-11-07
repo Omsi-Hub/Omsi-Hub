@@ -590,20 +590,19 @@ impl LineEditorView {
             });
             self.own_changed();
         }
-        // the lines' blocks in the depot files written the old way (a new destination in every
-        // text: on both rows of a matrix) are written again once, as a save writes them - the
-        // texts the player typed stay his
-        if self.reg.texts < reg::TEXTS_VERSION && self.reg.destinations.is_empty() && self.reg.lines.iter().any(|l| reg::written(l.in_timetable())) {
-            if let Some(content) = core::content_dir() {
-                let prepared = self.prepare_depots();
-                match self.write_depots(&content, &prepared) {
-                    None => {
-                        texts_written(&self.reg_path, &mut self.reg, true);
-                        omsi_cfg::content_changed();
-                    }
-                    Some(e) => log::warn!("line editor: the depot files of {}'s lines not written again (tried again next time): {e}", self.folder),
-                }
+        // the lines' files written again as a save writes them where they are not: in a content
+        // folder of another openOMSI, in a depot file copied beside a bus since
+        // (`reg::needs_writing`) - and blocks in the depot files written the old way (a new
+        // destination in every text: on both rows of a matrix), the texts the player typed his
+        let old_texts = self.reg.texts < reg::TEXTS_VERSION && self.reg.lines.iter().any(|l| reg::written(l.in_timetable()));
+        if let Some(content) = core::content_dir().filter(|c| self.reg.destinations.is_empty() && (old_texts || reg::needs_writing(&self.reg, c))) {
+            match reg::write_all(&self.reg_path, &mut self.reg, &content, &self.map_dir) {
+                Ok(None) => {}
+                Ok(Some(e)) | Err(e) => log::warn!("line editor: the files of {}'s lines not written again (tried again next time): {e}", self.folder),
             }
+            maplines::saved(self);
+            self.depots.clear();
+            self.own_changed();
         }
     }
 
@@ -743,16 +742,16 @@ impl LineEditorView {
 
 // --- the left panel: the lines and the line's settings ---------------------------------------
 
-/// The registry `r` (kept at `path`) marked as having every line's block in the depot files
-/// made the way they are made now (`reg::TEXTS_VERSION`), once a write of them all went
-/// without an error (`written`): a write that failed, or never came for want of a content
-/// folder, leaves the mark off, and `load_map` writes them again the next time.
-fn texts_written(path: &Path, r: &mut Registry, written: bool) {
-    if !written || r.texts >= reg::TEXTS_VERSION {
+/// The registry `r` (kept at `path`) marked as having every line's files in the content folder
+/// `content` and its blocks in the depot files made the way they are made now
+/// (`reg::mark_written`), once a write of them all went without an error (`written`): a write
+/// that failed, or never came for want of a content folder, leaves the mark off, and `load_map`
+/// (or the next drive) writes them again.
+fn texts_written(path: &Path, r: &mut Registry, content: &Path, written: bool) {
+    if !written {
         return;
     }
-    r.texts = reg::TEXTS_VERSION;
-    if let Err(e) = reg::save_registry(path, r) {
+    if let Err(e) = reg::mark_written(path, r, content) {
         log::warn!("line editor: the registry {} not saved after its depot files: {e}", path.display());
     }
 }
@@ -1386,11 +1385,14 @@ mod tests {
         let path = dir.join("Talstadt.json");
         let mut r = Registry { texts: 0, ..Default::default() };
         reg::save_registry(&path, &r).unwrap();
+        let content = dir.join("content");
         // a write that failed (or none, without a content folder): no mark
-        texts_written(&path, &mut r, false);
+        texts_written(&path, &mut r, &content, false);
         assert_eq!((r.texts, reg::load_registry(&path).texts), (0, 0));
-        texts_written(&path, &mut r, true);
+        assert_eq!(reg::load_registry(&path).written_to, "");
+        texts_written(&path, &mut r, &content, true);
         assert_eq!((r.texts, reg::load_registry(&path).texts), (reg::TEXTS_VERSION, reg::TEXTS_VERSION));
+        assert_eq!(reg::load_registry(&path).written_to, content.to_string_lossy());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

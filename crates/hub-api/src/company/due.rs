@@ -8,7 +8,6 @@
 
 use super::*;
 use hub_core::lines as reg;
-use hub_core::{linehof, owndepot};
 use std::path::{Path, PathBuf};
 
 /// The changes whose day has come, taken (`changes_due`).
@@ -89,24 +88,8 @@ fn take_effect_in_timetable(map: &str, id: u64) -> Result<(), String> {
     let map_dir = global.parent().map(Path::to_path_buf).unwrap_or_else(PathBuf::new);
     // the depot files follow the version that runs now, as a save writes them: the codes given
     // before the registry is saved, the blocks after the timetable
-    let groups = linehof::group_depots(&map_dir);
-    let (bases, original) = core::depot_roots();
-    let plan = linehof::prepare(&mut r, &groups, &bases);
-    owndepot::assign(&mut r, &owndepot::dir(), &groups, &bases);
-    reg::save_registry(&path, &r)?;
-    reg::export_to_map(&content, &map_dir, &r)?;
-    let (_, err) = linehof::write(&content, original.as_deref(), &r, &groups, &plan);
-    let (_, own_err) = owndepot::write_lines(&r, &owndepot::dir(), Some(&content));
-    let err = err.or(own_err);
-    if let Some(e) = &err {
+    if let Some(e) = reg::write_all(&path, &mut r, &content, &map_dir)? {
         core::log_to_file(&format!("company: the depot files of line {id} as it runs now: {e}"));
-    }
-    // (the registry knows its texts are written, as `lineeditor::texts_written` keeps it)
-    if err.is_none() && r.texts < reg::TEXTS_VERSION {
-        r.texts = reg::TEXTS_VERSION;
-        if let Err(e) = reg::save_registry(&path, &r) {
-            core::log_to_file(&format!("company: the registry {} not saved after its depot files: {e}", path.display()));
-        }
     }
     Ok(())
 }

@@ -319,6 +319,8 @@ pub fn add_for_bus(bus_file: &str, name: &str, source: &Path) -> Result<PathBuf,
         Ok(p) => {
             super::log_line(&format!("depot: {} added beside {bus_file} (a copy of {})", p.display(), source.display()));
             record(p, source);
+            // (the copy has none of the player's lines yet: written into it before the drive)
+            crate::lines::depot_added(name);
         }
         Err(e) => super::log_line(&format!("depot: {} not added beside {bus_file}: {e}", source.display())),
     }
