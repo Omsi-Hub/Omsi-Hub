@@ -5,6 +5,13 @@ merged but in no build yet is under Unreleased.
 
 ## Unreleased
 
+## 1.2.0
+
+The new version for everyone after 1.1.1. It has everything of the test builds 1.2.0-beta.1
+and 1.2.0-beta.2 (below) and what is new since then, here. It needs **openOMSI 0.2.22 or
+newer** and an original **OMSI 2**; only your own buses in the game needs an openOMSI with
+`timetable.set_ai_trips`.
+
 ### Added
 
 - **RosterFlow prints duty cards**: the print menu has **Duty cards (PDF)**, every duty of the
