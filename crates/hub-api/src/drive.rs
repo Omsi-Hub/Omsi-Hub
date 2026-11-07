@@ -11,7 +11,9 @@
 //! 2. the plugin made ready (`addon::ready`: put in or brought up to date, unless the player
 //!    parked it off) and given the drive's assignment (`addon::give`): what the command line
 //!    cannot say - the company and its duty, the duty's parts (legs), a free route, the sheet,
-//!    the controls, the fare, the contract, the crew, the display font and the IBIS;
+//!    the controls, the fare, the contract, the crew, the display font and the IBIS; the
+//!    player's lines of the map written into the content folder when it lacks them
+//!    (`lines::write_if_needed`);
 //! 3. the game started with official flags only (`hub_game::launch::LaunchSpec`), and the page
 //!    told (`game-started`, with the way it is driven: the live dashboard, `live.rs`);
 //! 4. **the bridge's loop** on a thread of its own, every [`EVERY`] while the game runs: the
@@ -167,6 +169,11 @@ pub fn start(d: &Duty, p: &dyn Platform) -> Answer {
         }
     };
     let issued = assignment.as_ref().map(|a| a.issued);
+    // (the player's lines of the map where the game reads them: written again into a content
+    // folder that lacks them - openOMSI moved, a depot file copied beside a bus since)
+    if let Some(done) = Some(d.map.trim()).filter(|m| !m.is_empty()).and_then(hub_core::lines::write_if_needed) {
+        hub_core::log_line(&done);
+    }
     // (the company's buses for the game's AI only in a company's duty, written for it just now:
     // `company::fleetgame`; a drive of the player's own runs the map's whole timetable)
     if let Some(dir) = plugin.as_deref().filter(|_| assignment.as_ref().is_none_or(|a| a.company.trim().is_empty())) {

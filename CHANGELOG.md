@@ -21,6 +21,13 @@ merged but in no build yet is under Unreleased.
   anything, and a game that kept hitching looked stopped. It now says it is there every second
   all the same. What the phone shows still waits for the smooth frames, and while the game does
   nothing at all for more than five seconds, as a long load can, the phone says so.
+- **Your own lines work again after openOMSI moves**: the line editor writes your lines into
+  openOMSI's content folder, both the map's timetable and the depot files that tell the
+  destination displays and the IBIS your destinations, stops and routes. With openOMSI in
+  another folder, or unpacked anew, the new content folder had none of it, and a depot file
+  copied beside a bus had none of your routes either. The bus then found no route for your
+  line. Omsi-Hub now writes your lines again before the drive, and when the line editor opens
+  the map, wherever they are missing.
 
 ## 1.2.0-beta.2
 
