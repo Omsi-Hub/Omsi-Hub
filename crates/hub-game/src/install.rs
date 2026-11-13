@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 /// The plugin's name: its folder in the plugins folder.
 pub const NAME: &str = "omsihub";
 /// The plugin's version; `plugin/main.lua` says the same (a test keeps the two the same).
-pub const VERSION: &str = "1.18.1";
+pub const VERSION: &str = "1.18.2";
 /// The plugin's files.
 pub const FILES: &[(&str, &str)] = &[
     ("main.lua", include_str!("../../../plugin/main.lua")),
@@ -36,6 +36,7 @@ pub const FILES: &[(&str, &str)] = &[
     ("company.lua", include_str!("../../../plugin/company.lua")),
     ("legs.lua", include_str!("../../../plugin/legs.lua")),
     ("start.lua", include_str!("../../../plugin/start.lua")),
+    ("budget.lua", include_str!("../../../plugin/budget.lua")),
     ("traffic.lua", include_str!("../../../plugin/traffic.lua")),
     ("fleet.lua", include_str!("../../../plugin/fleet.lua")),
     ("takeover.lua", include_str!("../../../plugin/takeover.lua")),

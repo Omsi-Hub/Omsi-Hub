@@ -22,11 +22,15 @@
 --                         the game to Omsi-Hub's companion server by UDP)
 -- A game without the file functions gets the handshake and the reports in its log instead.
 
-local VERSION = "1.18.1"
+local VERSION = "1.18.2"
 local BRIDGE = 1
 local PANEL = "omsihub"
 
 local json = require("hubjson")
+-- (each call into the plugin timed, and kept short: openOMSI stops a plugin whose one call runs
+-- longer than 50 ms - budget.lua)
+local budget = require("budget")
+budget.install()
 -- (what the plugin shows while driving, in the navigator: navigator.lua; its notifications:
 -- notes.lua)
 local navigator = require("navigator")
@@ -669,16 +673,21 @@ omsi.every(1, function()
   board.update((not assignment or assignment.board ~= false) and signon.at_work(), company_duty() and parts() or {}, assignment, { trip.boarded_on_trip(), trip.boarded_total(), fn("bus.passengers") and omsi.bus.passengers() or nil })
   messages.tick()
   strip.update(company_duty() and signon.at_work())
-  if signon.at_work() then ontime.tick(1) end
-  if not fn("has_vehicle") or omsi.has_vehicle() then dash.tick(1) end
   dispatch()
   notes.tick(1)
-end)
+end, "board")
+-- (the on-time card and the live dashboard each in calls of their own)
+omsi.every(1, function()
+  if signon.at_work() then ontime.tick(1) end
+end, "ontime")
+omsi.every(0.5, function()
+  if not fn("has_vehicle") or omsi.has_vehicle() then dash.tick(0.5) end
+end, "dash")
 
 omsi.every(2, function()
   watch_trips()
   panel()
-end)
+end, "panel")
 -- (in a company's duty only the company's own buses on the road, where its fleet map has them;
 -- not held back while the game loads: the other buses are kept off before they are seen)
 fleet.setup(has)
@@ -687,19 +696,21 @@ omsi.every(1, function()
   local line, tour = takeover.taken()
   if line then fleet.keep_off(line, tour) end
   fleet.tick(1, company_duty())
-end)
+end, "fleet")
 -- (the game's traffic for the fleet map: whatever the player drives)
 local traffic = require("traffic")
 traffic.setup(has)
-omsi.every(1, function() if calm() then traffic.tick(1, now(), clock()) end end)
-omsi.every(5, live_notices)
-omsi.every(1, companion.alive)
-omsi.every(0.25, function() if calm() then companion.tick(0.25) end end)
-omsi.every(0.1, function() if calm() then companion.screen() end end)
-omsi.every(2, messages.read)
+-- (twice a second: the game read, the file's text made and the file written, each in a call)
+omsi.every(0.5, function() if calm() then traffic.tick(0.5, now(), clock()) end end, "traffic")
+omsi.every(5, live_notices, "notices")
+omsi.every(1, companion.alive, "companion alive")
+omsi.every(0.25, function() if calm() then companion.look() end end, "companion look")
+omsi.every(0.25, function() if calm() then companion.tick(0.25) end end, "companion")
+omsi.every(0.1, function() if calm() then companion.screen() end end, "companion screen")
+omsi.every(2, messages.read, "messages")
 -- (the navigator set again once for what its parts changed meanwhile)
-omsi.every(0.2, navigator.flush)
-omsi.every(5, messages.status)
+omsi.every(0.2, navigator.flush, "navigator")
+omsi.every(5, messages.status, "status")
 
 -- Omsi-Hub's look for openOMSI's own screens (theme.json beside this file: the pause menu's
 -- panels of glass, the loading screen with the logo as its bar, Omsi-Hub's blue), put in force

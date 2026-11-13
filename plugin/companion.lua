@@ -55,7 +55,7 @@ local lists = {}
 local left_at = {}
 local left_trip = nil
 local probe = nil
-local wait = { live = 0, trips = 0, lines = 0, look = 0, keys = 0 }
+local wait = { live = 0, trips = 0, lines = 0, keys = 0 }
 -- what the devices' screens show ({nums, strs}), and the devices' triggers that may be pressed
 local want = nil
 local press_allowed, press_for = {}, nil
@@ -99,7 +99,9 @@ end
 -- same as last time
 local function send_list(kind, key, items, changed_only)
   local parts = {}
-  for i, it in ipairs(items) do parts[i] = json.encode(it) end
+  -- (openOMSI's own encoder: a long list, the map's lines, is a few Lua instructions; an empty
+  -- table in an item is a list - a line's tours)
+  for i, it in ipairs(items) do parts[i] = json.fast(it) end
   local text = table.concat(parts, ",")
   local l = lists[kind] or { v = 0, text = nil }
   if changed_only and l.text == text then return end
@@ -505,14 +507,27 @@ function M.screen()
 end
 
 -- the map's lines and their tours, read once for the game's date (the whole timetable: the
--- longest read of the game here)
-local lines, lines_for = nil, nil
+-- longest read of the game here) - the game read in one call (`read_lines`), the list made and
+-- sent in the next
+local lines, lines_for, read = nil, nil, nil
+
+-- whether the lines of today are there; else the game's timetable read now, for the next call
+local function read_lines()
+  if lines and lines_for == date() then return true end
+  if read == nil then
+    read = fn("timetable.lines") and omsi.timetable.lines() or {}
+    return false
+  end
+  return true
+end
 
 local function map_lines()
   local day = date()
   if lines and lines_for == day then return lines end
   local out = {}
-  for _, l in ipairs(fn("timetable.lines") and omsi.timetable.lines() or {}) do
+  local got = read or (fn("timetable.lines") and omsi.timetable.lines()) or {}
+  read = nil
+  for _, l in ipairs(got) do
     if l.user_allowed ~= false then
       local tours = {}
       for _, t in ipairs(l.tours or {}) do tours[#tours + 1] = { number = tostring(t.number or ""), today = t.today ~= false } end
@@ -530,15 +545,17 @@ function M.alive()
   send({ t = "alive" })
 end
 
+-- every quarter of a second (main.lua), a call of its own: Omsi-Hub's commands read (a file:
+-- the disk can be slow, and no job may follow it in the same call)
+function M.look()
+  look()
+end
+
 -- every quarter of a second (main.lua): one of its jobs in a call. openOMSI stops a plugin when
 -- one call into it runs longer than 50 ms, the game's time inside the API counted, and all of
 -- them at once - as on the first tick, while the game is still busy loading - came near that.
 function M.tick(dt)
   for k, v in pairs(wait) do wait[k] = v - (dt or 0.25) end
-  if wait.look <= 0 then
-    wait.look = 0.25
-    look()
-  end
   if not on then return end
   if wait.live <= 0 then
     wait.live = 0.5
@@ -565,6 +582,8 @@ function M.tick(dt)
     return
   end
   if wait.lines <= 0 then
+    -- (the timetable read: the list sent in the next call)
+    if not read_lines() then return end
     wait.lines = 10
     send_list("lines", "lines", map_lines())
   end

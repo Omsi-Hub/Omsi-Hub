@@ -236,7 +236,10 @@ fn the_game_s_traffic_reaches_the_fleet_map() {
     g.timetable_buses = vec![json!({ "id": 9, "line": 5, "tour": "3", "trip": 2, "terminus": "Zoo", "delay": 125.0, "number": 4711, "x": 100.0, "y": 50.0, "at_stop": true })];
     g.others = vec![json!({ "kind": "ai", "x": 1.0, "y": 2.0 }), json!({ "kind": "player", "name": "Sam", "x": 905.0, "y": 610.0, "heading": 180.0 })];
     let mut h = Harness::load(&dir, g).unwrap();
-    h.frame().unwrap();
+    // (the game read, the text made, the file written: a call each)
+    for _ in 0..3 {
+        h.frame().unwrap();
+    }
     let t = bridge::read_traffic(&dir).expect("data/traffic.json");
     assert_eq!(t.map, "maps/Grundorf/global.cfg");
     let p = t.player.expect("the player's bus");
@@ -252,16 +255,23 @@ fn the_game_s_traffic_reaches_the_fleet_map() {
     let r = t.reference.expect("a place by its tile");
     assert_eq!((r.tile_x, r.tile_y, r.local_x, r.x), (2, 4, 50.5, 650.5));
 
-    // on foot, without traffic: empty lists, as `{}` from Lua, read as empty
+    // on foot, without traffic: empty lists
     h.state.borrow_mut().position = None;
     h.state.borrow_mut().traffic.clear();
     h.state.borrow_mut().timetable_buses.clear();
     h.state.borrow_mut().others.clear();
-    for _ in 0..2 {
+    // (the next read two seconds after the last, then its text, then the file)
+    for _ in 0..4 {
         h.frame().unwrap();
     }
     let t = bridge::read_traffic(&dir).expect("written again");
     assert!(t.player.is_none() && t.vehicles.is_empty() && t.buses.is_empty() && t.reference.is_none(), "{t:?}");
+    // (openOMSI's own encoder writes them as `[]`; the plugin's own, in a game without it, as
+    // `{}`: both read as empty)
+    let text = std::fs::read_to_string(dir.join("data").join("traffic.json")).unwrap();
+    assert!(text.contains("\"vehicles\":[]"), "{text}");
+    let old: bridge::Traffic = serde_json::from_str(r#"{"at":1,"map":"m","vehicles":{},"buses":{},"players":{}}"#).unwrap();
+    assert!(old.vehicles.is_empty() && old.buses.is_empty() && old.players.is_empty());
 }
 
 /// The company's buses Omsi-Hub wrote for a company's duty (`data/fleet.json`).
@@ -278,6 +288,11 @@ fn a_company_s_duty_has_only_the_company_s_buses_on_the_road() {
     // (the company names the map with backslashes, the game with slashes: the same map)
     fleet(&dir, r"maps\Grundorf\global.cfg");
     let mut h = Harness::load(&dir, game()).unwrap();
+    // (the file read in one call, its trips in the next, given to the game in the one after)
+    for _ in 0..2 {
+        h.frame().unwrap();
+    }
+    assert!(h.state.borrow().ai_trips.is_empty());
     h.frame().unwrap();
     // the trips go to the game as they are, each with its delay
     let given = h.state.borrow().ai_trips.clone();
@@ -318,8 +333,14 @@ fn an_openomsi_without_set_ai_trips_takes_the_other_buses_off_the_road() {
     // tour 1's 8:00 trip (and its 9:00 one, not the company's), tour 2, tour 3, another line
     g.timetable_buses = vec![bus(1, "1", 28_830.0), bus(2, "1", 32_400.0), bus(3, " 2 ", 40_000.0), bus(4, "3", 28_800.0), json!({ "id": 5, "line": "7", "tour": "1", "departure": 28_800.0 })];
     let mut h = Harness::load_with(&dir, g, "omsi.timetable.set_ai_trips = nil").unwrap();
-    h.frame().unwrap();
-    assert_eq!(h.state.borrow().removed, [2, 4, 5]);
+    // (the file read, its trips, kept, the timetable's buses read, those to go found, taken off:
+    // a call each)
+    for _ in 0..7 {
+        h.frame().unwrap();
+    }
+    let mut removed = h.state.borrow().removed.clone();
+    removed.sort();
+    assert_eq!(removed, [2, 4, 5]);
     assert!(h.state.borrow().ai_trips.is_empty());
 }
 
@@ -338,7 +359,8 @@ fn every_drive_writes_the_live_dashboard() {
     // a drive of the player's own, no assignment: the bus alone
     let dir = installed("dash-free");
     let mut h = Harness::load(&dir, GameState { speed: 37.5, position: Some((1200.0, -340.0, 0.0)), passengers: 14, ..game() }).unwrap();
-    for _ in 0..3 {
+    // (the view made in one call, written in the next)
+    for _ in 0..4 {
         h.frame().unwrap();
     }
     let d = bridge::read_dash(&dir).expect("data/dash.json");
@@ -349,7 +371,7 @@ fn every_drive_writes_the_live_dashboard() {
     assert!(d.drive.seconds >= 2.0 && d.drive.metres > 0.0, "{:?}", d.drive);
     // (where the bus is, alone, for the navigator: every frame here, a frame being a second)
     let p = bridge::read_pos(&dir).expect("data/pos.json");
-    assert_eq!((p.n, p.t, p.x, p.y, p.heading, p.speed), (3, 3.0, 1200.0, -340.0, Some(0.0), 37.5));
+    assert_eq!((p.n, p.t, p.x, p.y, p.heading, p.speed), (4, 4.0, 1200.0, -340.0, Some(0.0), 37.5));
 
     // a company's duty: the duty, its trip and its stops
     let dir = installed("dash-duty");
@@ -359,7 +381,7 @@ fn every_drive_writes_the_live_dashboard() {
     g.trips[0].stops = vec![stop(1, "Zoo", 28_800.0), stop(2, "Markt", 29_100.0), stop(3, "Hbf", 29_400.0)];
     g.trips[0].terminus = "Hbf".into();
     let mut h = Harness::load(&dir, g).unwrap();
-    for _ in 0..3 {
+    for _ in 0..4 {
         h.frame().unwrap();
     }
     let d = bridge::read_dash(&dir).expect("data/dash.json");

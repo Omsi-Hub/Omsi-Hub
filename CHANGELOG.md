@@ -5,6 +5,22 @@ merged but in no build yet is under Unreleased.
 
 ## Unreleased
 
+### Fixed
+
+- **The plugin no longer stops with "ran longer than 50 ms" right after the map loads or after
+  a few minutes of driving**: openOMSI switches the plugin off for the rest of the game when one
+  of its moments in the game takes longer than 50 ms, the game's own work inside counted. On a
+  large map with much traffic, in a company's duty or with the phone & tablet on, some of them
+  came near that: the fleet map's traffic, the company's buses for the game's AI, the map's lines
+  for the phone. The plugin (1.18.2) now does each of those in small steps: the game read in one
+  moment, the list made in the next, the file written in the one after, and a long list (the
+  company's trips, the other buses taken off the road) a portion at a time. Your drive, the fleet
+  map and the phone work as before; the fleet map's traffic may come a moment later.
+- **Omsi-Hub's log says which part of the plugin was slow**: a moment of the plugin that took
+  longer than 20 ms is written into the game's log, and Omsi-Hub copies those lines into its own
+  log (Settings), with openOMSI's message when it stopped the plugin. Send that log with a
+  problem report.
+
 ## 1.2.1
 
 A patch on 1.2.0, which closed at once as it started when the phone & tablet was on: 1.2.0 is

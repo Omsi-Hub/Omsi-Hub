@@ -69,6 +69,9 @@ pub struct Kept {
     pub reports: BTreeMap<String, ReportReader>,
     /// How far the game's log was read for the reports of a plugin without file functions.
     pub log: u64,
+    /// How far the game's log was read for what it says of the plugin's time
+    /// ([`bridge::time_notes`]).
+    pub time_log: u64,
     /// The last assignment given: its reports are booked for its driver and company.
     pub assigned: Option<Assigned>,
 }
@@ -567,10 +570,40 @@ fn book_from_log(data: &Path) -> Booked {
     b
 }
 
+/// The lines of the game's log `log` since the last look that say a call of the plugin took
+/// long, or that openOMSI stopped it for that (plugin/budget.lua) - for Omsi-Hub's own log, which
+/// a player sends with a problem. At most `MOST` a look.
+fn new_time_notes(data: &Path, log: &Path) -> Vec<String> {
+    const MOST: usize = 40;
+    use std::io::{Read, Seek, SeekFrom};
+    let Ok(mut f) = std::fs::File::open(log) else { return Vec::new() };
+    let len = f.metadata().map_or(0, |m| m.len());
+    let mut k = load(data);
+    // (a new game's log, shorter than where the last look ended: from its start)
+    let start = if len < k.time_log { 0 } else { k.time_log };
+    if start == len {
+        return Vec::new();
+    }
+    let mut bytes = Vec::new();
+    if f.seek(SeekFrom::Start(start)).is_err() || f.take(len - start).read_to_end(&mut bytes).is_err() {
+        return Vec::new();
+    }
+    // (up to the last whole line: one the game is still writing is read whole next time)
+    let Some(end) = bytes.iter().rposition(|b| *b == b'\n') else { return Vec::new() };
+    let text = String::from_utf8_lossy(&bytes[..end]);
+    let notes = bridge::time_notes(&text).into_iter().take(MOST).map(String::from).collect();
+    k.time_log = start + end as u64 + 1;
+    let _ = save(data, &k);
+    notes
+}
+
 /// Book what the plugin of the chosen openOMSI reported since the last look: from its files,
 /// or from the game's log where its handshake says it cannot write files.
 pub fn book() -> Booked {
     let data = hub_core::data_dir();
+    for line in new_time_notes(&data, &hub_core::paths::home_dir().join(".openomsi").join("game.log")) {
+        hub_core::log_line(&format!("game: {line}"));
+    }
     let Ok(plugins) = plugins_dir() else { return Booked::default() };
     let dir = install::plugin_dir(&plugins);
     let mut b = book_from(&data, &dir);
@@ -734,6 +767,22 @@ pub fn game_settings(home: &Path, running: bool) -> Value {
 mod tests {
     use super::*;
     use hub_core::company::crew;
+
+    #[test]
+    fn the_plugin_s_time_in_the_game_s_log_is_read_once() {
+        let data = temp("time-notes");
+        let log = data.join("game.log");
+        let slow = "[INFO omsi_plugin] [lua omsihub] slow: traffic 31 ms";
+        std::fs::write(&log, format!("[INFO] openOMSI\n{slow}\n[INFO omsi_plugin] [lua omsihub] sl")).unwrap();
+        assert_eq!(new_time_notes(&data, &log), [slow]);
+        // (the line the game was still writing, whole now; the one read before not again)
+        std::fs::write(&log, format!("[INFO] openOMSI\n{slow}\n[INFO omsi_plugin] [lua omsihub] slow: fleet 22 ms\n")).unwrap();
+        assert_eq!(new_time_notes(&data, &log), ["[INFO omsi_plugin] [lua omsihub] slow: fleet 22 ms"]);
+        assert!(new_time_notes(&data, &log).is_empty());
+        // (a new game: its log from the start)
+        std::fs::write(&log, "[WARN omsi_plugin] [lua omsihub] ran longer than 50 ms in one call\n").unwrap();
+        assert_eq!(new_time_notes(&data, &log), ["[WARN omsi_plugin] [lua omsihub] ran longer than 50 ms in one call"]);
+    }
 
     #[test]
     fn openomsi_s_settings_are_shown_by_group_with_the_file_s_values() {

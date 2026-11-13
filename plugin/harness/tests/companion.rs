@@ -131,8 +131,9 @@ fn the_game_goes_to_the_companion_and_only_the_devices_keys_are_pressed() {
     queue(&dir, 5, json!([]));
     let mut h = Harness::load(&dir, game()).unwrap();
     h.state.borrow_mut().duty = Some(hub_plugin_harness::Duty { line: "29".into(), tour: "1".into(), trip: 1, trips: 2, delay: 60.0 });
-    // (one job a tick: the game and the devices, the keys, the duty's trips, the map's lines)
-    for _ in 0..6 {
+    // (one job a tick: the game and the devices, the keys, the duty's trips, the map's lines -
+    // read in one tick, sent in the next - with the game and the devices every other tick)
+    for _ in 0..8 {
         h.frame().unwrap();
     }
     let live = sent(&h, "live");
