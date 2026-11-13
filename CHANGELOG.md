@@ -5,6 +5,11 @@ merged but in no build yet is under Unreleased.
 
 ## Unreleased
 
+### Fixed
+
+- **The timetable editor shows the lines for the chosen date**: it now applies active Chrono
+  timetables, including replaced and deactivated lines.
+
 ## 1.2.1
 
 A patch on 1.2.0, which closed at once as it started when the phone & tablet was on: 1.2.0 is

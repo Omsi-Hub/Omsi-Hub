@@ -4,9 +4,9 @@
 //! `hub_core::ttstore` says - the content folder's copy of the `TTData`, or the map's own folder
 //! when the map lies unpacked in the content folder - never into the OMSI 2 folder.
 //!
-//! * `tt_load {map}` - `{ dir, folder, lines, trips }`: the folder the map's `TTData` lies in,
-//!   the map's folder name, every line (`.ttl`) with its tours and their trips, and every trip
-//!   (`.ttp`) a tour can run (`{ name, line, terminus, profiles }`);
+//! * `tt_load {map, date?}` - `{ date, dir, folder, lines, trips }`: the date's timetable (with
+//!   its Chrono; the default is `hub_core::DEFAULT_DATE`), every line (`.ttl`) with its tours and
+//!   their trips, and every trip (`.ttp`) a tour can run;
 //! * `tt_edit {line, tour, op, first, offset, until}` - a change of one line's tours, made here
 //!   and not saved: `{ line, tour, made }` (`op`: `new_tour`, `copy`, `repeat`, `delete_tour`,
 //!   `add_trip`, `shift`);
@@ -20,7 +20,7 @@
 use crate::content::{map_dir_rel, need_vfs, str_arg};
 use crate::{arg, to_json, Answer, Platform};
 use hub_core::{lines, ttstore};
-use hub_omsi::timetable::{DayMask, Line, Timetable, Tour, TourTrip, Trip};
+use hub_omsi::timetable::{DayMask, Line, Tour, TourTrip, Trip};
 use hub_omsi::{Codepage, Vfs};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -128,7 +128,11 @@ impl TtLine {
 /// A `tt_` command.
 pub fn call(cmd: &str, args: &Value, _p: &dyn Platform) -> Answer {
     match cmd {
-        "tt_load" => load(&need_vfs()?, &arg::<String>(args, "map")?),
+        "tt_load" => load(
+            &need_vfs()?,
+            &arg::<String>(args, "map")?,
+            &crate::content::date_arg(args)?,
+        ),
         "tt_edit" => {
             let line: TtLine = arg(args, "line")?;
             let tour = arg::<Option<usize>>(args, "tour")?.unwrap_or(0);
@@ -159,13 +163,16 @@ fn global_dir(vfs: &Vfs, map: &str) -> Result<PathBuf, String> {
     vfs.resolve(map).filter(|p| p.is_file()).and_then(|p| p.parent().map(Path::to_path_buf)).ok_or_else(|| format!("The map {map} is not there"))
 }
 
-/// `tt_load`: the map's timetable as the page edits it.
-pub fn load(vfs: &Vfs, map: &str) -> Answer {
+/// `tt_load`: the map's timetable on `date` as the page edits it.
+pub fn load(vfs: &Vfs, map: &str, date: &str) -> Answer {
+    let date = chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d").map_err(|e| format!("date {date}: {e}"))?;
     let (rel, folder) = map_parts(map);
     let map_dir = global_dir(vfs, map)?;
     let ttdata = vfs.resolve(&format!("{rel}/TTData")).filter(|p| p.is_dir());
     let dir = ttdata.as_ref().and_then(|t| t.parent().map(Path::to_path_buf)).unwrap_or(map_dir);
-    let tt = ttdata.map(|t| Timetable::load(&t)).unwrap_or_default();
+    let tt = hub_omsi::timetable::timetable_for(vfs, map, date)
+        .map_err(|e| e.to_string())?
+        .unwrap_or_default();
     let by_name = |a: &str, b: &str| a.to_lowercase().cmp(&b.to_lowercase()).then_with(|| a.cmp(b));
     let mut lines: Vec<TtLine> = tt.lines.iter().map(TtLine::of).collect();
     lines.sort_by(|a, b| by_name(&a.name, &b.name));
@@ -180,7 +187,7 @@ pub fn load(vfs: &Vfs, map: &str) -> Answer {
         })
         .collect();
     trips.sort_by(|a, b| by_name(&a.name, &b.name));
-    to_json(json!({ "dir": dir.to_string_lossy(), "folder": folder, "lines": lines, "trips": trips }))
+    to_json(json!({ "date": date.format("%Y-%m-%d").to_string(), "dir": dir.to_string_lossy(), "folder": folder, "lines": lines, "trips": trips }))
 }
 
 // --- the tours' changes ----------------------------------------------------------------------
