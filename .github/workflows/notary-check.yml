@@ -20,12 +20,14 @@ jobs:
         run: |
           key="$RUNNER_TEMP/AuthKey.p8"
           bash .github/scripts/apple-api-key.sh "$key"
-          echo "--- What kind of key (no contents):"
-          openssl pkey -in "$key" -noout -text 2>/dev/null | head -1
-          openssl asn1parse -in "$key" 2>/dev/null | grep -E "OBJECT|prim: (INTEGER|OCTET STRING)" | sed -E 's/\[HEX DUMP\]:.*/[...]/' | head -12
-          echo "--- Apple's answer as it is:"
-          xcrun notarytool history --key "$key" --key-id "$API_KEY" --issuer "$API_ISSUER" --output-format json > "$RUNNER_TEMP/a.json" 2>&1 && echo "accepted" || head -c 200 "$RUNNER_TEMP/a.json"
-          echo
-          echo "--- Re-encoded as PKCS#8 with a named curve:"
-          openssl ec -in "$key" -param_enc named_curve -out "$RUNNER_TEMP/ec.pem" 2>/dev/null && openssl pkcs8 -topk8 -nocrypt -in "$RUNNER_TEMP/ec.pem" -out "$RUNNER_TEMP/AuthKey2.p8" && echo "re-encoded: $(grep -v -- ----- "$RUNNER_TEMP/AuthKey2.p8" | tr -d '\n' | wc -c | tr -d ' ') characters of key"
-          xcrun notarytool history --key "$RUNNER_TEMP/AuthKey2.p8" --key-id "$API_KEY" --issuer "$API_ISSUER" --output-format json > "$RUNNER_TEMP/b.json" 2>&1 && echo "accepted after re-encoding" || head -c 200 "$RUNNER_TEMP/b.json"
+          echo "--- The secret's key, split into the keys in it:"
+          grep -v -- ----- "$key" | tr -d '\n' | base64 --decode > "$RUNNER_TEMP/all.der"
+          size=$(wc -c < "$RUNNER_TEMP/all.der" | tr -d ' ')
+          dd if="$RUNNER_TEMP/all.der" of="$RUNNER_TEMP/k1.der" bs=1 count=150 2>/dev/null
+          dd if="$RUNNER_TEMP/all.der" of="$RUNNER_TEMP/k2.der" bs=1 skip=150 2>/dev/null
+          echo "bytes: $size (150 + $((size-150)))"
+          cmp -s "$RUNNER_TEMP/k1.der" "$RUNNER_TEMP/k2.der" && echo "the two keys are THE SAME (pasted twice)" || echo "the two keys DIFFER"
+          for n in 1 2; do
+            openssl pkey -inform DER -in "$RUNNER_TEMP/k$n.der" -out "$RUNNER_TEMP/AuthKey_k$n.p8" 2>/dev/null && echo "key $n: a key" || { echo "key $n: no key"; continue; }
+            xcrun notarytool history --key "$RUNNER_TEMP/AuthKey_k$n.p8" --key-id "$API_KEY" --issuer "$API_ISSUER" --output-format json > "$RUNNER_TEMP/r$n.json" 2>&1 && echo "key $n: ACCEPTED by Apple" || echo "key $n: $(head -c 160 "$RUNNER_TEMP/r$n.json")"
+          done
