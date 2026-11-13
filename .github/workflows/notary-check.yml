@@ -1,0 +1,26 @@
+# TEMPORARY (fix/macos-notary-key only, removed before the merge): checks the App Store Connect API
+# key in the APPLE_* secrets on a Mac runner without building anything - the key written as Tauri
+# reads it (.github/scripts/apple-api-key.sh) and Apple asked whether it accepts it.
+name: Notary key check
+
+on:
+  push:
+    branches: ["fix/macos-notary-key"]
+
+jobs:
+  check:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: The key, written and checked
+        env:
+          API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          API_KEY: ${{ secrets.APPLE_API_KEY }}
+          API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: |
+          key="$RUNNER_TEMP/AuthKey.p8"
+          bash .github/scripts/apple-api-key.sh "$key"
+          echo "--- Apple's answer (notarytool history):"
+          xcrun notarytool history --key "$key" --key-id "$API_KEY" --issuer "$API_ISSUER" --output-format json | head -c 300
+          echo
+          echo "Apple accepts the key."

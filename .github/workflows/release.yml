@@ -169,8 +169,10 @@ jobs:
           fi
           echo "notarised=true" >> "$GITHUB_OUTPUT"
           if [ "$RUNNER_OS" = "macOS" ]; then
+            # (the .p8 as Tauri reads it, however the secret was pasted, and checked before the build:
+            # a wrong one stopped only at the notarisation, as `invalidPEMDocument`, in 1.2.0-1.2.2)
             key="$RUNNER_TEMP/AuthKey_$API_KEY.p8"
-            printf '%s\n' "$API_KEY_P8" > "$key"
+            bash .github/scripts/apple-api-key.sh "$key"
             {
               echo "APPLE_CERTIFICATE=$CERTIFICATE"
               echo "APPLE_CERTIFICATE_PASSWORD=$CERTIFICATE_PASSWORD"
