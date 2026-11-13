@@ -76,8 +76,12 @@ if [ "${#keys[@]}" -eq 0 ]; then
   exit 1
 fi
 
+# (which key was used, by its public half's fingerprint: public, so safe to print)
+used() { echo "The key used: public key sha256 $(openssl pkey -in "$out" -pubout -outform DER 2>/dev/null | openssl dgst -sha256 -r | cut -c1-16)"; }
+
 if [ "${#keys[@]}" -eq 1 ]; then
   cp "${keys[0]}" "$out"
+  used
   exit 0
 fi
 
@@ -89,6 +93,7 @@ fi
 for i in "${!keys[@]}"; do
   if xcrun notarytool history --key "${keys[$i]}" --key-id "$API_KEY" --issuer "$API_ISSUER" --output-format json > /dev/null 2>&1; then
     cp "${keys[$i]}" "$out"
+    used
     echo "::warning::APPLE_API_KEY_P8 holds ${#keys[@]} keys; Apple takes key $((i + 1)) for APPLE_API_KEY, which is used. Leave only that one in the secret (AuthKey_<key id>.p8, docs/UPDATES.md)."
     exit 0
   fi
