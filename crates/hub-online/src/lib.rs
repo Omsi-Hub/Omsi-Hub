@@ -47,8 +47,10 @@ pub use codes::Error;
 pub use oauth::{Flow, Handoff, Provider};
 pub use saves::{Cloud, SaveError, Slot};
 
-/// The Supabase project `omsi-hub-online` (public, as every client uses it; not a secret).
-pub const URL: &str = "https://mlatjtjjdfifbgddcxzu.supabase.co";
+/// Omsi-Hub's own API address (public, as every client uses it; not a secret). It fronts the
+/// Supabase backend - first the cloud project `omsi-hub-online` behind a proxy, later our own
+/// server - so the backend can move without another app update (docs/ONLINE.md).
+pub const URL: &str = "https://api.omsihub.com";
 /// Its publishable key, the `apikey` header of every request: public by design. What a request may
 /// do is decided by the row-level security and the functions' grants (online/supabase/schema.sql).
 pub const KEY: &str = "sb_publishable_LF17d5vnctmpyH1h6dRprw_s3CGcD-P";

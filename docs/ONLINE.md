@@ -62,9 +62,16 @@ the Neon endpoints below until the client lands there too. Accounts made on one 
 | What | Value |
 |---|---|
 | Supabase project | `omsi-hub-online` (`mlatjtjjdfifbgddcxzu`), region `eu-central-1` |
-| URL (Auth `/auth/v1`, REST `/rest/v1`, Storage `/storage/v1`) | `https://mlatjtjjdfifbgddcxzu.supabase.co` |
+| URL the clients use (Auth `/auth/v1`, REST `/rest/v1`, Storage `/storage/v1`, Functions `/functions/v1`) | `https://api.omsihub.com` |
+| The cloud project's own URL (behind `api.omsihub.com` for now) | `https://mlatjtjjdfifbgddcxzu.supabase.co` |
 | Publishable key (the `apikey` header) | `sb_publishable_LF17d5vnctmpyH1h6dRprw_s3CGcD-P` |
 | Schema, policies and the `saves` bucket | `online/supabase/schema.sql` |
+
+**`api.omsihub.com`** is our own address in front of the backend. Since 1.3.0 the app (and the
+website and the CMS) talk to it instead of the project's `supabase.co` address, so the backend can
+move - from Supabase's cloud to our own self-hosted Supabase - without another app update. Until
+then a proxy behind it passes every request on to the cloud project unchanged (the `Host` set to
+the project's). The publishable key stays the same.
 
 The publishable key is public by design. What a request may do is decided by row-level security and
 the functions' grants: the anonymous role may only call `hub_leaderboard` and `hub_board_counts`;
