@@ -5,6 +5,12 @@ merged but in no build yet is under Unreleased.
 
 ## Unreleased
 
+### Changed
+
+- **Omsi-Hub's online side has its own address**: the app reaches accounts, friends, the
+  leaderboard and the cloud saves at `api.omsihub.com` now. Nothing changes for you; it lets the
+  servers move later without another update.
+
 ## 1.2.1
 
 A patch on 1.2.0, which closed at once as it started when the phone & tablet was on: 1.2.0 is
