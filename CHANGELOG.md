@@ -21,6 +21,17 @@ merged but in no build yet is under Unreleased.
   log (Settings), with openOMSI's message when it stopped the plugin. Send that log with a
   problem report.
 
+## 1.2.2
+
+A patch on 1.2.1 for everyone: nothing changes in how Omsi-Hub looks or plays. It needs what 1.2.1
+needs.
+
+### Changed
+
+- **Omsi-Hub's online side has its own address**: the app reaches accounts, friends, the
+  leaderboard and the cloud saves at `api.omsihub.com` now. Nothing changes for you; it lets the
+  servers move later without another update.
+
 ## 1.2.1
 
 A patch on 1.2.0, which closed at once as it started when the phone & tablet was on: 1.2.0 is
