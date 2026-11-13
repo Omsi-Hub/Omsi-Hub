@@ -5,6 +5,11 @@ merged but in no build yet is under Unreleased.
 
 ## Unreleased
 
+## 1.2.2
+
+A patch on 1.2.1 for everyone: nothing changes in how Omsi-Hub looks or plays. It needs what 1.2.1
+needs.
+
 ### Changed
 
 - **Omsi-Hub's online side has its own address**: the app reaches accounts, friends, the
