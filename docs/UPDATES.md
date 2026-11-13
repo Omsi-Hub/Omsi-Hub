@@ -159,6 +159,14 @@ none of them the app is signed ad hoc, and with only some the release stops with
 | `APPLE_API_KEY` | That API key's key ID |
 | `APPLE_API_KEY_P8` | The contents of its `AuthKey_<key id>.p8`, which Apple lets you download once |
 
+The release writes `APPLE_API_KEY_P8` as Tauri reads it however it was pasted (the file as it is,
+on one line, without its BEGIN/END lines, or in base64: `.github/scripts/apple-api-key.sh`) and
+checks it before the build, so a wrong key stops there with what is wrong instead of at the
+notarisation (`invalidPEMDocument`, which cost 1.2.0 to 1.2.2 their Mac build). A secret with two
+keys in it - up to 1.2.2 it held two `.p8` files one after the other - is asked of Apple key by key
+and the one it takes for `APPLE_API_KEY` is used, with a warning in the run: leave only that one in
+the secret.
+
 `app/tauri.macos.conf.json` keeps `signingIdentity: "-"` for the builds without these secrets
 (CI's, a developer's); `APPLE_SIGNING_IDENTITY` overrides it.
 
