@@ -20,7 +20,12 @@ jobs:
         run: |
           key="$RUNNER_TEMP/AuthKey.p8"
           bash .github/scripts/apple-api-key.sh "$key"
-          echo "--- Apple's answer (notarytool history):"
-          xcrun notarytool history --key "$key" --key-id "$API_KEY" --issuer "$API_ISSUER" --output-format json | head -c 300
+          echo "--- What kind of key (no contents):"
+          openssl pkey -in "$key" -noout -text 2>/dev/null | head -1
+          openssl asn1parse -in "$key" 2>/dev/null | grep -E "OBJECT|prim: (INTEGER|OCTET STRING)" | sed -E 's/\[HEX DUMP\]:.*/[...]/' | head -12
+          echo "--- Apple's answer as it is:"
+          xcrun notarytool history --key "$key" --key-id "$API_KEY" --issuer "$API_ISSUER" --output-format json > "$RUNNER_TEMP/a.json" 2>&1 && echo "accepted" || head -c 200 "$RUNNER_TEMP/a.json"
           echo
-          echo "Apple accepts the key."
+          echo "--- Re-encoded as PKCS#8 with a named curve:"
+          openssl ec -in "$key" -param_enc named_curve -out "$RUNNER_TEMP/ec.pem" 2>/dev/null && openssl pkcs8 -topk8 -nocrypt -in "$RUNNER_TEMP/ec.pem" -out "$RUNNER_TEMP/AuthKey2.p8" && echo "re-encoded: $(grep -v -- ----- "$RUNNER_TEMP/AuthKey2.p8" | tr -d '\n' | wc -c | tr -d ' ') characters of key"
+          xcrun notarytool history --key "$RUNNER_TEMP/AuthKey2.p8" --key-id "$API_KEY" --issuer "$API_ISSUER" --output-format json > "$RUNNER_TEMP/b.json" 2>&1 && echo "accepted after re-encoding" || head -c 200 "$RUNNER_TEMP/b.json"
