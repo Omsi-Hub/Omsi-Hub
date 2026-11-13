@@ -362,7 +362,7 @@ const answers = {
   hub_update_act: (a) => ({ kind: 'none', line: a.what === 'check' ? 'Omsi-Hub 0.1.0 is the newest.' : '', repo: 'github.com/Omsi-Hub/Omsi-Hub-Addon', auto: false }),
 
   // the timetable editor
-  tt_load: (a) => (/grundorf/i.test(a.map || '') ? TT : { dir: '', folder: '', lines: [], trips: [] }),
+  tt_load: (a) => ({ ...(/grundorf/i.test(a.map || '') ? TT : { dir: '', folder: '', lines: [], trips: [] }), date: a.date || '1989-05-30' }),
   tt_save: (a) => ({ saved: (a.lines || []).length, error: null, lines: (a.lines || []).map((l) => ({ name: l.name, path: l.path, line: l })) }),
   tt_edit: (a) => ({ line: a.line, tour: a.tour || 0, made: 0 }),
   tt_reset: () => ({ done: "The timetable of %{map} is the map's own again (the edited copy was removed)", done_args: { map: 'Grundorf', n: 0 }, own: 0, own_error: null }),

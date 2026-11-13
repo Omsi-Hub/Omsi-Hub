@@ -107,6 +107,38 @@ fn the_editors_write_into_the_content_folder_and_the_data_folder_only() {
     assert_eq!(line(&ok("tt_load", json!({ "map": MAP })), "10")["tours"].as_array().unwrap().len(), 2);
     assert!(call("tt_reset", &json!({ "map": MAP }), &Quiet).unwrap_err().contains("not been changed"));
 
+    // Chrono timetables are selected by the date the external editor is showing.
+    let content_map = openomsi.join("maps/Testdorf");
+    std::fs::create_dir_all(content_map.join("Chrono/0100_Works/TTData")).unwrap();
+    std::fs::create_dir_all(content_map.join("Chrono/0300_Later")).unwrap();
+    std::fs::copy(omsi2.join("maps/Testdorf/global.cfg"), content_map.join("global.cfg")).unwrap();
+    for chrono in ["0100_Works", "0300_Later"] {
+        std::fs::copy(
+            omsi2.join(format!("maps/Testdorf/Chrono/{chrono}/Chrono.cfg")),
+            content_map.join(format!("Chrono/{chrono}/Chrono.cfg")),
+        )
+        .unwrap();
+    }
+    let chrono_tt = content_map.join("Chrono/0100_Works/TTData");
+    std::fs::create_dir_all(&chrono_tt).unwrap();
+    std::fs::write(
+        chrono_tt.join("10.ttl"),
+        "[priority]\n42\n[newtour]\nchrono\nBusses\n1023\n[addtrip]\n10_out\n0\n720\n",
+    )
+    .unwrap();
+    std::fs::write(chrono_tt.join("20.ttl"), "[priority]\n0\n").unwrap();
+    let active = ok("tt_load", json!({ "map": MAP, "date": "1989-05-30" }));
+    assert_eq!(active["date"], "1989-05-30");
+    assert_eq!(line(&active, "10")["priority"], 42);
+    assert_eq!(line(&active, "10")["tours"][0]["number"], "chrono");
+    assert!(active["lines"].as_array().unwrap().iter().any(|l| l["name"] == "20"));
+    let inactive = ok("tt_load", json!({ "map": MAP, "date": "1989-06-01" }));
+    assert_eq!(line(&inactive, "10")["priority"], 1);
+    assert!(!inactive["lines"].as_array().unwrap().iter().any(|l| l["name"] == "20"));
+    let deactivated = ok("tt_load", json!({ "map": MAP, "date": "1995-01-01" }));
+    assert!(!deactivated["lines"].as_array().unwrap().iter().any(|l| l["name"] == "10"));
+    assert!(call("tt_load", &json!({ "map": MAP, "date": "not-a-date" }), &Quiet).is_err());
+
     // --- the depot files ---
     let shown = ok("de_show", json!({ "key": null, "maps": [["Testdorf", "Testdorf.hof"]] }));
     assert_eq!((shown["entries"].as_array().unwrap().len(), shown["view"].is_null()), (0, true));

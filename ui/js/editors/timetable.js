@@ -14,7 +14,7 @@ import { Card, Heading, Row, Badge, Field, Drop, IconBtn, Btn, tr, status, fmtTi
 import { Chips } from '../hub/bits.js';
 
 /** What the page keeps (`TimetableView`). */
-const V = keep('tt', { map: null, loaded: null, data: null, line: 0, tour: 0, times: [], timesFor: null, offset: '20', until: '22:00', newLine: '', dirty: new Set(), resetArmed: false, column: 0, busy: false });
+const V = keep('tt', { map: null, date: null, loaded: null, loadedDate: null, data: null, line: 0, tour: 0, times: [], timesFor: null, offset: '20', until: '22:00', newLine: '', dirty: new Set(), resetArmed: false, column: 0, busy: false });
 
 const redraw = () => set({});
 
@@ -23,16 +23,16 @@ const HMM = 'h:mm';
 const MINUS = '−1 min';
 const PLUS = '+1 min';
 
-/** Read the timetable of the map `file` (another map: its changes are saved first). */
-async function load(file) {
+/** Read the timetable of the map `file` on `date` (another map: its changes are saved first). */
+async function load(file, date = V.date) {
   V.busy = true;
   redraw();
   try {
-    const d = await call('tt_load', { map: file });
-    Object.assign(V, { data: d, loaded: file, line: 0, tour: 0, timesFor: null, dirty: new Set(), resetArmed: false });
+    const d = await call('tt_load', { map: file, date });
+    Object.assign(V, { data: d, date: d.date || date, loaded: file, loadedDate: d.date || date, line: 0, tour: 0, timesFor: null, dirty: new Set(), resetArmed: false });
   } catch (e) {
     status(e.message, true);
-    Object.assign(V, { data: { lines: [], trips: [] }, loaded: file });
+    Object.assign(V, { data: { lines: [], trips: [] }, date, loaded: file, loadedDate: date });
   }
   V.busy = false;
   redraw();
@@ -146,8 +146,8 @@ async function editNow(op, more) {
 function LinesCard({ maps }) {
   const d = V.data;
   const names = maps.map((m) => [m.file, mapLabel(m)]);
-  const pickMap = async (file) => {
-    if (file === V.loaded) return;
+  const pick = async (file, date) => {
+    if (file === V.loaded && date === V.loadedDate) return;
     if (V.dirty.size) {
       const r = await saveAll();
       status(r.error ? tr('Not saved: %{error}', { error: r.error }) : linesSaved(r.saved), !!r.error);
@@ -156,8 +156,11 @@ function LinesCard({ maps }) {
       if (r.saved > 0) reloadLines();
     }
     V.map = file;
-    load(file);
+    V.date = date;
+    load(file, date);
   };
+  const pickMap = (file) => pick(file, V.date);
+  const pickDate = (date) => date && pick(V.loaded, date);
   const add = () => {
     const name = V.newLine.trim();
     if (!name || /[/\\:*?"<>|]/.test(name)) return status('Type the new line\'s name (it becomes the file name, so no / \\ : * ? " < > |)', true);
@@ -192,6 +195,10 @@ function LinesCard({ maps }) {
   return html`<${Card} class="ed-ttc-lines">
     <${Heading} title="Lines" />
     <${Drop} raw value=${V.loaded} options=${names} onChange=${pickMap} />
+    <label class="ed-field" style="flex:none;width:100%;box-sizing:border-box;margin-top:8px;padding:0 10px;gap:8px;font-size:9px" title=${tr('Date')}>
+      <span>${tr('Date')}</span>
+      <input type="date" aria-label=${tr('Date')} value=${V.date || ''} onChange=${(e) => pickDate(e.currentTarget.value)} style="flex:1;width:auto;padding:0;font-size:9px" />
+    </label>
     <div class="list" style="margin-top:12px">
       ${d.lines.map((l, i) => html`<${Row} on=${i === V.line} onClick=${() => (Object.assign(V, { line: i, tour: 0, timesFor: null, column: 1 }), redraw())}>
         <span class="name">${l.name}${V.dirty.has(l.name) ? ' •' : ''}</span>${l.own && html`<${Badge} text="own" />`}
