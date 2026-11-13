@@ -6,9 +6,13 @@ the plugin through plain files (`crates/hub-game/src/bridge.rs`).
 
 - `main.lua`: the entry point (the duty, the reports, the handshake); the other files are its
   modules (`board`, `card`, `career`, `company`, `companion`, `duty_strip`, `messages`, `ontime`, `signon`,
-  `start`, `takeover`, `traffic`, `fleet`, `trip`, `watch`, `hubjson`, `layout`, `navigator`, `notes`). `start` takes the duty (`duty.start`) in a
-  call of its own: openOMSI stops a plugin when one call into it runs longer than 50 ms, the game's
-  time inside the API counted, and taking a duty can take that long by itself. `navigator` puts
+  `start`, `takeover`, `traffic`, `fleet`, `trip`, `watch`, `hubjson`, `layout`, `navigator`, `notes`,
+  `budget`). openOMSI stops a plugin when one call into it runs longer than 50 ms, the game's time
+  inside the API counted, so the plugin keeps its calls short: `budget` times every call (one past
+  20 ms goes into the game's log as `slow: <name> <ms> ms`, which Omsi-Hub copies into its own),
+  and a long job is done in steps, each a call of its own - the game read, the text made, the file
+  written (`traffic`, `dash`), a long list in portions (`fleet`). `start` takes the duty
+  (`duty.start`) in a call of its own, as taking a duty can take that long by itself. `navigator` puts
   everything the plugin shows while driving into openOMSI's navigator, one part under the other
   (the notifications of `notes`, the control room, the company and signing on, the duty board, on
   time, the duty strip), on a panel that takes clicks without F10 (`grab`); the navigator is

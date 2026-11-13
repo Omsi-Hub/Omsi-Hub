@@ -125,16 +125,25 @@ function M.view()
   }
 end
 
--- every second (main.lua), with the player in a bus
+-- (the file's text made, to be written in the next call)
+local text = nil
+
+-- twice a second (main.lua), with the player in a bus: the view made in one call and written in
+-- the next (openOMSI's 50 ms for one call, the game's work inside counted: budget.lua)
 function M.tick(dt)
   if not has["files.write"] then return end
   wait = wait - (dt or 1)
+  if text then
+    omsi.files.write(M.FILE, text)
+    text = nil
+    return
+  end
   if wait > 0 then return end
   wait = EVERY
-  -- (a view that fails - an API of the game that answers otherwise - is left out this time:
-  -- the rest of main.lua's second, the company's messages, goes on)
+  -- (a view that fails - an API of the game that answers otherwise - is left out this time)
   local ok, view = pcall(M.view)
-  if ok then omsi.files.write(M.FILE, json.encode(view)) end
+  -- (openOMSI's own encoder: no table in it is an empty one but a list - stops, none, is left out)
+  if ok then text = json.fast(view) end
 end
 
 -- every frame, with the player in a bus: where the bus is, thirty times a second
@@ -149,7 +158,7 @@ function M.frame(dt)
   if not ok or not num(x) or not num(y) then return end
   pos_n = pos_n + 1
   local speed = num(omsi.speed and omsi.speed()) or 0
-  omsi.files.write(M.POS_FILE, json.encode({ n = pos_n, t = pos_t, x = num(x), y = num(y), heading = num(heading), speed = speed }))
+  omsi.files.write(M.POS_FILE, json.fast({ n = pos_n, t = pos_t, x = num(x), y = num(y), heading = num(heading), speed = speed }))
 end
 
 return M

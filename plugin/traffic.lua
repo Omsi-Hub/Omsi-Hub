@@ -9,6 +9,11 @@
 --
 -- The file it shares with Omsi-Hub (crates/hub-game/src/bridge.rs `Traffic`):
 --   data/traffic.json   plugin -> Omsi-Hub: the player, the vehicles, the timetable's buses
+--
+-- On a large map with much traffic that is a long read, a long list and a long text, and
+-- openOMSI gives one call 50 ms with the game's work inside counted (budget.lua): so the game is
+-- read in one call, its lists made into the file's text in the next, and the file written in
+-- the one after.
 
 local json = require("hubjson")
 
@@ -79,69 +84,97 @@ local function map_path()
   return ""
 end
 
--- what is on the road now, as Omsi-Hub reads it
-function M.snapshot(now, clock)
-  local out = { at = now, clock = clock, map = map_path(), vehicles = {}, buses = {}, players = {} }
-  local first
+-- what the game has on the road now, as it gives it (the first step: only the game's reads)
+function M.read(now, clock)
+  local r = { at = now, clock = clock, map = map_path() }
   if has["position"] then
-    local x, y, _, heading = omsi.position()
-    if x then
-      local speed = fn("speed") and omsi.speed() or 0
-      out.player = { x = dm(x), y = dm(y), heading = dm(heading or 0), speed = dm(speed) }
-      -- (its duty, its delay and its passengers, as the game has them)
-      local i = fn("info") and omsi.info() or nil
-      if type(i) == "table" then
-        out.player.line, out.player.tour = tostring(i.line or ""), tostring(i.tour or "")
-        out.player.delay, out.player.passengers = i.delay, i.passengers
-      end
-      first = { x, y }
+    local _
+    r.x, r.y, _, r.heading = omsi.position()
+    if r.x then
+      r.speed = fn("speed") and omsi.speed() or 0
+      r.info = fn("info") and omsi.info() or nil
     end
+  end
+  if has["traffic.list"] then r.traffic = omsi.traffic.list() end
+  if has["timetable.buses"] then r.buses = omsi.timetable.buses() end
+  if has["others"] then r.others = omsi.others(100000) end
+  return r
+end
+
+-- what is on the road, as Omsi-Hub reads it, from what `read` read (the second step)
+function M.build(r)
+  local out = { at = r.at, clock = r.clock, map = r.map, vehicles = {}, buses = {}, players = {} }
+  local first
+  if r.x then
+    local x, y = r.x, r.y
+    out.player = { x = dm(x), y = dm(y), heading = dm(r.heading or 0), speed = dm(r.speed) }
+    -- (its duty, its delay and its passengers, as the game has them)
+    local i = r.info
+    if type(i) == "table" then
+      out.player.line, out.player.tour = tostring(i.line or ""), tostring(i.tour or "")
+      out.player.delay, out.player.passengers = i.delay, i.passengers
+    end
+    first = { x, y }
   end
   -- (the AI vehicles, the timetable's buses kept for their own list below with their heading)
   local heading_of = {}
-  if has["traffic.list"] then
-    for _, v in ipairs(omsi.traffic.list() or {}) do
-      if type(v) == "table" and v.x and v.y then
-        if v.kind == "timetable_bus" then
-          if v.id ~= nil then heading_of[v.id] = v.heading end
-        elseif dm(v.x) and dm(v.y) then
-          out.vehicles[#out.vehicles + 1] = { id = v.id, x = dm(v.x), y = dm(v.y), heading = dm(v.heading or 0) or 0, kind = tostring(v.kind or "car") }
-        end
-        first = first or { v.x, v.y }
+  for _, v in ipairs(r.traffic or {}) do
+    if type(v) == "table" and v.x and v.y then
+      if v.kind == "timetable_bus" then
+        if v.id ~= nil then heading_of[v.id] = v.heading end
+      elseif dm(v.x) and dm(v.y) then
+        out.vehicles[#out.vehicles + 1] = { id = v.id, x = dm(v.x), y = dm(v.y), heading = dm(v.heading or 0) or 0, kind = tostring(v.kind or "car") }
       end
+      first = first or { v.x, v.y }
     end
   end
-  if has["timetable.buses"] then
-    for _, b in ipairs(omsi.timetable.buses() or {}) do
-      if type(b) == "table" and b.x and b.y then
-        out.buses[#out.buses + 1] = {
-          id = b.id, x = dm(b.x), y = dm(b.y), heading = dm(heading_of[b.id] or 0),
-          line = tostring(b.line or ""), tour = tostring(b.tour or ""), trip = b.trip, terminus = b.terminus or "",
-          delay = b.delay, number = b.number and tostring(b.number) or "", at_stop = b.at_stop == true,
-        }
-        first = first or { b.x, b.y }
-      end
+  for _, b in ipairs(r.buses or {}) do
+    if type(b) == "table" and b.x and b.y then
+      out.buses[#out.buses + 1] = {
+        id = b.id, x = dm(b.x), y = dm(b.y), heading = dm(heading_of[b.id] or 0),
+        line = tostring(b.line or ""), tour = tostring(b.tour or ""), trip = b.trip, terminus = b.terminus or "",
+        delay = b.delay, number = b.number and tostring(b.number) or "", at_stop = b.at_stop == true,
+      }
+      first = first or { b.x, b.y }
     end
   end
   -- (another player's bus in a LAN game)
-  if has["others"] then
-    for _, o in ipairs(omsi.others(100000) or {}) do
-      if type(o) == "table" and o.kind == "player" and o.x and o.y then
-        out.players[#out.players + 1] = { name = o.name or "", x = dm(o.x), y = dm(o.y), heading = dm(o.heading or 0) }
-      end
+  for _, o in ipairs(r.others or {}) do
+    if type(o) == "table" and o.kind == "player" and o.x and o.y then
+      out.players[#out.players + 1] = { name = o.name or "", x = dm(o.x), y = dm(o.y), heading = dm(o.heading or 0) }
     end
   end
   if first then out.ref = reference(first[1], first[2]) end
   return out
 end
 
--- every second: the file, every few seconds
+-- what is on the road now, all three steps at once (for a test)
+function M.snapshot(now, clock)
+  return M.build(M.read(now, clock))
+end
+
+-- (the step under way: what was read, the text to write)
+local got, text = nil, nil
+
+-- twice a second (main.lua): the file every few seconds, in three calls - the game read, the
+-- text made, the file written
 function M.tick(seconds, now, clock)
   if not M.can() then return end
   wait = wait - seconds
+  if text then
+    omsi.files.write("traffic.json", text)
+    text = nil
+    return
+  end
+  if got then
+    -- (openOMSI's own encoder: the lists are lists, an empty one `[]`)
+    text = json.fast(M.build(got))
+    got = nil
+    return
+  end
   if wait > 0 then return end
   wait = EVERY
-  omsi.files.write("traffic.json", json.encode(M.snapshot(now, clock)))
+  got = M.read(now, clock)
 end
 
 return M

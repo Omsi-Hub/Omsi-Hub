@@ -54,4 +54,16 @@ function M.encode(v)
   return encode(v, 0)
 end
 
+-- the same with openOMSI's own `json.encode` where the game has it: in the game's code, so a
+-- few Lua instructions where this file's takes thousands for a long list (the traffic, the
+-- dashboard). It writes an empty table as `[]`: only for values whose empty tables are lists.
+function M.fast(v)
+  local j = type(omsi) == "table" and omsi.json or nil
+  if type(j) == "table" and type(j.encode) == "function" then
+    local ok, text = pcall(j.encode, v)
+    if ok and type(text) == "string" then return text end
+  end
+  return encode(v, 0)
+end
+
 return M

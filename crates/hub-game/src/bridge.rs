@@ -976,9 +976,28 @@ pub fn replies_from_log(log: &str) -> Vec<Reply> {
     log.lines().filter_map(|l| l.find(LOG_REPLY).and_then(|k| serde_json::from_str(l[k + LOG_REPLY.len()..].trim()).ok())).collect()
 }
 
+/// What the game's log says of the plugin's time: a call of it that took long (the plugin's own
+/// `slow: <name> <ms> ms`, plugin/budget.lua) and openOMSI stopping it for running longer than
+/// it may ("Lua plugin omsihub ran longer than 50 ms and was stopped"). For Omsi-Hub's own log,
+/// which a player sends with a problem.
+pub fn time_notes(log: &str) -> Vec<&str> {
+    log.lines().map(str::trim).filter(|l| l.contains("[lua omsihub] slow: ") || (l.contains("omsihub") && l.contains("ran longer than"))).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_plugin_s_time_is_found_in_the_game_s_log() {
+        let log = "[INFO] openOMSI 0.3.54\n[INFO omsi_plugin] [lua omsihub] slow: traffic 31 ms\n[INFO omsi_plugin] [lua other] slow: x 90 ms\n\
+                   [WARN omsi_plugin] [lua omsihub] ran longer than 50 ms in one call: switched off until it changes or the game restarts\n\
+                   [WARN omsi_plugin] [lua other] ran longer than 50 ms in one call\n";
+        assert_eq!(
+            time_notes(log),
+            ["[INFO omsi_plugin] [lua omsihub] slow: traffic 31 ms", "[WARN omsi_plugin] [lua omsihub] ran longer than 50 ms in one call: switched off until it changes or the game restarts"]
+        );
+    }
 
     fn dir(tag: &str) -> std::path::PathBuf {
         let d = std::env::temp_dir().join(format!("omsihub-bridge-{tag}-{}", std::process::id()));

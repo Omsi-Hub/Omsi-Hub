@@ -318,6 +318,21 @@ fn from_lua(lua: &Lua, v: LuaValue) -> mlua::Result<Value> {
     lua.from_value_with(v, mlua::serde::DeserializeOptions::new().deny_unsupported_types(false))
 }
 
+/// A value as openOMSI's `json.encode` writes it: a whole number without its `.0`, an empty
+/// table as `[]` (a Lua table cannot tell an empty list from an empty object).
+fn as_openomsi(v: Value) -> Value {
+    match v {
+        Value::Number(n) => match n.as_f64() {
+            Some(f) if n.is_f64() && f.fract() == 0.0 && f.abs() < 9.0e15 => json!(f as i64),
+            _ => Value::Number(n),
+        },
+        Value::Object(m) if m.is_empty() => json!([]),
+        Value::Object(m) => Value::Object(m.into_iter().map(|(k, x)| (k, as_openomsi(x))).collect()),
+        Value::Array(a) => Value::Array(a.into_iter().map(as_openomsi).collect()),
+        v => v,
+    }
+}
+
 fn stops_json(stops: &[Stop]) -> Value {
     Value::Array(stops.iter().enumerate().map(|(k, s)| json!({ "id": s.id, "number": k + 1, "name": s.name, "arr": s.arr, "dep": s.dep, "stops": true })).collect())
 }
@@ -511,7 +526,7 @@ fn api(lua: &Lua, state: &Rc<RefCell<GameState>>, plugin_dir: &Path) -> mlua::Re
     omsi.set("files", files)?;
 
     let jsn = lua.create_table()?;
-    jsn.set("encode", lua.create_function(|l, v: LuaValue| Ok(serde_json::to_string(&from_lua(l, v)?).unwrap_or_default()))?)?;
+    jsn.set("encode", lua.create_function(|l, v: LuaValue| Ok(serde_json::to_string(&as_openomsi(from_lua(l, v)?)).unwrap_or_default()))?)?;
     jsn.set("decode", lua.create_function(|l, text: String| serde_json::from_str::<Value>(&text).map_or(Ok(LuaValue::Nil), |v| to_lua(l, &v)))?)?;
     omsi.set("json", jsn)?;
 
