@@ -1,6 +1,6 @@
 # TEMPORARY (fix/macos-notary-key only, removed before the merge): checks the App Store Connect API
-# key in the APPLE_* secrets on a Mac runner without building anything - the key written as Tauri
-# reads it (.github/scripts/apple-api-key.sh) and Apple asked whether it accepts it.
+# key in the APPLE_* secrets on a Mac runner without building anything - the key written as the
+# release writes it (.github/scripts/apple-api-key.sh) and Apple asked whether it takes it.
 name: Notary key check
 
 on:
@@ -18,16 +18,7 @@ jobs:
           API_KEY: ${{ secrets.APPLE_API_KEY }}
           API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
         run: |
-          key="$RUNNER_TEMP/AuthKey.p8"
+          key="$RUNNER_TEMP/AuthKey_$API_KEY.p8"
           bash .github/scripts/apple-api-key.sh "$key"
-          echo "--- The secret's key, split into the keys in it:"
-          grep -v -- ----- "$key" | tr -d '\n' | base64 --decode > "$RUNNER_TEMP/all.der"
-          size=$(wc -c < "$RUNNER_TEMP/all.der" | tr -d ' ')
-          dd if="$RUNNER_TEMP/all.der" of="$RUNNER_TEMP/k1.der" bs=1 count=150 2>/dev/null
-          dd if="$RUNNER_TEMP/all.der" of="$RUNNER_TEMP/k2.der" bs=1 skip=150 2>/dev/null
-          echo "bytes: $size (150 + $((size-150)))"
-          cmp -s "$RUNNER_TEMP/k1.der" "$RUNNER_TEMP/k2.der" && echo "the two keys are THE SAME (pasted twice)" || echo "the two keys DIFFER"
-          for n in 1 2; do
-            openssl pkey -inform DER -in "$RUNNER_TEMP/k$n.der" -out "$RUNNER_TEMP/AuthKey_k$n.p8" 2>/dev/null && echo "key $n: a key" || { echo "key $n: no key"; continue; }
-            xcrun notarytool history --key "$RUNNER_TEMP/AuthKey_k$n.p8" --key-id "$API_KEY" --issuer "$API_ISSUER" --output-format json > "$RUNNER_TEMP/r$n.json" 2>&1 && echo "key $n: ACCEPTED by Apple" || echo "key $n: $(head -c 160 "$RUNNER_TEMP/r$n.json")"
-          done
+          xcrun notarytool history --key "$key" --key-id "$API_KEY" --issuer "$API_ISSUER" --output-format json > /dev/null
+          echo "Apple takes the key the release will use."
