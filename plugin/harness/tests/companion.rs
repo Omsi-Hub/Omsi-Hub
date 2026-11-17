@@ -384,7 +384,7 @@ fn without_a_company_duty_the_strip_is_not_sent_and_a_switched_off_one_is_cleare
     let mut h = Harness::load(&dir, game()).unwrap();
     on_duty(&h, 0.0);
     frames(&mut h, 40);
-    assert!(sent(&h, "strip").is_empty(), "no company duty: nothing to say, and nothing to clear");
+    assert_eq!(sent(&h, "strip"), [json!({ "t": "strip" })], "no company duty: nothing to say, cleared once as the drive begins");
     // (the strip's own switch on the board: off clears it)
     let dir = installed("strip-off");
     bridge::write_assignment(&dir, &company_assignment()).unwrap();
@@ -480,7 +480,7 @@ fn the_trip_card_is_sent_when_it_opens() {
     let mut h = Harness::load(&dir, game()).unwrap();
     on_duty(&h, 0.0);
     frames(&mut h, 25);
-    assert!(sent(&h, "card").is_empty(), "no card yet");
+    assert!(sent(&h, "card").iter().all(|c| *c == json!({ "t": "card" })), "no card yet (cleared once as the drive begins)");
     h.fire("trip_done", &[json!(1), json!("arrived"), json!(95.0), json!(88.0), json!(100.0)]).unwrap();
     // (the card stays 15 s: it is sent within the first seconds)
     frames(&mut h, 8);
@@ -601,7 +601,7 @@ fn the_computer_starts_the_duty_and_signs_off() {
     queue(&dir, 5, json!([]));
     let mut h = Harness::load(&dir, game()).unwrap();
     frames(&mut h, 3);
-    command(&dir, &mut h, json!([{ "seq": 1, "do": "start_duty" }]));
+    command(&dir, &mut h, json!([{ "seq": 1, "do": "duty_start" }]));
     assert_eq!(h.state.borrow().started.len(), 1, "the duty started as the panel's button does");
     assert_eq!(acks(&h).last().unwrap(), &(1, true, String::new()));
     // (signed off: the walk-around opens; a second time there is nothing to sign off)
@@ -612,6 +612,110 @@ fn the_computer_starts_the_duty_and_signs_off() {
     assert_eq!(sent(&h, "strip").last().unwrap()["open"], "check");
     command(&dir, &mut h, json!([{ "seq": 3, "do": "sign_off" }]));
     assert_eq!(acks(&h).last().unwrap(), &(3, true, String::new()), "already open: still fine");
+}
+
+#[test]
+fn each_empty_part_is_cleared_once_as_the_drive_begins() {
+    let dir = installed("parts-first");
+    queue(&dir, 5, json!([]));
+    let mut h = Harness::load(&dir, game()).unwrap();
+    frames(&mut h, 40);
+    // (Omsi-Hub may still have the last drive's: each is said to be empty, once)
+    for k in ["strip", "ontime", "board", "card"] {
+        assert_eq!(sent(&h, k), [json!({ "t": k })], "{k}");
+    }
+    let notes = sent(&h, "notes");
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert_eq!((notes[0]["v"].as_i64(), &notes[0]["notes"]), (Some(1), &json!([])));
+}
+
+#[test]
+fn a_note_left_while_the_walk_around_is_open_leaves_it_open() {
+    let dir = installed("note-check");
+    bridge::write_assignment(&dir, &company_assignment()).unwrap();
+    queue(&dir, 5, json!([]));
+    let mut h = Harness::load(&dir, game()).unwrap();
+    on_duty(&h, 0.0);
+    frames(&mut h, 3);
+    command(&dir, &mut h, json!([{ "seq": 1, "do": "sign_off" }]));
+    frames(&mut h, 40);
+    assert_eq!(sent(&h, "strip").last().unwrap()["open"], "check");
+    command(&dir, &mut h, json!([{ "seq": 2, "do": "strip_note", "text": "Door 2 sticks again" }]));
+    assert_eq!(acks(&h).last().unwrap(), &(2, true, String::new()));
+    frames(&mut h, 40);
+    assert_eq!(sent(&h, "strip").last().unwrap()["open"], "check", "the walk-around stays open");
+}
+
+#[test]
+fn a_long_title_of_many_bytes_keeps_the_notes_valid_json() {
+    let dir = installed("notes-utf8");
+    queue(&dir, 5, json!([]));
+    let mut h = Harness::load(&dir, game()).unwrap();
+    frames(&mut h, 3);
+    // (199 bytes, then a character of two: the 200th byte is half of it)
+    let title = format!("{}{}", "x".repeat(199), "ä".repeat(20));
+    let text = "€".repeat(1000);
+    h.lua.load(format!("require('notes').say('{text}', {{ title = '{title}', sticky = true }})")).exec().unwrap();
+    frames(&mut h, 40);
+    let texts: Vec<String> = h.state.borrow().sent.iter().filter(|(p, t)| *p == PORT && t.contains("\"t\":\"notes\"")).map(|(_, t)| t.clone()).collect();
+    let n: Value = serde_json::from_str(texts.last().expect("a notes datagram")).expect("valid JSON");
+    let note = &n["notes"][0];
+    assert_eq!(note["title"], "x".repeat(199), "cut before the character it would split");
+    let t = note["text"].as_str().unwrap();
+    assert!(t.len() <= 2000 && t.chars().all(|c| c == '€') && t.chars().count() == 666, "{}", t.len());
+}
+
+/// Omsi-Hub's queue, saying whether its own on-board computer asks for the state.
+fn queue_with_device(dir: &Path, device: bool) {
+    std::fs::create_dir_all(dir.join("data")).unwrap();
+    std::fs::write(dir.join("data/companion.json"), json!({ "sid": 5, "port": PORT, "seq": 0, "cmds": [], "device": device }).to_string()).unwrap();
+}
+
+fn stage(h: &Harness) -> String {
+    h.lua.load("return require('signon').stage").eval::<String>().unwrap()
+}
+
+#[test]
+fn a_duty_without_a_device_skips_sign_on_after_20_s() {
+    let dir = installed("no-device");
+    bridge::write_assignment(&dir, &passed_assignment()).unwrap();
+    queue_with_device(&dir, false);
+    let mut h = Harness::load(&dir, game()).unwrap();
+    frames(&mut h, 15);
+    assert_eq!(stage(&h), "signon", "a while to wait for the on-board computer");
+    assert!(h.state.borrow().started.is_empty());
+    frames(&mut h, 8);
+    assert_eq!(stage(&h), "work", "nobody could sign on: at work, as with sign-on off");
+    assert_eq!(h.state.borrow().started.len(), 1, "the duty starts as when the order is accepted");
+    assert!(h.log_text().contains("no on-board computer seen in 20 s"), "{}", h.log_text());
+    frames(&mut h, 2);
+    assert_eq!(sent(&h, "live").last().unwrap()["signon"], "work");
+    // (Omsi-Hub not running at all: no file, no device)
+    let dir = installed("no-hub");
+    bridge::write_assignment(&dir, &passed_assignment()).unwrap();
+    let mut h = Harness::load(&dir, game()).unwrap();
+    frames(&mut h, 23);
+    assert_eq!(stage(&h), "work");
+}
+
+#[test]
+fn a_duty_with_a_device_waits_at_sign_on() {
+    let dir = installed("with-device");
+    bridge::write_assignment(&dir, &passed_assignment()).unwrap();
+    queue_with_device(&dir, true);
+    let mut h = Harness::load(&dir, game()).unwrap();
+    frames(&mut h, 60);
+    assert_eq!(stage(&h), "signon", "the driver signs on at the on-board computer");
+    assert!(h.state.borrow().started.is_empty());
+    // (the device gone for a while before the driver signed on: then at work)
+    queue_with_device(&dir, false);
+    frames(&mut h, 23);
+    assert_eq!(stage(&h), "work");
+    // (signed off at the end of the duty, without a device: back at the sign-on, and it stays)
+    command(&dir, &mut h, json!([{ "seq": 1, "do": "sign_off" }]));
+    assert_eq!(acks(&h).last().unwrap(), &(1, true, String::new()));
+    frames(&mut h, 30);
+    assert_eq!(stage(&h), "signon");
 }
 
 fn passed_assignment() -> Assignment {
@@ -674,12 +778,12 @@ fn signing_off_waits_until_the_duty_order_is_accepted() {
 }
 
 #[test]
-fn start_duty_with_no_duty_is_not_now() {
+fn duty_start_with_no_duty_is_not_now() {
     let dir = installed("cmd-nostart");
     queue(&dir, 5, json!([]));
     let mut h = Harness::load(&dir, game()).unwrap();
     frames(&mut h, 3);
-    command(&dir, &mut h, json!([{ "seq": 1, "do": "start_duty" }, { "seq": 2, "do": "sign_off" }]));
+    command(&dir, &mut h, json!([{ "seq": 1, "do": "duty_start" }, { "seq": 2, "do": "sign_off" }]));
     let a = acks(&h);
     assert_eq!(a, [(1, false, "not_now".to_string()), (2, false, "not_now".to_string())]);
 }

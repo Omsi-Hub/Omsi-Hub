@@ -55,6 +55,8 @@ local lists = {}
 local left_at = {}
 local left_trip = nil
 local probe = nil
+-- Omsi-Hub's own on-board computer asks for the state now (the file's `device`)
+local device = false
 local wait = { live = 0, trips = 0, lines = 0, keys = 0 }
 -- what the devices' screens show ({nums, strs}), and the devices' triggers that may be pressed
 local want = nil
@@ -371,7 +373,9 @@ end
 -- What the on-board computer shows of the driving parts, each as the facts the part itself
 -- reports (`hook.facts[kind]()`: the duty strip, on time, the company's board, the trip's card -
 -- a table, or nil when the part has nothing to show - and the notes, a list): the datagram of
--- the part is its facts' fields next to `t`, and `{"t": kind}` alone clears it. Each is sent when
+-- the part is its facts' fields next to `t`, and `{"t": kind}` alone clears it (said once for
+-- each part with nothing to show as the drive begins: Omsi-Hub may still have the last drive's,
+-- and an empty `notes` list starts its versions). Each is sent when
 -- its content changed and at least every PART_EVERY seconds while it has something, and in a
 -- tick of its own: one part at most each tick.
 local PARTS = { "strip", "ontime", "board", "card", "notes" }
@@ -403,15 +407,7 @@ local CUT_TEXT = 80
 local told_cut = {}
 
 -- a text cut to at most `n` bytes, at the edge of a character (UTF-8: not inside one)
-local function cut_text(text, n)
-  if #text <= n then return text end
-  local i = n
-  while i > 0 do
-    local b = text:byte(i + 1)
-    if b and b >= 0x80 and b < 0xC0 then i = i - 1 else break end
-  end
-  return text:sub(1, i)
-end
+local cut_text = json.cut
 
 local function shorten(list)
   for i, it in ipairs(list) do
@@ -474,7 +470,9 @@ end
 
 local function send_parts()
   if not (on and fn("send") and hook.facts) then return end
-  local due, texts, got = nil, {}, {}
+  -- (a part that changed goes before one that is only sent again: a card that opens is not kept
+  -- waiting behind the others' repeats)
+  local due, again, texts, got = nil, nil, {}, {}
   for step = 0, #PARTS - 1 do
     local i = (part_next - 1 + step) % #PARTS + 1
     local kind = PARTS[i]
@@ -485,12 +483,17 @@ local function send_parts()
       local text = part_text(kind, f)
       local was = sent_part[kind]
       local stale = was and parts_clock - was.at >= PART_EVERY
-      -- (nothing to show is said once, after something was: the server forgets a part not heard)
-      local changed
-      if text == false then changed = was ~= nil and was.text ~= false else changed = was == nil or was.text ~= text or stale end
-      if changed and not due then due, texts[kind], got[kind] = i, text, f end
+      -- (nothing to show is said once: on the first look - the server may still have the last
+      -- drive's part - and after something was)
+      local changed = was == nil or was.text ~= text
+      if changed and not due then
+        due, texts[kind], got[kind] = i, text, f
+      elseif text ~= false and stale and not again then
+        again, texts[kind], got[kind] = i, text, f
+      end
     end
   end
+  due = due or again
   if not due then return end
   local kind = PARTS[due]
   part_next = due % #PARTS + 1
@@ -587,8 +590,8 @@ local function carry_out(c)
   elseif what == "accept_order" then
     if not (hook.accept and hook.accept()) then return false, "not_now" end
     return true
-  elseif what == "start_duty" then
-    if not (hook.start_duty and hook.start_duty()) then return false, "not_now" end
+  elseif what == "duty_start" then
+    if not (hook.duty_start and hook.duty_start()) then return false, "not_now" end
     return true
   elseif what == "sign_off" then
     if not (hook.sign_off and hook.sign_off()) then return false, "not_now" end
@@ -637,6 +640,7 @@ local function look()
   want = type(q.want) == "table" and q.want or nil
   set_press(q.press)
   probe = type(q.probe) == "table" and num(q.probe[1]) and num(q.probe[2]) and { num(q.probe[1]), num(q.probe[2]) } or nil
+  device = q.device == true
   -- (a session seen the first time, when the plugin starts: what is in the file is old)
   if sid == nil then
     sid, done = q.sid, math.tointeger(tonumber(q.seq)) or 0
@@ -705,6 +709,12 @@ local function map_lines()
   -- (a timetable not there yet, the game still loading: read again next time)
   if #out > 0 then lines, lines_for = out, day end
   return out
+end
+
+-- whether Omsi-Hub's own on-board computer is there: Omsi-Hub runs (its file is there) and says
+-- the device asked for the state within the last seconds (the file's `device`)
+function M.device()
+  return on and device
 end
 
 -- every second, also while the game is busy and the tick waits (main.lua): that the game is

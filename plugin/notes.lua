@@ -57,8 +57,10 @@ end
 -- title, text, icon, colour and whether it stays until it is closed
 function M.list()
   local out = {}
+  -- (cut at the edge of a character: half of one would make the whole page invalid JSON)
+  local cut = require("hubjson").cut
   for k, n in ipairs(list) do
-    out[k] = { n = n.id, title = n.title:sub(1, 200), text = n.text:sub(1, 2000), icon = n.icon, color = n.color, sticky = n.sticky }
+    out[k] = { n = n.id, title = cut(n.title, 200), text = cut(n.text, 2000), icon = n.icon, color = n.color, sticky = n.sticky }
   end
   return out
 end

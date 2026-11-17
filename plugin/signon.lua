@@ -7,12 +7,16 @@
 --
 -- The stages: "signon" (the number and the code asked), "order" (the duty order to accept),
 -- "work" (signed on, the duty accepted). Without a pass in the assignment the driver is at work
--- at once, as with sign-on switched off in Omsi-Hub.
+-- at once, as with sign-on switched off in Omsi-Hub; so too when no on-board computer shows to
+-- sign on at (main.lua skips the sign-on then). The on-board computer shows the driver the pass
+-- (Omsi-Hub's server gives it to its own window only).
 
 local M = {}
 
 local pass = nil
 local wrong = false
+-- the driver got past the sign-on once on this drive (signed on, or skipped it)
+local past = false
 
 M.stage = "work"
 
@@ -29,7 +33,7 @@ end
 function M.try(number, code)
   if M.stage ~= "signon" or not pass then return true end
   if tostring(number or "") == pass.number and tostring(code or "") == pass.code then
-    M.stage, wrong = "order", false
+    M.stage, wrong, past = "order", false, true
   else
     wrong = true
   end
@@ -59,7 +63,12 @@ end
 
 -- the driver drives without the duty (the phone's "Drive without duty"): at work, no order
 function M.skip()
-  M.stage, wrong = "work", false
+  M.stage, wrong, past = "work", false, true
+end
+
+-- the driver is at the sign-on for the first time on this drive (not after signing off)
+function M.waiting()
+  return M.stage == "signon" and not past
 end
 
 -- the driver is at work (signed on, or no sign-on asked)

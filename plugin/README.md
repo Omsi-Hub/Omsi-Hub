@@ -20,7 +20,7 @@ the plugin through plain files (`crates/hub-game/src/bridge.rs`).
   (`duty_strip`), on time (`ontime`), the company's board parts and signing on (`company`,
   `signon`), the end-of-trip card (`card`), the notifications (`notes`: the company's notices,
   the control room's messages and instructions, the drive watch's offences, on-time alerts) - and
-  the on-board computer's commands (`start_duty`, `sign_on`, `accept_order`, `sign_off`, `part`,
+  the on-board computer's commands (`duty_start`, `sign_on`, `accept_order`, `sign_off`, `part`,
   `msg`, `note_close`, `strip_note`, `strip_check`, `card_close`) are carried out here. What the
   modules work out stays in the plugin: the control room's instructions carried out in the game,
   the closed stops given to openOMSI's own navigator (`duty.set_closed_stops`), the trip's

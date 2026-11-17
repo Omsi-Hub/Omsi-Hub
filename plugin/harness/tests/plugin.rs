@@ -200,7 +200,7 @@ fn an_assignment_of_an_earlier_day_is_not_taken() {
     }
     // (no duty taken, no company's board)
     assert!(h.state.borrow().started.is_empty());
-    assert!(sent(&h, "board").is_empty(), "{:?}", sent(&h, "board"));
+    assert!(sent(&h, "board").iter().all(|b| *b == json!({ "t": "board" })), "only cleared, as the drive begins: {:?}", sent(&h, "board"));
     assert_eq!(bridge::read_hello(&dir).map(|h| h.issued), Some(0));
 }
 

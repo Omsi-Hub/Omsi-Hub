@@ -261,14 +261,7 @@ end
 
 -- a text cut to the longest the company allows, at the edge of a character
 local function cut(text)
-  local n = math.tointeger(tonumber(crew and crew.text_max)) or 140
-  if #text <= n then return text end
-  local i = n
-  while i > 0 do
-    local b = text:byte(i + 1)
-    if b and b >= 0x80 and b < 0xC0 then i = i - 1 else break end
-  end
-  return text:sub(1, i)
+  return require("hubjson").cut(text, math.tointeger(tonumber(crew and crew.text_max)) or 140)
 end
 
 -- the handover note typed, left for the next driver
@@ -277,7 +270,8 @@ local function send_note()
   report("note", { template = note.template or "", text = note.text, bus_id = crew.bus })
   notify("sticky_note_2", tr("Note left"), tr("The next driver of bus %{bus} sees it", { bus = crew.bus_number or "" }))
   note = { template = nil, text = "" }
-  open = nil
+  -- (the note's own sheet closed; a walk-around open stays open)
+  if open == "note" then open = nil end
   return true
 end
 

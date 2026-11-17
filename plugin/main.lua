@@ -400,7 +400,7 @@ companion.setup({
     ibis_rule()
   end,
   -- (the on-board computer's commands)
-  start_duty = start_duty,
+  duty_start = start_duty,
   sign_off = function()
     -- (only at work: not while the driver still signs on or has the duty order to accept)
     if not signon.at_work() then return false end
@@ -566,6 +566,27 @@ accepted = function()
   ibis_rule()
   if has["duty.type_ibis"] and assignment.ibis ~= false then omsi.duty.type_ibis() end
 end
+
+-- signing on needs the on-board computer (Omsi-Hub's window, which Omsi-Hub's companion server
+-- says is there: companion.lua's `device`). Where none has been seen for SIGN_ON_WAIT seconds
+-- of a smoothly running game at the sign-on - the window cannot show (Wayland, exclusive full
+-- screen), or Omsi-Hub is not running - nobody could sign on: the driver is at work, as with
+-- sign-on switched off. Only before the driver first got past the sign-on.
+local SIGN_ON_WAIT = 20
+local no_device = 0
+omsi.every(1, function()
+  if not calm() or not signon.waiting() or companion.device() then
+    no_device = 0
+    return
+  end
+  no_device = no_device + 1
+  if no_device < SIGN_ON_WAIT then return end
+  no_device = 0
+  signon.skip()
+  omsi.log("[omsihub] no on-board computer seen in " .. SIGN_ON_WAIT .. " s: at work without signing on")
+  -- (in the bus: as when the order is accepted; not yet: the bus's arrival does it)
+  if not fn("has_vehicle") or omsi.has_vehicle() then accepted() else ibis_rule() end
+end, "sign-on without a device")
 
 omsi.on("stop", function()
   fleet.stop()

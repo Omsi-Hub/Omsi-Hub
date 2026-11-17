@@ -66,4 +66,16 @@ function M.fast(v)
   return encode(v, 0)
 end
 
+-- `text` cut to at most `n` bytes, at the edge of a character (UTF-8: never inside one, which
+-- would make the JSON it goes into invalid)
+function M.cut(text, n)
+  if #text <= n then return text end
+  local i = n
+  while i > 0 do
+    local b = text:byte(i + 1)
+    if b and b >= 0x80 and b < 0xC0 then i = i - 1 else break end
+  end
+  return text:sub(1, i)
+end
+
 return M
