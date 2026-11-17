@@ -187,15 +187,13 @@ once after every answer (and backs off 2 s → 10 s after errors). `after` omitt
     "keys": ["ticketprinter_button_ticket_1", "…"],
     "change_keys": []              // the change dispenser's triggers, where the bus has one
   },
-  // The driving parts, each as the plugin last sent it (its datagram without `t`; their shape
-  // is the plugin's, the on-board computer draws them). Each is absent when the plugin has
-  // not sent it yet or was not heard for 5 s.
-  "strip": { },                    // the duty strip: rows, checks, notes put on it
+  // The driving parts, each as the plugin last sent it (its datagram without `t`; their fields
+  // are under "The driving parts" below). Each is absent when the plugin has not sent it yet or
+  // was not heard for 5 s.
+  "strip": { },                    // the duty strip: the next break or relief, the checks, notes
   "ontime": { },                   // the on-time / delay display
-  "board": { },                    // the company's board: parts, status, coach, fares, contract;
-                                   // "hold": { "until": 29100, "left": 42 } while the control
-                                   // room's hold runs (game clock, s of the day; whole seconds)
-  "notes": [ ],                    // the trip's notes, all pages put together in order
+  "board": { },                    // the company's board: parts, status, coach, fares, contract
+  "notes": [ ],                    // the notifications, all pages put together in order
   "card": { },                     // the trip card; absent when none is open
   "features": { "ibis": true, "printer": true, "nav": true, "messages": true, "signon": true }
 }
@@ -203,6 +201,112 @@ once after every answer (and backs off 2 s → 10 s after errors). `after` omitt
 
 Every key may be missing or `null` where the game, the bus or the add-on does not know it; the
 app shows what it has and hides the rest.
+
+## The driving parts
+
+What the plugin reports while a drive runs, for the on-board computer (and any app that wants it).
+Each part is sent whole, and a list with nothing in it is left out. Times are the game's clock:
+`"hh:mm"` text for `from`, `to` and `time`, seconds where a field says so; `left` is whole minutes
+(seconds in `hold`). A part is absent when the plugin has nothing to say for it (no company's
+duty, or switched off).
+
+**`strip`** (`duty_strip.lua`)
+
+```jsonc
+{
+  "signed_on": true,               // the driver is at work on the company's duty
+  "piece": 1,                      // the part of the duty now (as the plugin counts it)
+  "relief_warning": false,         // a relief is due within the warning time
+  "can_note": true, "can_check": true,   // the driver may write a note / do the walk-around
+  "text_max": 140,                 // the longest note, characters
+  "next_break": { "at": "Bismarckplatz", "from": "10:15", "to": "10:30", "under_way": false, "left": 42 },
+  "next_relief": { "kind": "relief", "at": "Rathaus", "from": "11:02", "left": 90, "soon": false },
+  "ends": { "at": "Depot", "from": "16:40" },    // where and when the duty ends
+  "changes": ["…"],                // what changed on the duty (texts)
+  "fuel": { "level": 0.31, "kind": "diesel", "low": false, "to_depot": false },
+  "notes_in": ["…"],               // the relief's handover notes (texts)
+  "templates": [ { "id": "t1", "text": "…" } ],  // the note templates
+  "checks": [ { "id": "c1", "text": "…" } ],     // the walk-around's checks
+  "open": "note",                  // "note" | "check" | absent: what the driver has open
+  "note": { "template": "t1", "text": "…" },     // with open = "note": what is chosen and typed
+  "check": { "ticked": ["c1"], "text": "…" },    // with open = "check"
+  "more": { "checks": 3 }          // lists cut to fit a datagram: how many items went
+}
+```
+
+`more.<list>` names a list of `checks`, `templates`, `notes_in` or `changes`: the plugin cuts the
+longest list to its first half (and the texts to 80 characters) until the datagram fits in 8000
+bytes, and counts the items that went.
+
+**`ontime`** (`ontime.lua`)
+
+```jsonc
+{
+  "delay": 120,                    // seconds late, early negative
+  "tone": "early",                 // "early" | "on_time" | "behind" | "late"
+  "early_from": 60, "late_from": 360,   // the seconds where the tone changes
+  "headway": {                     // where the line is frequent
+    "planned": 600,                // s
+    "ahead": { "bus": "2604", "secs": 240 },
+    "behind": { "bus": "2611", "secs": 360 },
+    "advice": { "kind": "hold", "secs": 30, "bus": "2604" }   // "hold" | "close_behind"
+  },
+  "connections": [ { "stop": "Rathaus", "what": "Tram 4", "time": "10:42", "late": 0,
+                     "onward": false, "max_hold": 120,
+                     "status": { "kind": "ok", "m": 3, "until": "10:41" } } ],
+  "ahead": { "stop": "Rathaus", "via": "Ringstraße" },   // the diversion ahead
+  "closed": ["Kunsthalle"]         // the day's closed stops
+}
+```
+
+**`board`** (`company.lua` `build`, with `hold` from `main.lua`)
+
+```jsonc
+{
+  "parts": { "coach": true, "strip": true, "dispatch": true, "fares": true, "contract": true },
+  "can_start": false,              // the duty may be started now (signed on, no duty, a line)
+  "can_sign_off": true,
+  "status": "On duty: trip 3 of 13",   // or "Not started yet"
+  "coach": { "text": "Hold 0:42 here · leave at 10:15", "note": "…", "tone": "early", "kind": "hold" },
+  "strip": ["Break 10:15–10:30 · Bismarckplatz", "Sign off 16:40 · Depot"],  // only when the
+                                   // plugin's own duty strip is off
+  "fares": { "text": "Fare box …", "trip": 12, "duty": 80, "aboard": 23 },
+  "contract": { "text": "…", "kind": "gross", "rag": "green", "early": 1, "late": 5 },
+  "hold": { "until": 29100, "left": 42 }   // while the control room's hold runs (game clock, s
+                                   // of the day; `left` whole seconds); absent otherwise
+}
+```
+
+A part that is switched off or has nothing to say (`coach`, `strip`, `fares`, `contract`) is left
+out.
+
+**`notes`** (`notes.lua` `list`): the notifications now, newest first.
+
+```jsonc
+[ { "n": 41, "title": "Control", "text": "…", "icon": "campaign", "color": "#F58620", "sticky": false } ]
+```
+
+`n` is the notification's number (`note_close` takes it); title ≤ 200 and text ≤ 2000 characters.
+
+**`card`** (`card.lua` `facts`): the end-of-trip card; the datagram `{"t":"card"}` alone says it
+was closed.
+
+```jsonc
+{
+  "open": true, "saved": true,
+  "run": {                         // the trip's record, numbers whole
+    "visits": [ { "name": "…", "arr": 30240, "dep": 30240, "arrived": 30251, "left": 30262, "delay": 11 } ],
+    "offences": [ { "kind": "speeding", "at": 31020, "speed": 62, "limit": 50, "red_for": 1.4, "fine": 40 } ],
+    "more": { "visits": 12 }       // the stops cut after the first 60: how many went
+    // … and the trip's other counters (the plugin's `trip.finish`)
+  }
+  // … and what `career.evaluate` judged: grade, stars, score, parts, experience
+}
+```
+
+`run.more.visits` counts the stops left off the card (the plugin keeps the first 60, and cuts
+`visits` and then `offences` further, the same way as for `strip`, when the datagram is still over
+8000 bytes).
 
 ## Map
 
