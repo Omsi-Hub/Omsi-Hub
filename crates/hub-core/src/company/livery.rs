@@ -8,8 +8,9 @@
 //!   colours, the proofs - €2,500. Saved again under its name (a change) a fifth of that.
 //! - *The painting* (`paint_cost`): a foil wrap or a repaint of a 12 m bus in the company's
 //!   livery €4,000 - a midibus three quarters of that, an articulated bus half again, a
-//!   double-decker 1.4 times. The bus is in the workshop for a day (`depot::JobKind::Paint`),
-//!   and wears the livery from then on, in the game too (`Vehicle::house_livery`).
+//!   double-decker 1.4 times. Paid at once, and the bus wears the livery from then on, in the
+//!   game too (`Vehicle::house_livery`) - Luc: "meteen toepassen". Every bus of the design's
+//!   model can be painted in it in one go (`paint_all`), each at its painting's price.
 
 use super::depot;
 use super::model::{BookingKind, BusSize, Cents, Company, GameMode, Vehicle};
@@ -110,22 +111,68 @@ pub fn save_design(c: &mut Company, name: &str, bus: &str) -> Result<Cents, &'st
     Ok(cost)
 }
 
-/// Paint a bus of the fleet in one of the company's designs: a day in the workshop (from
-/// tomorrow, when a bay is free), paid when the work starts. Returns the workshop's job.
-pub fn paint(c: &mut Company, vehicle: u32, name: &str) -> Result<u32, &'static str> {
+/// Whether a bus wears the company's livery `name` already.
+pub fn wears(v: &Vehicle, name: &str) -> bool {
+    v.house_livery.as_deref().is_some_and(|h| h.trim().eq_ignore_ascii_case(name.trim())) && v.livery.trim().eq_ignore_ascii_case(name.trim())
+}
+
+/// Paint a bus of the fleet in one of the company's designs, at once: its painting booked and
+/// the bus in the livery from now on (a painting of it still waiting in the workshop dropped).
+/// Returns what was booked.
+pub fn paint(c: &mut Company, vehicle: u32, name: &str) -> Result<Cents, &'static str> {
     let Some(v) = c.vehicle(vehicle).cloned() else { return Err("This bus is not in the fleet.") };
+    if !v.held_on(&c.date) {
+        return Err("This bus is not in the fleet.");
+    }
     let Some(d) = design(c, name).cloned() else { return Err("The company has no such livery.") };
     if !same_file(&d.bus, &v.bus) {
         return Err("This livery was made for another bus.");
     }
-    if c.site.job_of(vehicle).is_some() {
-        return Err("The workshop has a job for this bus already.");
-    }
-    if v.house_livery.as_deref().is_some_and(|h| h.trim().eq_ignore_ascii_case(name.trim())) && v.livery.trim().eq_ignore_ascii_case(name.trim()) {
+    if wears(&v, name) {
         return Err("The bus wears this livery already.");
     }
     let cost = paint_cost(c, &v);
-    depot::order_paint(c, vehicle, &d.name, cost)
+    if !c.can_pay(cost) {
+        return Err("Not enough cash.");
+    }
+    c.site.jobs.retain(|j| !(j.vehicle == vehicle && j.kind == depot::JobKind::Paint && j.started.is_none()));
+    c.book(BookingKind::Livery, -cost, format!("{} {} ({})", v.number, v.name, depot::JobKind::Paint.label()), false);
+    if let Some(x) = c.fleet.iter_mut().find(|x| x.id == vehicle) {
+        x.livery = d.name.clone();
+        x.house_livery = Some(d.name);
+    }
+    Ok(cost)
+}
+
+/// The buses of the fleet the design `name` is for (its bus model) that do not wear it yet.
+pub fn unpainted(c: &Company, name: &str) -> Vec<u32> {
+    let Some(d) = design(c, name) else { return Vec::new() };
+    c.fleet.iter().filter(|v| v.held_on(&c.date) && same_file(&d.bus, &v.bus) && !wears(v, name)).map(|v| v.id).collect()
+}
+
+/// What painting all of them costs.
+pub fn paint_all_cost(c: &Company, name: &str) -> Cents {
+    unpainted(c, name).iter().filter_map(|id| c.vehicle(*id)).map(|v| paint_cost(c, v)).sum()
+}
+
+/// Paint every bus of the design's model in it at once (`unpainted`): all or none - refused
+/// when the cash is not enough for all of them. Returns how many were painted and the cost.
+pub fn paint_all(c: &mut Company, name: &str) -> Result<(usize, Cents), &'static str> {
+    if design(c, name).is_none() {
+        return Err("The company has no such livery.");
+    }
+    let buses = unpainted(c, name);
+    if buses.is_empty() {
+        return Err("Every bus of this type wears this livery already.");
+    }
+    if !c.can_pay(paint_all_cost(c, name)) {
+        return Err("Not enough cash.");
+    }
+    let mut cost = 0;
+    for id in &buses {
+        cost += paint(c, *id, name)?;
+    }
+    Ok((buses.len(), cost))
 }
 
 #[cfg(test)]
@@ -167,31 +214,61 @@ mod tests {
     }
 
     #[test]
-    fn a_bus_is_painted_in_the_workshop() {
+    fn a_bus_is_painted_at_once() {
         let mut c = company(GameMode::Normal);
         let id = c.fleet[0].id;
         save_design(&mut c, "Stadtbus Orange", "Vehicles/Citaro/Citaro.bus").unwrap();
         save_design(&mut c, "Other", "Vehicles/MAN/Lion.bus").unwrap();
         assert_eq!(paint(&mut c, id, "Other"), Err("This livery was made for another bus."));
         assert_eq!(paint(&mut c, id, "Nothing"), Err("The company has no such livery."));
-        let today = c.date.clone();
-        let job = paint(&mut c, id, "Stadtbus Orange").unwrap();
-        let j = c.site.jobs.iter().find(|j| j.id == job).cloned().unwrap();
-        assert_eq!((j.kind, j.livery.as_deref(), j.cost), (depot::JobKind::Paint, Some("Stadtbus Orange"), 4_000_00));
-        assert_eq!(paint(&mut c, id, "Stadtbus Orange"), Err("The workshop has a job for this bus already."));
-        // (the work starts tomorrow, when a bay is free: then it is paid, and the bus wears the
-        // livery)
-        if j.started.is_none() {
-            c.date = super::super::dates::add(&today, 1);
-            depot::after_day(&mut c, &today);
-        }
+        // (a painting a company saved earlier still has waiting in the workshop is not needed any
+        // more)
+        depot::order_paint(&mut c, id, "Stadtbus Orange", 4_000_00).unwrap();
+        let cash = c.cash;
+        assert_eq!(paint(&mut c, id, "Stadtbus Orange"), Ok(4_000_00));
+        // paid, and the bus in the livery now - not tomorrow, not in the workshop
         let v = c.vehicle(id).unwrap();
         assert_eq!((v.livery.as_str(), v.house_livery.as_deref()), ("Stadtbus Orange", Some("Stadtbus Orange")));
-        assert!(c.ledger.iter().any(|b| b.kind == BookingKind::Livery && b.amount == -4_000_00 && b.text.contains("Painting")));
-        assert!(v.in_workshop(&super::super::dates::add(&today, 1)));
+        assert_eq!(c.cash, cash - 4_000_00);
+        assert!(c.ledger.last().is_some_and(|b| b.kind == BookingKind::Livery && b.amount == -4_000_00 && b.text.contains("Painting")));
+        assert!(!v.in_workshop(&c.date) && c.site.jobs.is_empty());
         // painted: not again
-        let mut later = c.clone();
-        later.site.jobs.clear();
-        assert_eq!(paint(&mut later, id, "Stadtbus Orange"), Err("The bus wears this livery already."));
+        assert_eq!(paint(&mut c, id, "Stadtbus Orange"), Err("The bus wears this livery already."));
+        // not without the money
+        save_design(&mut c, "Blue", "Vehicles/Citaro/Citaro.bus").unwrap();
+        c.cash = 100_00;
+        assert_eq!(paint(&mut c, id, "Blue"), Err("Not enough cash."));
+        assert_eq!(c.vehicle(id).unwrap().livery, "Stadtbus Orange");
+    }
+
+    #[test]
+    fn every_bus_of_the_type_is_painted_in_one_go() {
+        let mut c = company(GameMode::Normal);
+        let citaro = c.fleet[0].clone();
+        let lion = MarketBus { file: "Vehicles/MAN/Lion.bus".into(), name: "Lion".into(), kind: BusKind { size: BusSize::Solo, drive: Drive::Diesel }, ..Default::default() };
+        let mut buy = |file: &str| {
+            let bus = MarketBus { file: file.into(), name: "x".into(), kind: citaro.kind, ..Default::default() };
+            market::buy_new(&mut c, &bus, Payment::Cash, "").unwrap();
+        };
+        buy("Vehicles/Citaro/Citaro.bus");
+        buy("vehicles\\citaro\\citaro.bus");
+        market::buy_new(&mut c, &lion, Payment::Cash, "").unwrap();
+        save_design(&mut c, "Stadtbus Orange", "Vehicles/Citaro/Citaro.bus").unwrap();
+        // the first painted already: the two others of its model are left, not the Lion
+        paint(&mut c, citaro.id, "Stadtbus Orange").unwrap();
+        assert_eq!(unpainted(&c, "Stadtbus Orange").len(), 2);
+        assert_eq!(paint_all_cost(&c, "Stadtbus Orange"), 8_000_00);
+        // all or none: not one painted without the money for both
+        let mut poor = c.clone();
+        poor.cash = 5_000_00;
+        assert_eq!(paint_all(&mut poor, "Stadtbus Orange"), Err("Not enough cash."));
+        assert_eq!(unpainted(&poor, "Stadtbus Orange").len(), 2);
+        let cash = c.cash;
+        assert_eq!(paint_all(&mut c, "Stadtbus Orange"), Ok((2, 8_000_00)));
+        assert_eq!(c.cash, cash - 8_000_00);
+        assert!(c.fleet.iter().filter(|v| same_file(&v.bus, "Vehicles/Citaro/Citaro.bus")).all(|v| wears(v, "Stadtbus Orange")));
+        assert!(!wears(c.fleet.iter().find(|v| v.bus.contains("Lion")).unwrap(), "Stadtbus Orange"));
+        assert_eq!(paint_all(&mut c, "Stadtbus Orange"), Err("Every bus of this type wears this livery already."));
+        assert_eq!(paint_all(&mut c, "Nothing"), Err("The company has no such livery."));
     }
 }

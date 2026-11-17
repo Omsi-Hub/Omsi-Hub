@@ -7,6 +7,14 @@ merged but in no build yet is under Unreleased.
 
 ### Fixed
 
+- **A livery designed for a bus of your company is on the bus at once, and the studio says so**:
+  before, paying in the livery studio kept you in the studio with a short note in its corner, and
+  the bus only went to the workshop the next day to be painted - so it looked as if nothing was
+  saved. Now the design and the painting are paid when you save, the bus wears the livery at once
+  (in the game too), and the studio takes you back to the bus with a message of what was paid and
+  painted. That message, and the bus's window, offer to **paint all the other buses of the same
+  type in it too**, each at its painting's price, all at once.
+
 - **In a company's duty only your company's buses and lines are in the game**: before, the map's
   own buses and the lines of your other companies kept driving, and the company's own buses could
   even be taken off the road. Omsi-Hub now gives the game the company's day before it starts:

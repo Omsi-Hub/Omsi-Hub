@@ -84,7 +84,8 @@ export function openDepotEditor({ key = '', fromLines = false } = {}) {
 /** The livery studio on `bus` in `paint` (none: it asks for a bus; 'chosen': the drive's); for
  * the bus company `company` (its id), its bus `vehicle` (none: a design for the dealer's bus).
  * For the company's pages: `back` (the page the studio goes back to) and
- * `onCompanyChanged(id)` (the livery saved: the company's file written). The studio is our
+ * `onCompanyChanged(id)` (the livery saved: the company's file written), `onSaved(done)` (saved
+ * and paid for the company: the studio goes back, `done.popup` says what was done). The studio is our
  * game-drawn launcher's own, run by the game program (`livery.js`). */
 export function openLivery(opts = {}) {
   S.ed.liveryOpen = { ...opts, at: Date.now() };
