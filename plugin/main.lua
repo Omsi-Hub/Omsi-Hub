@@ -202,11 +202,9 @@ omsi.data.board_parts = omsi.data.board_parts or {}
 local function parts()
   return company.parts(omsi.data.board_parts)
 end
--- (signing on is out for now (Luc, 2026-10-25: "Het aanmelden ... mogen er voor nu wel even
--- uit"): the driver is at work at once, the duty's codes in the IBIS as without a pass)
-local SIGN_ON = false
--- (its translator always: the panel's heading is its too; the pass only with signing on)
-signon.setup(tr, SIGN_ON and company_duty() and assignment or nil)
+-- (signing on: the on-board computer's unit, the panel's too; a duty with no pass is at work at once)
+-- (its translator always: the panel's heading is its too; the pass only with a company duty)
+signon.setup(tr, company_duty() and assignment or nil)
 -- (the on-time card: punctuality, headway, connections, diversions - `ontime.lua`, its own)
 local ontime = require("ontime")
 local fleet = require("fleet")
@@ -457,7 +455,8 @@ companion.setup({
   -- (the on-board computer's commands: the panels' own buttons do the same)
   start_duty = start_duty,
   sign_off = function()
-    if not (signon.signed() or signon.at_work()) then return false end
+    -- (signed on, as far as the pass goes: not while the driver still has to enter it)
+    if signon.stage == "signon" then return false end
     return strip.sign_off()
   end,
   part = function(id, on)

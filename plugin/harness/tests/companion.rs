@@ -198,7 +198,6 @@ fn commands_in_the_file_when_the_game_starts_are_old_and_a_new_session_starts_ag
 }
 
 #[test]
-#[ignore = "signing on is out for now (main.lua's SIGN_ON)"]
 fn the_driver_signs_on_and_accepts_the_duty_on_the_phone() {
     let dir = installed("signon");
     let a = Assignment {
@@ -613,6 +612,47 @@ fn the_computer_starts_the_duty_and_signs_off() {
     assert_eq!(sent(&h, "strip").last().unwrap()["open"], "check");
     command(&dir, &mut h, json!([{ "seq": 3, "do": "sign_off" }]));
     assert_eq!(acks(&h).last().unwrap(), &(3, true, String::new()), "already open: still fine");
+}
+
+fn passed_assignment() -> Assignment {
+    Assignment { personnel: Some(Personnel { number: "482913".into(), code: "5821".into() }), auto_start: true, ..company_assignment() }
+}
+
+#[test]
+fn a_company_duty_with_a_pass_starts_at_sign_on() {
+    let dir = installed("passed");
+    bridge::write_assignment(&dir, &passed_assignment()).unwrap();
+    queue(&dir, 5, json!([]));
+    let mut h = Harness::load(&dir, game()).unwrap();
+    frames(&mut h, 3);
+    assert_eq!(sent(&h, "live").last().unwrap()["signon"], "signon");
+    assert!(!h.state.borrow().ibis.contains(&"auto on".to_string()), "not at work: the IBIS' own codes wait");
+    assert!(h.state.borrow().started.is_empty());
+}
+
+#[test]
+fn a_regular_drive_is_at_work_at_once() {
+    let dir = installed("regular");
+    queue(&dir, 5, json!([]));
+    let mut h = Harness::load(&dir, game()).unwrap();
+    frames(&mut h, 3);
+    assert_eq!(sent(&h, "live").last().unwrap()["signon"], "work");
+}
+
+#[test]
+fn the_driver_signs_on_works_and_signs_off() {
+    let dir = installed("signoff-after-signon");
+    bridge::write_assignment(&dir, &passed_assignment()).unwrap();
+    queue(&dir, 5, json!([]));
+    let mut h = Harness::load(&dir, game()).unwrap();
+    frames(&mut h, 3);
+    command(&dir, &mut h, json!([{ "seq": 1, "do": "sign_off" }]));
+    assert_eq!(acks(&h).last().unwrap(), &(1, false, "not_now".to_string()), "not signed on yet");
+    command(&dir, &mut h, json!([{ "seq": 2, "do": "sign_on", "number": "482913", "code": "5821" }, { "seq": 3, "do": "accept_order" }]));
+    assert_eq!(sent(&h, "live").last().unwrap()["signon"], "work");
+    assert_eq!(h.state.borrow().started.len(), 1);
+    command(&dir, &mut h, json!([{ "seq": 4, "do": "sign_off" }]));
+    assert_eq!(acks(&h).last().unwrap(), &(4, true, String::new()));
 }
 
 #[test]
