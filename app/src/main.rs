@@ -16,8 +16,12 @@
 //! new version. Without a public key there, the plugin is not used and the offer links to the
 //! release's page (docs/UPDATES.md).
 //!
-//! The phone and tablet companion's server (`hub_api::companion`) starts with the app when the
-//! player has it on.
+//! The phone and tablet companion's server (`hub_api::companion`) starts with the app, on this
+//! computer always and for the home network when the player has it on.
+//!
+//! The on-board computer (`boordcomputer`): a window of its own over the game while a drive's
+//! game runs, with the Companion's `/device` screen from that server; its page may call
+//! `boordcomputer_size {width}` and `boordcomputer_drop` (capabilities/boordcomputer.json).
 //!
 //! `OMSIHUB_SELFTEST=1` runs the page's selftests and ends with their report (exit code 0 when
 //! all passed, 1 when one failed, 2 when the page gave none within a minute);
@@ -26,10 +30,12 @@
 //! the data folder is then a temporary one unless `OMSIHUB_DATA_DIR` says another.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod boordcomputer;
+
 use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter, Listener, Manager};
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
 use tauri_plugin_updater::UpdaterExt;
@@ -322,7 +328,9 @@ fn main() {
                 responder.respond(response.unwrap_or_default());
             });
         })
-        .invoke_handler(tauri::generate_handler![call, call_bytes, pick_folder, pick_file, open_url, open_path, selftest_report])
+        // (each one allowed to a window in permissions/app.toml: the main window's, and the on-board
+        // computer's page)
+        .invoke_handler(tauri::generate_handler![call, call_bytes, pick_folder, pick_file, open_url, open_path, selftest_report, boordcomputer::boordcomputer_size, boordcomputer::boordcomputer_drop])
         .setup(move |app| {
             let mut w = tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App("index.html".into())).title("Omsi-Hub").inner_size(1280.0, 820.0).min_inner_size(1024.0, 680.0).center();
             if selftest {
@@ -351,6 +359,22 @@ fn main() {
             // (the companion's server: on this computer for the on-board computer, and for the
             // phones and tablets when the player has them on)
             hub_api::companion::start_always();
+            // (the on-board computer over the game while a drive's game runs: `boordcomputer`)
+            let h = app.handle().clone();
+            app.listen("game-started", move |e| {
+                let pid = serde_json::from_str::<Value>(e.payload()).ok().and_then(|v| v["pid"].as_u64()).and_then(|p| u32::try_from(p).ok());
+                let h = h.clone();
+                // (off the thread that told it: the window is built on the main thread meanwhile)
+                std::thread::spawn(move || match pid {
+                    Some(pid) => boordcomputer::open(&h, pid),
+                    None => hub_core::log_line("boordcomputer: not opened, game-started named no game"),
+                });
+            });
+            let h = app.handle().clone();
+            app.listen("game-ended", move |_| {
+                let h = h.clone();
+                std::thread::spawn(move || boordcomputer::close(&h));
+            });
             let _ = app.get_webview_window("main");
             Ok(())
         })

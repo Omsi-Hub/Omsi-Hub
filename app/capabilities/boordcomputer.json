@@ -1,0 +1,10 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "boordcomputer",
+  "description": "The on-board computer's window: its page, served by Omsi-Hub's own companion server on this computer (any port), may size and drop the device and drag its window - nothing else",
+  "windows": ["boordcomputer"],
+  "remote": {
+    "urls": ["http://127.0.0.1:*"]
+  },
+  "permissions": ["allow-boordcomputer", "core:window:allow-start-dragging"]
+}

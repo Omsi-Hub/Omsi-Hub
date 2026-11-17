@@ -1,0 +1,13 @@
+# The app's own commands, allowed to a window by a capability (capabilities/*.json). With this
+# file the app has an ACL manifest, so every command of `generate_handler!` (src/main.rs) must be
+# in one of these, or no window may call it.
+
+[[permission]]
+identifier = "allow-main-window"
+description = "The main window's commands: hub-api's calls, the system's pickers, browser and file manager, and the selftest's report"
+commands.allow = ["call", "call_bytes", "pick_folder", "pick_file", "open_url", "open_path", "selftest_report"]
+
+[[permission]]
+identifier = "allow-boordcomputer"
+description = "The on-board computer's page: the device's size and the size grip let go"
+commands.allow = ["boordcomputer_size", "boordcomputer_drop"]
