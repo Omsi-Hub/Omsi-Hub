@@ -431,13 +431,19 @@ pub struct TourDiff {
     pub added: Vec<String>,
     pub gone: Vec<String>,
     pub moved: Vec<(String, String)>,
+    /// The changed tours whose number another day group's tour has now (a moved tour's old
+    /// number among them): the roster's bus and drivers of that number were another tour's.
+    pub regrouped: Vec<String>,
 }
 
 impl TourDiff {
-    /// The tours whose buses and drivers are given anew: the changed and the gone (a moved
-    /// tour's old number among them: that number is another tour's now, or none's).
+    /// The tours whose buses and drivers are given anew: the gone, and the changed whose
+    /// number is another day group's tour now. A tour that runs on the same days under its
+    /// number, retimed or with a trip more or less, keeps its bus and its drivers duty by
+    /// duty, as the roster has them (a player's report: departures moved in RosterFlow's
+    /// Timeplan left every tour of those days without a bus and a driver from the change's day).
     pub fn replan(&self) -> Vec<String> {
-        self.changed.iter().chain(self.gone.iter()).cloned().collect()
+        self.regrouped.iter().chain(self.gone.iter()).cloned().collect()
     }
 }
 
@@ -453,7 +459,12 @@ pub fn tour_diff(old: &LineDesign, new: &LineDesign) -> TourDiff {
     for t in &b {
         match a.iter().find(|x| x.number == t.number) {
             Some(x) if same(x, t) => d.kept.push(t.number.clone()),
-            Some(_) => d.changed.push(t.number.clone()),
+            Some(x) => {
+                d.changed.push(t.number.clone());
+                if x.day != t.day {
+                    d.regrouped.push(t.number.clone());
+                }
+            }
             None => d.added.push(t.number.clone()),
         }
     }
@@ -2759,6 +2770,31 @@ mod tests {
         assert!(d.kept.is_empty() && d.replan().contains(&"3".to_string()));
         // nothing changed: nothing moved
         assert!(tour_diff(&old, &old).moved.is_empty());
+    }
+
+    #[test]
+    fn a_tour_only_retimed_keeps_its_bus_and_drivers() {
+        // (a player's report: an own line's departures moved in RosterFlow's Timeplan, and from
+        // the day the change began every tour of those days had no bus and no driver)
+        let mut reg = Registry::default();
+        let id = line(&mut reg);
+        let l = reg.line_mut(id).unwrap();
+        l.days[0] = DayPattern { days: DAY_GROUPS[0].1, first: 360.0, last: 600.0, headway: 30.0, layover: 5.0, bands: Vec::new(), on: true };
+        let old = l.clone();
+        // every working day's departure five minutes later: the same tours, retimed
+        let mut later = old.clone();
+        later.days[0].first = 365.0;
+        later.days[0].last = 605.0;
+        let d = tour_diff(&old, &later);
+        assert_eq!(tour_plan(&old).len(), tour_plan(&later).len());
+        assert!(!d.changed.is_empty() && d.gone.is_empty(), "{d:?}");
+        assert!(d.replan().is_empty(), "{d:?}");
+        // a tour gone is planned anew still, and one whose number another day's tour has now
+        let mut longer = old.clone();
+        longer.days[0].layover = 30.0;
+        let d = tour_diff(&old, &longer);
+        assert!(d.replan().contains(&"3".to_string()), "{d:?}");
+        assert!(!d.replan().contains(&"1".to_string()), "{d:?}");
     }
 
     #[test]

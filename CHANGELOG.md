@@ -7,6 +7,15 @@ merged but in no build yet is under Unreleased.
 
 ### Fixed
 
+- **A line's tours keep their buses and drivers when you move its departures**: before, changing
+  the times of a line's trips in RosterFlow's Timeplan (or in the line editor) took the bus and
+  every driver off each tour it touched, on every day of the week - for your own lines from the
+  day the new timetable began - and nothing planned them again, so those duties could not be
+  driven, by you or by the company's drivers. Now a tour that still runs on the same days keeps
+  its bus and its drivers, duty by duty. Only a tour that is gone, or whose number belongs to
+  another day's tour now, is planned anew, and a duty the new times add waits for a driver in
+  RosterFlow.
+
 - **A livery designed for a bus of your company is on the bus at once, and the studio says so**:
   before, paying in the livery studio kept you in the studio with a short note in its corner, and
   the bus only went to the workshop the next day to be painted - so it looked as if nothing was
