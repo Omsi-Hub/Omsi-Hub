@@ -41,6 +41,8 @@ local told = {}
 local fuel = { level = nil, low = false, most = nil, told = false }
 local fault = { base = nil, at = -FAULT_EVERY, clock = 0 }
 local look = 0
+-- whether the driver is at work (signed on, or not needing to)
+local at_work = false
 
 -- `translate` the plugin's texts, `c` the assignment's crew (nil: not a company's duty),
 -- `send(kind, fields)` a report to Omsi-Hub, `say(icon, title, text)` a notification
@@ -80,30 +82,30 @@ local function minute()
   return (s or 0) / 60
 end
 
-local function until_text(m, now)
-  local left = math.max(math.ceil(m - now), 0)
+-- "in 5 min" for `left` whole minutes to go
+local function until_text(left)
   if left >= 60 then return tr("in %{h} h %{m} min", { h = left // 60, m = left % 60 }) end
   return tr("in %{m} min", { m = left })
 end
 
 -- --- what the duty looks like now ---------------------------------------------------------------
 
--- the piece under way at minute `now`: its text and colour
+-- the piece under way at minute `now`: its text, its kind and its tone
 local function piece(now)
   local rows = crew.rows
   local first, last = rows[1], rows[#rows]
   if first and now < first.from then
-    return tr("Sign on at %{place} at %{time}", { place = first.at, time = hhmm(first.from) }), DIM
+    return { kind = "sign_on", tone = "dim", text = tr("Sign on at %{place} at %{time}", { place = first.at, time = hhmm(first.from) }) }
   end
   for _, r in ipairs(rows) do
     if now >= r.from and now < math.max(r.to, r.from + 1) then
-      if r.kind == "trip" and r.empty then return tr("Empty run to %{place} until %{time}", { place = r.to_place, time = hhmm(r.to) }), DIM end
-      if r.kind == "trip" then return tr("Line %{line} to %{place} until %{time}", { line = r.line, place = r.to_place, time = hhmm(r.to) }), GREEN end
-      if r.kind == "break" then return tr("Break at %{place} until %{time}", { place = r.at, time = hhmm(r.to) }), AMBER end
+      if r.kind == "trip" and r.empty then return { kind = "empty", tone = "dim", text = tr("Empty run to %{place} until %{time}", { place = r.to_place, time = hhmm(r.to) }) } end
+      if r.kind == "trip" then return { kind = "trip", tone = "good", text = tr("Line %{line} to %{place} until %{time}", { line = r.line, place = r.to_place, time = hhmm(r.to) }) } end
+      if r.kind == "break" then return { kind = "break", tone = "warn", text = tr("Break at %{place} until %{time}", { place = r.at, time = hhmm(r.to) }) } end
     end
   end
-  if last and now >= last.from then return tr("Duty finished"), GREEN end
-  return tr("On duty"), GREEN
+  if last and now >= last.from then return { kind = "finished", tone = "good", text = tr("Duty finished") } end
+  return { kind = "duty", tone = "good", text = tr("On duty") }
 end
 
 -- the next break (or the one under way) after minute `now`
@@ -219,43 +221,95 @@ local function check_form(children)
   } })
 end
 
--- the strip's elements at minute `now`
-function M.rows(now)
-  local children = {}
-  local function add(x) children[#children + 1] = x end
-  local text, color = piece(now)
-  add({ type = "row", children = {
-    { type = "icon", name = "badge", color = ACCENT },
-    { type = "text", text = text, weight = "bold", color = color, grow = true },
-  } })
+-- --- the strip as data ----------------------------------------------------------------------------
+
+local TONE = { dim = DIM, good = GREEN, warn = AMBER }
+
+-- (the minutes to go until minute `m`, whole, none under 0)
+local function minutes_to(m, now)
+  return math.max(math.ceil(m - now), 0)
+end
+
+-- the strip's facts at minute `now`, plain data (the strip's elements and the on-board computer
+-- both read them; a list with nothing in it is left out): nil when the strip is off (no
+-- company's duty, or another strip has the place)
+local function facts_at(now)
+  if not (crew and enabled) then return nil end
+  local out = {
+    signed_on = at_work, piece = piece(now), relief_warning = false,
+    can_note = true, can_check = true, text_max = tonumber(crew.text_max) or 140,
+  }
   local b = next_break(now)
   if b then
-    local when = b.from <= now and tr("now, until %{time}", { time = hhmm(b.to) }) or (hhmm(b.from) .. " · " .. until_text(b.from, now))
-    add(line("coffee", tr("Next break"), b.at .. "  " .. when))
+    out.next_break = { at = b.at or "", from = hhmm(b.from), to = hhmm(b.to), under_way = b.from <= now, left = minutes_to(b.from, now) }
   end
   local r = next_relief(now)
   if r then
     local soon = r.from - now <= RELIEF_WARN
-    add(line("swap_horiz", tr("Next relief"), r.at .. "  " .. hhmm(r.from) .. " · " .. until_text(r.from, now), soon and AMBER or nil))
-    local key = r.kind .. hhmm(r.from)
-    if soon and not told[key] then
-      told[key] = true
-      notify("swap_horiz", tr("Relief due"), tr("At %{place} at %{time}", { place = r.at, time = hhmm(r.from) }))
-    end
+    out.next_relief = { kind = r.kind, at = r.at or "", from = hhmm(r.from), left = minutes_to(r.from, now), soon = soon }
+    out.relief_warning = soon
   end
   local last = crew.rows[#crew.rows]
-  if last then add(line("flag", tr("End of duty"), hhmm(last.from) .. "  " .. (last.at or ""))) end
-  for _, ch in ipairs(crew.changes or {}) do
+  if last then out.ends = { at = last.at or "", from = hhmm(last.from) } end
+  if #(crew.changes or {}) > 0 then out.changes = { table.unpack(crew.changes) } end
+  if fuel.level then
+    out.fuel = { level = math.floor(fuel.level * 1000 + 0.5) / 1000, kind = fuel.kind, low = fuel.low == true, to_depot = fuel.low == true }
+  end
+  if #(crew.notes or {}) > 0 then out.notes_in = { table.unpack(crew.notes) } end
+  local templates, checks = {}, {}
+  for _, t in ipairs(crew.templates or {}) do templates[#templates + 1] = { id = t[1], text = t[2] } end
+  for _, k in ipairs(crew.checks or {}) do checks[#checks + 1] = { id = k[1], text = k[2] } end
+  if #templates > 0 then out.templates = templates end
+  if #checks > 0 then out.checks = checks end
+  -- (what the driver has open, and what is ticked and typed so far)
+  if open == "note" then
+    out.open = "note"
+    out.note = { template = note.template, text = note.text }
+  elseif open == "check" then
+    out.open = "check"
+    local ticked = {}
+    for id in pairs(check.ticked) do ticked[#ticked + 1] = id end
+    table.sort(ticked)
+    out.check = { ticked = #ticked > 0 and ticked or nil, text = check.text }
+  end
+  return out
+end
+
+-- the strip's facts now
+function M.facts()
+  return facts_at(minute())
+end
+
+-- the strip's elements for its facts `f`
+function M.rows(f)
+  local children = {}
+  local function add(x) children[#children + 1] = x end
+  add({ type = "row", children = {
+    { type = "icon", name = "badge", color = ACCENT },
+    { type = "text", text = f.piece.text, weight = "bold", color = TONE[f.piece.tone], grow = true },
+  } })
+  local b = f.next_break
+  if b then
+    local when = b.under_way and tr("now, until %{time}", { time = b.to }) or (b.from .. " · " .. until_text(b.left))
+    add(line("coffee", tr("Next break"), b.at .. "  " .. when))
+  end
+  local r = f.next_relief
+  if r then
+    add(line("swap_horiz", tr("Next relief"), r.at .. "  " .. r.from .. " · " .. until_text(r.left), r.soon and AMBER or nil))
+  end
+  if f.ends then add(line("flag", tr("End of duty"), f.ends.from .. "  " .. f.ends.at)) end
+  for _, ch in ipairs(f.changes or {}) do
     add({ type = "text", text = "• " .. ch, size = 12, color = AMBER })
   end
-  if fuel.level then
-    local label = fuel.kind == "charge" and tr("Charge") or tr("Fuel")
+  local fu = f.fuel
+  if fu then
+    local label = fu.kind == "charge" and tr("Charge") or tr("Fuel")
     add({ type = "row", children = {
-      { type = "icon", name = fuel.kind == "charge" and "battery_charging_full" or "local_gas_station", color = fuel.low and RED or DIM, size = 16 },
-      { type = "text", text = label .. " " .. math.floor(fuel.level * 100 + 0.5) .. " %", size = 12, color = fuel.low and RED or DIM, wrap = false },
-      { type = "bar", value = fuel.level, grow = true, color = fuel.low and RED or GREEN },
+      { type = "icon", name = fu.kind == "charge" and "battery_charging_full" or "local_gas_station", color = fu.low and RED or DIM, size = 16 },
+      { type = "text", text = label .. " " .. math.floor(fu.level * 100 + 0.5) .. " %", size = 12, color = fu.low and RED or DIM, wrap = false },
+      { type = "bar", value = fu.level, grow = true, color = fu.low and RED or GREEN },
     } })
-    if fuel.low then add({ type = "text", text = tr("Return to the depot to refuel"), size = 12, color = RED }) end
+    if fu.to_depot then add({ type = "text", text = tr("Return to the depot to refuel"), size = 12, color = RED }) end
   end
   if open == "note" then
     note_form(children)
@@ -270,10 +324,22 @@ function M.rows(now)
   return children
 end
 
+-- the relief coming within the warning time, said once
+local function warn_relief(f)
+  local r = f.next_relief
+  if not (r and r.soon) then return end
+  local key = r.kind .. r.from
+  if told[key] then return end
+  told[key] = true
+  notify("swap_horiz", tr("Relief due"), tr("At %{place} at %{time}", { place = r.at, time = r.from }))
+end
+
 -- the strip now (`on`: the driver is at work on the company's duty)
 function M.update(on)
+  at_work = on == true
   if not (crew and omsi.ui and omsi.ui.set) then return end
-  if not (enabled and on) then
+  local f = (enabled and on) and facts_at(minute()) or nil
+  if not f then
     navigator.put("strip", nil)
     if shown then
       layout.remove(PANEL)
@@ -281,8 +347,9 @@ function M.update(on)
     end
     return
   end
-  if navigator.docks() then return navigator.put("strip", M.rows(minute())) end
-  layout.set(PANEL, { anchor = "bottom_left", x = 16, y = 16, width = 340, accent = ACCENT, draggable = true, children = M.rows(minute()) })
+  warn_relief(f)
+  if navigator.docks() then return navigator.put("strip", M.rows(f)) end
+  layout.set(PANEL, { anchor = "bottom_left", x = 16, y = 16, width = 340, accent = ACCENT, draggable = true, children = M.rows(f) })
   shown = true
 end
 

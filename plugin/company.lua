@@ -90,27 +90,27 @@ function M.coach(d, trips, clock, contract)
       return {
         text = tr("Hold %{s} here · leave at %{time}", { s = mmss(hold), time = hhmm(s.departure) }),
         note = costly and tr("Leaving now counts as early") or nil,
-        color = costly and RED or BLUE, icon = "pan_tool",
+        color = costly and RED or BLUE, icon = "pan_tool", tone = costly and "late" or "early", kind = "hold",
       }
     end
     return nil
   end
   if not d.at_stop and not first and delay < -60 then
-    return { text = tr("Running %{s} early · ease off", { s = mmss(delay) }), color = BLUE, icon = "speed" }
+    return { text = tr("Running %{s} early · ease off", { s = mmss(delay) }), color = BLUE, icon = "speed", tone = "early", kind = "early" }
   end
   -- late: what the layover at the terminus gives back for the next trip
   if delay > career.LATE_ARRIVAL then
     local this, after = trips[d.trip], trips[d.trip + 1]
     if not (this and after) then
-      return { text = tr("Late %{s} · last trip of the duty", { s = offset(delay) }), color = RED, icon = "schedule" }
+      return { text = tr("Late %{s} · last trip of the duty", { s = offset(delay) }), color = RED, icon = "schedule", tone = "late", kind = "late" }
     end
     local layover = (after.departure or 0) - (this.arrival or 0)
     local left = delay - math.max(layover - MIN_LAYOVER, 0)
     local m = math.max(math.floor(layover / 60), 0)
     if left <= 60 then
-      return { text = tr("Late %{s} · the %{m} min layover brings the %{time} back on time", { s = offset(delay), m = m, time = hhmm(after.departure) }), color = AMBER, icon = "schedule" }
+      return { text = tr("Late %{s} · the %{m} min layover brings the %{time} back on time", { s = offset(delay), m = m, time = hhmm(after.departure) }), color = AMBER, icon = "schedule", tone = "behind", kind = "late" }
     end
-    return { text = tr("Late %{s} · still %{left} late for the %{time} after the layover", { s = offset(delay), left = offset(left), time = hhmm(after.departure) }), color = RED, icon = "schedule" }
+    return { text = tr("Late %{s} · still %{left} late for the %{time} after the layover", { s = offset(delay), left = offset(left), time = hhmm(after.departure) }), color = RED, icon = "schedule", tone = "late", kind = "late" }
   end
   return nil
 end
@@ -221,53 +221,88 @@ end
 
 -- --- on the board ---------------------------------------------------------------------------------
 
+-- what the company says on the board, as plain data (a part switched off, or with nothing to
+-- say, is left out): `parts` the switches, `assignment` the duty Omsi-Hub gave, and `now` the
+-- game as it is - `duty` (`duty.get`), `trips`, `clock` (s), `boarded` (the passengers of this
+-- trip, of the duty and aboard now), `signed` (signed on) and
+-- `can_start` (the duty may be started now). Without `now`: the switches and the sheet alone.
+local function build(on, assignment, now)
+  local a = type(assignment) == "table" and assignment or {}
+  now = type(now) == "table" and now or {}
+  local out = { parts = on, can_start = now.can_start == true, can_sign_off = now.signed == true }
+  local d = now.duty
+  if d then
+    out.status = tr("On duty: trip %{trip} of %{trips}", { trip = d.trip, trips = d.trips })
+  else
+    out.status = tr("Not started yet")
+  end
+  local contract = type(a.contract) == "table" and a.contract or nil
+  if on.coach and d then
+    local c = M.coach(d, now.trips or {}, now.clock or 0, contract)
+    if c then out.coach = { text = c.text, note = c.note, tone = c.tone, kind = c.kind } end
+  end
+  if on.strip then
+    -- (duty_strip.lua's strip is the only one on the screen while it is on: docs/omsihub/CREW.md)
+    local own = package.loaded["duty_strip"]
+    if not (own and own.enabled()) then
+      local lines = M.strip(a.sheet, math.floor((now.clock or 0) / 60))
+      if lines then out.strip = lines end
+    end
+  end
+  if on.fares then
+    local boarded = now.boarded or {}
+    local text = M.fares(a.fare, boarded[1], boarded[2], boarded[3])
+    if text then
+      out.fares = { text = text, trip = boarded[1] or 0, duty = boarded[2] or 0, aboard = tonumber(boarded[3]) }
+    end
+  end
+  if on.contract then
+    local text = M.contract(contract)
+    if text then out.contract = { text = text, kind = contract.kind, rag = contract.rag or "green", early = contract.early or 1, late = contract.late or 5 } end
+  end
+  return out
+end
+
+function M.facts(parts, assignment, now)
+  return build(M.parts(parts), assignment, now)
+end
+
 -- the board's elements of the parts switched on (`on`), for the duty `d` now (`clock`: s);
 -- `boarded` the passengers of this trip and of the duty. `room`: the whole parts, else only the
 -- coach (the most urgent).
 function M.elements(on, assignment, d, trips, clock, boarded, room)
   local out = {}
   local a = type(assignment) == "table" and assignment or {}
-  local contract = type(a.contract) == "table" and a.contract or nil
-  if on.coach then
-    local c = M.coach(d, trips, clock, contract)
-    if c then
-      local children = { { type = "row", gap = 8, children = {
-        { type = "icon", name = c.icon, size = 16, color = c.color },
-        { type = "text", text = c.text, size = 12.5, weight = "bold", color = "#E8EBF2", grow = true },
-      } } }
-      if c.note then children[#children + 1] = { type = "text", text = c.note, size = 11.5, color = c.color } end
-      out[#out + 1] = { type = "box", color = c.color, children = children }
-    end
+  local f = build(on, a, { duty = d, trips = trips, clock = clock, boarded = boarded })
+  local c = f.coach
+  if c then
+    local color = ({ early = BLUE, behind = AMBER, late = RED })[c.tone]
+    local icon = c.kind == "hold" and "pan_tool" or (c.kind == "early" and "speed" or "schedule")
+    local children = { { type = "row", gap = 8, children = {
+      { type = "icon", name = icon, size = 16, color = color },
+      { type = "text", text = c.text, size = 12.5, weight = "bold", color = "#E8EBF2", grow = true },
+    } } }
+    if c.note then children[#children + 1] = { type = "text", text = c.note, size = 11.5, color = color } end
+    out[#out + 1] = { type = "box", color = color, children = children }
   end
   if not room then return out end
-  -- (duty_strip.lua's strip is the only one on the screen while it is on: docs/omsihub/CREW.md)
-  local own = package.loaded["duty_strip"]
-  if on.strip and not (own and own.enabled()) then
-    local lines = M.strip(a.sheet, math.floor(clock / 60))
-    if lines then
-      out[#out + 1] = { type = "row", gap = 8, children = {
-        { type = "icon", name = "badge", size = 15, color = ORANGE },
-        { type = "text", text = table.concat(lines, "  ·  "), size = 11.5, color = SOFT, grow = true },
-      } }
-    end
+  if f.strip then
+    out[#out + 1] = { type = "row", gap = 8, children = {
+      { type = "icon", name = "badge", size = 15, color = ORANGE },
+      { type = "text", text = table.concat(f.strip, "  ·  "), size = 11.5, color = SOFT, grow = true },
+    } }
   end
-  if on.fares then
-    local text = M.fares(a.fare, boarded and boarded[1], boarded and boarded[2], boarded and boarded[3])
-    if text then
-      out[#out + 1] = { type = "row", gap = 8, children = {
-        { type = "icon", name = "payments", size = 15, color = ORANGE },
-        { type = "text", text = text, size = 11.5, color = SOFT, grow = true },
-      } }
-    end
+  if f.fares then
+    out[#out + 1] = { type = "row", gap = 8, children = {
+      { type = "icon", name = "payments", size = 15, color = ORANGE },
+      { type = "text", text = f.fares.text, size = 11.5, color = SOFT, grow = true },
+    } }
   end
-  if on.contract then
-    local text, color = M.contract(contract)
-    if text then
-      out[#out + 1] = { type = "row", gap = 8, children = {
-        { type = "icon", name = "description", size = 15, color = color },
-        { type = "text", text = text, size = 11.5, color = DIM, grow = true },
-      } }
-    end
+  if f.contract then
+    out[#out + 1] = { type = "row", gap = 8, children = {
+      { type = "icon", name = "description", size = 15, color = RAG[f.contract.rag] or GREEN },
+      { type = "text", text = f.contract.text, size = 11.5, color = DIM, grow = true },
+    } }
   end
   return out
 end

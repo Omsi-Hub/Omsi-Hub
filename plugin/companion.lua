@@ -82,7 +82,8 @@ local function num(v)
 end
 
 -- `hooks`: signon and messages (the modules), accept() (the duty order signed), drive_free()
--- (the driver drives without the duty) and issued() of main.lua
+-- (the driver drives without the duty), issued() of main.lua and `facts`: the driving parts'
+-- facts by kind (strip, ontime, board, card, notes)
 function M.setup(hooks)
   hook = hooks or {}
 end
@@ -365,6 +366,85 @@ local function set_press(list)
   end
 end
 
+-- --- the driving parts ---------------------------------------------------------------------------
+
+-- What the on-board computer shows of the driving parts, each as the facts the part itself
+-- reports (`hook.facts[kind]()`: the duty strip, on time, the company's board, the trip's card -
+-- a table, or nil when the part has nothing to show - and the notes, a list): the datagram of
+-- the part is its facts' fields next to `t`, and `{"t": kind}` alone clears it. Each is sent when
+-- its content changed and at least every PART_EVERY seconds while it has something, and in a
+-- tick of its own: one part at most each tick.
+local PARTS = { "strip", "ontime", "board", "card", "notes" }
+local PART_EVERY = 5
+-- what each part last sent (its text, false for nothing, and when) and the part to look at next
+local sent_part = {}
+local parts_clock, part_next = 0, 1
+
+-- the part's facts as text: false when it has nothing to show
+local function part_text(kind, facts)
+  if kind == "notes" then
+    if type(facts) ~= "table" or #facts == 0 then return false end
+    local out = {}
+    for i, it in ipairs(facts) do out[i] = json.fast(it) end
+    return table.concat(out, ",")
+  end
+  if type(facts) ~= "table" or next(facts) == nil then return false end
+  return json.encode(facts)
+end
+
+-- a part's datagram: its facts' fields next to `t` (a card too long for one is sent without
+-- its stops, then without its offences)
+local function send_part(kind, facts, text)
+  local head = '{"t":' .. json.encode(kind) .. ","
+  local body = head .. text:sub(2)
+  if #body > 8000 and type(facts.run) == "table" then
+    for _, drop in ipairs({ "visits", "offences" }) do
+      facts.run[drop] = nil
+      body = head .. json.encode(facts):sub(2)
+      if #body <= 8000 then break end
+    end
+  end
+  if #body > 8000 or not (on and fn("send")) then return false end
+  return omsi.send(port, body) == true
+end
+
+local function send_parts()
+  if not (on and fn("send") and hook.facts) then return end
+  local due, texts, got = nil, {}, {}
+  for step = 0, #PARTS - 1 do
+    local i = (part_next - 1 + step) % #PARTS + 1
+    local kind = PARTS[i]
+    local get = hook.facts[kind]
+    local ok, f = false, nil
+    if get then ok, f = pcall(get) end
+    if ok then
+      local text = part_text(kind, f)
+      local was = sent_part[kind]
+      local stale = was and parts_clock - was.at >= PART_EVERY
+      -- (nothing to show is said once, after something was: the server forgets a part not heard)
+      local changed
+      if text == false then changed = was ~= nil and was.text ~= false else changed = was == nil or was.text ~= text or stale end
+      if changed and not due then due, texts[kind], got[kind] = i, text, f end
+    end
+  end
+  if not due then return end
+  local kind = PARTS[due]
+  part_next = due % #PARTS + 1
+  local text, f = texts[kind], got[kind]
+  local sent
+  if kind == "notes" then
+    send_list("notes", "notes", text == false and {} or f, false)
+    sent = true
+  elseif text == false then
+    sent = send({ t = kind })
+  else
+    sent = send_part(kind, f, text)
+  end
+  -- (one too long to send is tried again in a while)
+  sent_part[kind] = { text = text, at = parts_clock }
+  return sent
+end
+
 -- --- the commands -------------------------------------------------------------------------------
 
 -- a key pressed and let go a moment later (openOMSI's triggers know no case)
@@ -556,6 +636,7 @@ end
 -- them at once - as on the first tick, while the game is still busy loading - came near that.
 function M.tick(dt)
   for k, v in pairs(wait) do wait[k] = v - (dt or 0.25) end
+  parts_clock = parts_clock + (dt or 0.25)
   if not on then return end
   if wait.live <= 0 then
     wait.live = 0.5
@@ -586,7 +667,10 @@ function M.tick(dt)
     if not read_lines() then return end
     wait.lines = 10
     send_list("lines", "lines", map_lines())
+    return
   end
+  -- (the driving parts: a tick of their own when nothing else was due)
+  send_parts()
 end
 
 return M

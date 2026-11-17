@@ -158,13 +158,51 @@ local function line(text, color, size)
   return { type = "text", text = text, size = size or 13, color = color }
 end
 
--- the card's elements for the duty `d` (`duty.get`) and the brief `b` (none yet: punctuality
--- alone, by the company's usual lines)
-function M.rows(d, b)
+-- the card's facts for the duty `d` (`duty.get`) and the brief `b` (none yet: punctuality
+-- alone, by the company's usual lines): plain data, a list with nothing in it left out
+local function facts_of(d, b)
   b = b or {}
   local early_from, late_from = tonumber(b.early_from) or 60, tonumber(b.late_from) or 360
   local delay = d.delay or 0
-  local tone = M.tone(delay, early_from, late_from)
+  local out = { delay = delay, tone = M.tone(delay, early_from, late_from), early_from = early_from, late_from = late_from }
+  -- the headway, where the line is frequent
+  local h = b.headway
+  if type(h) == "table" then
+    local head = { planned = tonumber(h.planned) or 0 }
+    if type(h.ahead) == "table" then head.ahead = { bus = h.ahead.bus, secs = h.ahead.secs } end
+    if type(h.behind) == "table" then head.behind = { bus = h.behind.bus, secs = h.behind.secs } end
+    local a = h.advice
+    if type(a) == "table" and (a.kind == "hold" or a.kind == "close_behind") then head.advice = { kind = a.kind, secs = a.secs, bus = a.bus } end
+    out.headway = head
+  end
+  -- the connections at the stops ahead
+  local connections = {}
+  for _, k in ipairs(type(b.connections) == "table" and b.connections or {}) do
+    local st = type(k.status) == "table" and k.status or {}
+    connections[#connections + 1] = {
+      stop = k.stop, what = k.what, time = k.time, late = k.late or 0, onward = k.onward == true, max_hold = k.max_hold,
+      status = { kind = st.kind, m = st.m, ["until"] = st["until"] },
+    }
+  end
+  if #connections > 0 then out.connections = connections end
+  -- the diversion ahead, and the day's closed stops
+  if type(b.ahead) == "table" then out.ahead = { stop = b.ahead.stop, via = b.ahead.via or "" } end
+  if type(b.closed) == "table" and #b.closed > 0 then out.closed = { table.unpack(b.closed) } end
+  return out
+end
+
+-- the card's facts now (nil: it is off, there is no company's duty or no duty running)
+function M.facts()
+  if not (M.on() and fn(omsi.duty, "get")) then return nil end
+  local d = omsi.duty.get()
+  if not d then return nil end
+  return facts_of(d, brief)
+end
+
+-- the card's elements for the duty `d` and the brief `b`
+function M.rows(d, b)
+  local f = facts_of(d, b)
+  local delay, tone, late_from = f.delay, f.tone, f.late_from
   local word = ({ early = "early", on_time = "on time", behind = "late", late = "late" })[tone]
   local color = ({ early = BLUE, on_time = GREEN, behind = AMBER, late = RED })[tone]
   local children = {
@@ -184,14 +222,13 @@ function M.rows(d, b)
   elseif tone == "early" then
     add(line(tr("Running early: wait at the stop"), BLUE, 12))
   end
-  -- the headway, where the line is frequent
-  local h = b.headway
-  if type(h) == "table" then
+  local h = f.headway
+  if h then
     add({ type = "divider" })
     local parts = {}
-    if type(h.ahead) == "table" then parts[#parts + 1] = tr("Ahead %{bus}: %{gap}", { bus = h.ahead.bus, gap = mmss(h.ahead.secs) }) end
-    if type(h.behind) == "table" then parts[#parts + 1] = tr("Behind %{bus}: %{gap}", { bus = h.behind.bus, gap = mmss(h.behind.secs) }) end
-    parts[#parts + 1] = tr("every %{m} min", { m = math.floor((h.planned or 0) / 60 + 0.5) })
+    if h.ahead then parts[#parts + 1] = tr("Ahead %{bus}: %{gap}", { bus = h.ahead.bus, gap = mmss(h.ahead.secs) }) end
+    if h.behind then parts[#parts + 1] = tr("Behind %{bus}: %{gap}", { bus = h.behind.bus, gap = mmss(h.behind.secs) }) end
+    parts[#parts + 1] = tr("every %{m} min", { m = math.floor(h.planned / 60 + 0.5) })
     add(line(table.concat(parts, "  ·  ")))
     local a = h.advice or {}
     if a.kind == "hold" then
@@ -200,11 +237,10 @@ function M.rows(d, b)
       add(line(tr("You are close behind %{bus}", { bus = a.bus }), AMBER))
     end
   end
-  -- the connections at the stops ahead
-  for _, k in ipairs(type(b.connections) == "table" and b.connections or {}) do
+  for _, k in ipairs(f.connections or {}) do
     add({ type = "divider" })
-    local st = k.status or {}
-    local due = k.time .. ((k.late or 0) > 0 and (" (+" .. k.late .. " min)") or "")
+    local st = k.status
+    local due = k.time .. (k.late > 0 and (" (+" .. k.late .. " min)") or "")
     if k.onward then
       add(line(tr("Connection at %{stop}: %{what} %{time}", { stop = k.stop, what = k.what, time = due }), nil))
       if st.kind == "made" then add(line(tr("%{m} min to change", { m = st.m }), GREEN, 12))
@@ -218,13 +254,12 @@ function M.rows(d, b)
       else add(line(tr("No wait needed"), GREEN, 12)) end
     end
   end
-  -- the diversion ahead, and the day's
-  if type(b.ahead) == "table" then
+  if f.ahead then
     add({ type = "divider" })
-    add(line(tr("Diversion ahead: %{stop} closed", { stop = b.ahead.stop }), NOW))
-    if (b.ahead.via or "") ~= "" then add(line(tr("Via %{via}", { via = b.ahead.via }), DIM, 12)) end
-  elseif type(b.closed) == "table" and #b.closed > 0 then
-    add(line(tr("Closed today: %{stops}", { stops = table.concat(b.closed, ", ") }), DIM, 12))
+    add(line(tr("Diversion ahead: %{stop} closed", { stop = f.ahead.stop }), NOW))
+    if f.ahead.via ~= "" then add(line(tr("Via %{via}", { via = f.ahead.via }), DIM, 12)) end
+  elseif f.closed then
+    add(line(tr("Closed today: %{stops}", { stops = table.concat(f.closed, ", ") }), DIM, 12))
   end
   return children
 end

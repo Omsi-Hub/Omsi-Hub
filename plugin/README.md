@@ -27,7 +27,7 @@ the plugin through plain files (`crates/hub-game/src/bridge.rs`).
   (the assignment's `take_over`): the AI's bus of the tour off the road, the player's bus put where
   it was with the duty at its next stop - else where the fleet map has it, else at that stop. `companion` talks to Omsi-Hub's phone and
   tablet companion while it is on (`data/companion.json`, datagrams by UDP; docs/COMPANION.md):
-  it presses only the keys of the bus's IBIS, ticket printer and change dispenser.
+  it presses only the keys of the bus's IBIS, ticket printer and change dispenser, and sends what each driving part reports of itself (`duty_strip`, `ontime`, `company`, `card` each have `facts()`, `notes` has `list()`; their drawing reads the same facts) for the on-board computer.
 - `theme.json`, `theme-loading.svg`, `theme-logo.svg`: Omsi-Hub's look for openOMSI's own screens,
   an interface theme (openOMSI's docs/THEMES.md) of the plugin's name: the loading screen with the
   logo's ring as the loading bar (`id="progress"`), the pause menu's panels of glass. `main.lua`

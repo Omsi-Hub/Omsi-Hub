@@ -71,18 +71,26 @@ end
 
 -- the stops as the card's second tab lists them (`ink`: each one's ± in the colour of how it
 -- is judged)
+-- how far off the timetable the stop `k` of `visits` counts (seconds; nil: it was not served)
+local function visit_delay(visits, k)
+  local v = visits[k]
+  local last = k == #visits
+  local arrival = v.arrived and (v.arrived - v.arr) or nil
+  local departure = (not last and v.left) and (v.left - v.dep) or nil
+  local decides = arrival and career.delay(arrival, departure) or nil
+  if arrival then
+    local j = career.judged(arrival, departure)
+    if j == "early" then decides = departure or arrival elseif j == "late" then decides = arrival end
+  end
+  return decides
+end
+
 local function stop_rows(run, ink)
   local rows = {}
   local visits = run.visits or {}
   for k, v in ipairs(visits) do
     local last = k == #visits
-    local arrival = v.arrived and (v.arrived - v.arr) or nil
-    local departure = (not last and v.left) and (v.left - v.dep) or nil
-    local decides = arrival and career.delay(arrival, departure) or nil
-    if arrival then
-      local j = career.judged(arrival, departure)
-      if j == "early" then decides = departure or arrival elseif j == "late" then decides = arrival end
-    end
+    local decides = visit_delay(visits, k)
     rows[#rows + 1] = {
       v.name, hhmm(last and v.arr or v.dep), v.arrived and hhmm(v.arrived) or "–",
       last and "" or (v.left and hhmm(v.left) or "–"), ink and { text = offset(decides), color = ink_of(decides) } or offset(decides),
@@ -230,6 +238,31 @@ function M.hold(run, saved, standing)
     if waiting then show(waiting[1], waiting[2]) end
     waiting = { run, saved }
   end
+end
+
+-- the shown card as plain data: the trip's record (`run`, each stop with how far off it counted),
+-- how it is judged (`career.evaluate`: grade, stars, score, parts, experience) and `open`; nil
+-- when no card is shown. The stops are cut at the most a datagram holds.
+local MOST_STOPS = 60
+
+function M.facts()
+  if not shown then return nil end
+  local run = {}
+  for k, v in pairs(shown.run) do
+    if k ~= "visits" and k ~= "offences" then run[k] = v end
+  end
+  local visits = shown.run.visits or {}
+  if #visits > 0 then
+    run.visits = {}
+    for k = 1, math.min(#visits, MOST_STOPS) do
+      local v = visits[k]
+      run.visits[k] = { name = v.name, arr = v.arr, dep = v.dep, arrived = v.arrived, left = v.left, delay = visit_delay(visits, k) }
+    end
+  end
+  if type(shown.run.offences) == "table" and #shown.run.offences > 0 then run.offences = shown.run.offences end
+  local out = { open = true, run = run, saved = shown.saved == true }
+  for k, v in pairs(shown.judged) do out[k] = v end
+  return out
 end
 
 function M.close()

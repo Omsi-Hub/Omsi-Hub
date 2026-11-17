@@ -29,16 +29,15 @@ function M.say(text, opts)
   opts = opts or {}
   text = text or ""
   local title = opts.title or ""
-  if navigator.docks() then
-    seq = seq + 1
-    table.insert(list, 1, {
-      id = seq, text = text, title = title, icon = opts.icon or "notifications", color = opts.color or "#F58620",
-      left = math.max((tonumber(opts.seconds) or 8) * 3, 20), sticky = opts.sticky == true,
-    })
-    while #list > KEPT do table.remove(list) end
-    put()
-    return
-  end
+  -- (kept whatever shows them: the navigator, and the on-board computer through `list`)
+  seq = seq + 1
+  table.insert(list, 1, {
+    id = seq, text = text, title = title, icon = opts.icon or "notifications", color = opts.color or "#F58620",
+    left = math.max((tonumber(opts.seconds) or 8) * 3, 20), sticky = opts.sticky == true,
+  })
+  while #list > KEPT do table.remove(list) end
+  put()
+  if navigator.docks() then return end
   if omsi.ui and omsi.ui.toast then
     omsi.ui.toast(text, { title = title ~= "" and title or nil, icon = opts.icon, color = opts.color, seconds = opts.seconds })
   else
@@ -97,9 +96,14 @@ function M.click(element)
   return true
 end
 
--- the notifications now (for the tests and the phone)
+-- the notifications now, newest first, as data (for the on-board computer): `n` its number,
+-- title, text, icon, colour and whether it stays until it is clicked away
 function M.list()
-  return list
+  local out = {}
+  for k, n in ipairs(list) do
+    out[k] = { n = n.id, title = n.title:sub(1, 200), text = n.text:sub(1, 2000), icon = n.icon, color = n.color, sticky = n.sticky }
+  end
+  return out
 end
 
 return M

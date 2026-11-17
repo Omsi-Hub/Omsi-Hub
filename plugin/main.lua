@@ -22,7 +22,7 @@
 --                         the game to Omsi-Hub's companion server by UDP)
 -- A game without the file functions gets the handshake and the reports in its log instead.
 
-local VERSION = "1.18.2"
+local VERSION = "1.19.0"
 local BRIDGE = 1
 local PANEL = "omsihub"
 
@@ -219,17 +219,28 @@ strip.setup(tr, company_duty() and assignment.crew or nil, function(kind, fields
   notes.say(text, { title = title, icon = icon, seconds = 8 })
 end)
 
+-- what the company's board says now (company.lua's facts; the panel and the on-board computer
+-- both read them): nil without a company's duty
+local function board_facts()
+  if not company_duty() then return nil end
+  local d = duty_now()
+  local passengers = fn("bus.passengers") and omsi.bus.passengers() or nil
+  local trip = require("trip")
+  local line = assignment.line or ""
+  return company.facts(parts(), assignment, {
+    duty = d, trips = d and fn("duty.trips") and omsi.duty.trips() or {}, clock = clock() or 0,
+    boarded = { trip.boarded_on_trip(), trip.boarded_total(), passengers },
+    signed = signon.signed(), can_start = signon.at_work() and not d and has["duty.start"] == true and line ~= "",
+  })
+end
+
 local function panel()
   if not (company_duty() and has["ui.set"]) then return end
   local d = duty_now()
-  local status
-  if d then
-    status = tr("On duty: trip %{trip} of %{trips}", { trip = d.trip, trips = d.trips })
-  else
-    status = tr("Not started yet")
-  end
+  local f = board_facts()
+  local status = f.status
   local work = signon.at_work()
-  local can_start = work and not d and has["duty.start"] and (assignment.line or "") ~= ""
+  local can_start = f.can_start
   local children = {
     { type = "row", children = {
       { type = "icon", name = "business", color = "#F58620" },
@@ -441,6 +452,8 @@ companion.setup({
     panel()
   end,
   changed = function() panel() end,
+  -- (what each driving part reports of itself: the on-board computer shows them)
+  facts = { strip = strip.facts, ontime = ontime.facts, board = board_facts, card = card.facts, notes = notes.list },
 })
 
 omsi.on("duty", function(line, tour)
