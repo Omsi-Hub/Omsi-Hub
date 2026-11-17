@@ -11,19 +11,23 @@ merged but in no build yet is under Unreleased.
   strip, the on-time display, the company's board, the notifications and the end-of-trip card
   are on one screen that looks like a real on-board computer. It is a window of Omsi-Hub over
   the game, in a corner of the monitor the game is on, in three sizes (S, M and L), and you
-  drag it to any corner of the screen. It does not take the keyboard from the game, and it
-  hides when you leave the game, so it is not in your way in other programs. Omsi-Hub remembers
-  its corner and size.
+  drag it to any corner of the screen. It does not take the keyboard from the game, and on
+  Windows it hides when you leave the game, so it is not in your way in other programs (on Linux
+  and macOS it is an ordinary window while the game runs). It speaks Omsi-Hub's language, and
+  Omsi-Hub remembers its corner and size.
 
 - **Signing on is back, on the on-board computer**: with the number pad of the device you type
-  your personnel number and sign on for the duty order, then sign off at the end, as before.
+  your personnel number and code and sign the duty order, then sign off at the end, as before.
+  The on-board computer shows your pass (personnel number and code) while you sign on. Where it
+  cannot show - Linux under Wayland, or Omsi-Hub closed - you are at work without signing on
+  after 20 seconds, as with sign-on switched off.
 
 ### Changed
 
 - **openOMSI's own navigator and corner notes are switched off for a drive**: the on-board
   computer shows what they showed, so Omsi-Hub switches them off in openOMSI's settings before the
   game starts and tells you once that it did. They stay off: Omsi-Hub does not switch them back
-  on after the drive.
+  on after the drive. Under Wayland, where the on-board computer cannot show, they are left on.
 
 - **Omsi-Hub needs an openOMSI that can send data to it**: the on-board computer gets everything
   from the game that way. An openOMSI without it (`send`) is refused when you start a drive,

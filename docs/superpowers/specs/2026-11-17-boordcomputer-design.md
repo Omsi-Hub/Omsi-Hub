@@ -124,6 +124,11 @@ Luc chose approach 1.
   duty order accepted with a button - the stages `plugin/signon.lua` has ("signon", "order",
   "work"). Without a pass (sign-on off in Omsi-Hub, or a regular drive) it starts on Navigatie.
   The company panel's **Start duty** and **Sign off** buttons (`main.lua`) come to the device too.
+  The sign-on screen shows the driver's pass (personnel number and code), as the panel in the
+  game did; only Omsi-Hub's own window gets it, never a paired phone. Where no device is seen
+  (the queue file's `device`: the window could not open, or Omsi-Hub is not running) the plugin
+  does not keep the driver at the sign-on: after 20 s of a running game the driver is at work,
+  as with sign-on off (final review, C1 and C2).
 - **Typing text** (*Claude's call*): the window never takes the keyboard, so wherever the driver
   types words (a handover note, a walk-around defect) the device shows an on-screen keyboard of
   its own, as a touchscreen does.
@@ -159,9 +164,12 @@ the version that removes the plugin's panels ships: one release, not a first par
 ### Linux (*Claude's call, proposed to Luc*)
 
 Linux x64 is a release target. A window that stays over the game without taking the keyboard
-works on X11 (best effort) and not at all on Wayland. On X11 the device is shown as on Windows;
-on Wayland Omsi-Hub says the device cannot be shown over the game there and points the player to
-the Companion on a phone or tablet, which shows the same screens.
+works on X11 (best effort) and not at all on Wayland. On X11 (and macOS) Omsi-Hub cannot tell
+which program is in front, so the device is an ordinary window, not on top, shown while the game
+runs (a window on top of every program after alt-tab is what it must never be); on Wayland
+Omsi-Hub says the device cannot be shown over the game there and points the player to the
+Companion on a phone or tablet, which shows the same screens, and leaves openOMSI's own navigator
+and corner notes on.
 
 ### The plugin
 

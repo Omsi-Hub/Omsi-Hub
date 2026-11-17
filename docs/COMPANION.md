@@ -32,7 +32,15 @@ The server itself always runs as long as Omsi-Hub does, but without the setting 
 window (the on-board computer, `/device`) is the one client of that: it carries a **local
 key** made once as the app runs (`#key=…` in its address, sent as the bearer key like a
 device's), which the server lets in without pairing. The local key is not a device: it is not
-listed, not kept and not revoked. A taken network port falls back to any free loopback port,
+listed, not kept and not revoked. Its address also carries Omsi-Hub's language
+(`/device#key=…&lang=nl`): the device speaks it for that run, English where the app has no such
+language. Only the local key's state has the driver's pass (`signon.pass`, below): the driver
+reads it on Omsi-Hub's own window, and a paired phone never gets more than `number_hint`. While
+the local key waits for the state, and for 10 s after it last asked, the queue file says
+`device: true`: without it the plugin does not keep the driver at the sign-on (after 20 s of a
+running game with no device seen, the driver is at work, as with sign-on switched off). When the
+server starts again on another port, Omsi-Hub points its window at the new address. A taken
+network port falls back to any free loopback port,
 and a taken plugin port to a free one that the plugin is told through the queue file. The
 phones and tablets on the home network are off by default: the player turns them on in the add-on under
 **Settings › General › Phone & tablet**; the launcher then shows the address, a six-digit
@@ -106,7 +114,9 @@ once after every answer (and backs off 2 s → 10 s after errors). `after` omitt
   "signon": {                      // signing on (the driver's pass is the add-on's)
     "stage": "signon",             // "signon" | "order" | "work" | "none" (no sign-on needed)
     "number_hint": "48…",          // never the full number or the code
-    "error": null                  // "wrong" after a wrong number/code
+    "error": null,                 // "wrong" after a wrong number/code
+    "pass": { "number": "482913", "code": "5821" }   // Omsi-Hub's own window (the local key)
+                                   // only, while stage = "signon": the driver reads the pass there
   },
   "duty": {                        // null: no duty at all
     "kind": "company",             // "company" | "shift" | "tour" | "free" | "game"
@@ -208,14 +218,18 @@ What the plugin reports while a drive runs, for the on-board computer (and any a
 Each part is sent whole, and a list with nothing in it is left out. Times are the game's clock:
 `"hh:mm"` text for `from`, `to` and `time`, seconds where a field says so; `left` is whole minutes
 (seconds in `hold`). A part is absent when the plugin has nothing to say for it (no company's
-duty, or switched off).
+duty, or switched off). A game heard again after it was gone for 5 s is a new drive: the server
+forgets the last drive's parts, and the plugin says each part it has nothing for empty once as
+the drive begins.
 
 **`strip`** (`duty_strip.lua`)
 
 ```jsonc
 {
   "signed_on": true,               // the driver is at work on the company's duty
-  "piece": 1,                      // the part of the duty now (as the plugin counts it)
+  "piece": { "kind": "trip", "tone": "good", "text": "Line 29 to Hbf until 08:20" },
+                                   // what the driver does now: kind "sign_on" | "empty" | "trip" |
+                                   // "break" | "finished" | "duty", its tone and its text
   "relief_warning": false,         // a relief is due within the warning time
   "can_note": true, "can_check": true,   // the driver may write a note / do the walk-around
   "text_max": 140,                 // the longest note, characters
@@ -286,7 +300,8 @@ out.
 [ { "n": 41, "title": "Control", "text": "…", "icon": "campaign", "color": "#F58620", "sticky": false } ]
 ```
 
-`n` is the notification's number (`note_close` takes it); title ≤ 200 and text ≤ 2000 characters.
+`n` is the notification's number (`note_close` takes it); title ≤ 200 and text ≤ 2000 bytes of
+UTF-8, cut at the edge of a character.
 
 **`card`** (`card.lua` `facts`): the end-of-trip card; the datagram `{"t":"card"}` alone says it
 was closed.
@@ -304,9 +319,9 @@ was closed.
 }
 ```
 
-`run.more.visits` counts the stops left off the card (the plugin keeps the first 60, and cuts
-`visits` and then `offences` further, the same way as for `strip`, when the datagram is still over
-8000 bytes).
+`run.more.visits` counts the stops left off the card: the plugin keeps the first 60. When the
+datagram is still over 8000 bytes it cuts as for `strip`: each round the longer of `visits` and
+`offences` to its first half, counted in `run.more.visits` or `run.more.offences`.
 
 ## Map
 
@@ -456,7 +471,7 @@ bus's devices' taps and keys are pressed; anything else is `unknown_key`.
 | `msg_answer` | `id`, `key` | Answers a message with one of its `answers` (`read`, `accept`, `decline` or a canned reply's key) |
 | `msg_quick` | `key` | A quick button to control |
 | `pause_end` | | Ends the break early |
-| `start_duty` | | Starts the duty at the depot |
+| `duty_start` | | Starts the duty at the depot (the on-board computer's "Start duty"; not the launcher's `start_duty`) |
 | `sign_off` | | Signs the driver off at the end of the duty |
 | `part` | `id`, `on` | Shows (`on: true`) or hides one of the driving parts |
 | `note_close` | `n` | Closes note `n` of `notes` |
@@ -499,7 +514,8 @@ To `127.0.0.1:47812` (`companion_udp_port`), each one JSON object with `t`:
 And the add-on writes `data/companion.json` in the plugin's data folder:
 `{sid, port, seq: 12, cmds: [{seq: 11, do: "key", key: "IBIS_7"}, …], probe: [x, y]}` (the
 last 20 commands of the server's session `sid`, the port for the datagrams, and the place whose
-street name the plugin reports in `live.probe`), and for the bus's devices `want: {nums, strs}`
+street name the plugin reports in `live.probe`), `device` (Omsi-Hub's own on-board computer asks
+for the state now: see the local key above), and for the bus's devices `want: {nums, strs}`
 (the variables `scr` reads) and `press: [trigger, …]` (the taps and keys of the devices: a
 `{do: "press", key, down}` command presses only one of these that the bus really has). The
 plugin carries out each `seq` of the session it has not done yet and acks it. Commands already
