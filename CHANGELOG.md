@@ -21,8 +21,9 @@ merged but in no build yet is under Unreleased.
 ### Changed
 
 - **openOMSI's own navigator and corner notes are switched off for a drive**: the on-board
-  computer says everything they said, so Omsi-Hub switches them off before the game starts and
-  puts them back as they were when the drive ends.
+  computer shows what they showed, so Omsi-Hub switches them off in openOMSI's settings before the
+  game starts and tells you once that it did. They stay off: Omsi-Hub does not switch them back
+  on after the drive.
 
 - **Omsi-Hub needs an openOMSI that can send data to it**: the on-board computer gets everything
   from the game that way. An openOMSI without it (`send`) is refused when you start a drive,

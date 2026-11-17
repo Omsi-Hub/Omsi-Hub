@@ -343,7 +343,7 @@ openOMSI ── plugin (Lua) ──UDP 127.0.0.1──▶ hub-companion's server
   duty, signing on and off, the messages' answers, the strip's note and walk-around, closing a
   notification or the card). It needs an openOMSI with `omsi.send`; without it `compat` refuses the
   drive. Before the drive, `hub-game` switches openOMSI's own navigator and corner notes off
-  (`gamesettings`) and puts them back after.
+  (`hub_api::drive::prepare_settings`, through `gamesettings`) and tells the player once; they stay off.
 - **The companion server** always runs on this computer, on loopback only; phones and tablets
   reach it only while Phone & tablet is on. It keeps the latest of each part (`heard`, `state`) and
   serves the Companion web app embedded in the add-on (`assets/companion-web/`, made with
