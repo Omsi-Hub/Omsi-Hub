@@ -218,11 +218,17 @@ fn local_key() -> &'static str {
     LOCAL_KEY.get_or_init(hub_companion::random_key)
 }
 
-/// Where Omsi-Hub's own window finds the device page (and the key it opens it with), when the
-/// server runs.
+/// Where Omsi-Hub's own window finds the device page (and the key it opens it with, and
+/// Omsi-Hub's language: the device speaks it for this run), when the server runs.
 pub fn device_url() -> Option<String> {
     let port = RUNNING.lock().unwrap_or_else(|e| e.into_inner()).as_ref().map(Companion::port)?;
-    Some(format!("http://127.0.0.1:{port}/device#key={}", local_key()))
+    Some(device_url_for(port, &crate::addon::player_language()))
+}
+
+/// The device page's address on `port`, in `lang` (a language code; anything else is English).
+fn device_url_for(port: u16, lang: &str) -> String {
+    let ok = !lang.is_empty() && lang.len() <= 16 && lang.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
+    format!("http://127.0.0.1:{port}/device#key={}&lang={}", local_key(), if ok { lang } else { "en" })
 }
 
 /// Start the server (`port`; for the home network's devices when `lan`, else for this computer
@@ -373,7 +379,7 @@ mod tests {
     #[test]
     fn local_key_survives_a_restart() {
         let _one = SERVER.lock().unwrap_or_else(|e| e.into_inner());
-        let key = |u: Option<String>| u.and_then(|u| u.split("#key=").nth(1).map(str::to_string));
+        let key = |u: Option<String>| u.and_then(|u| u.split("#key=").nth(1).and_then(|k| k.split('&').next()).map(str::to_string));
         // (loopback only, so no firewall is touched; free ports, the game's may be in use. It
         // does set the server and log a line, as the app does)
         assert!(start_with(0, 0, false).is_ok());
@@ -384,6 +390,15 @@ mod tests {
         assert!(device_url().is_some_and(|u| u.starts_with("http://127.0.0.1:")));
         *RUNNING.lock().unwrap_or_else(|e| e.into_inner()) = None;
         assert_eq!(device_url(), None);
+    }
+
+    #[test]
+    fn the_device_page_is_told_omsi_hubs_language() {
+        let url = device_url_for(47811, "nl");
+        assert_eq!(url, format!("http://127.0.0.1:47811/device#key={}&lang=nl", local_key()));
+        assert!(device_url_for(1, "pt-br").ends_with("&lang=pt-br"));
+        assert!(device_url_for(1, "").ends_with("&lang=en"));
+        assert!(device_url_for(1, "x&key=evil").ends_with("&lang=en"), "never another part of the address");
     }
 
     #[test]

@@ -4,12 +4,16 @@
 //!
 //! * Opened when a drive's game starts (`game-started`), closed when it ends (`game-ended`). On
 //!   Linux under Wayland it is not opened: a window cannot stay over the game there.
-//! * No frame, transparent around the device, always on top, not in the task bar and **not
-//!   activating**: a click in it leaves the keyboard with the game (on Windows
+//! * No frame, transparent around the device, always on top (on Windows only), not in the task
+//!   bar and **not activating**: a click in it leaves the keyboard with the game (on Windows
 //!   `WS_EX_NOACTIVATE`, and `WS_EX_TOOLWINDOW` to keep it out of alt-tab).
 //! * A thread follows the game every [`TICK`]: the device is shown only while the game is the
-//!   window in front and not minimised ([`visible`]; elsewhere than on Windows: while the game
-//!   runs), on the game's monitor.
+//!   window in front and not minimised ([`visible`]; elsewhere than on Windows, as best it can
+//!   be: while the game runs, a window that is not on top), on the game's monitor. The device in
+//!   front with no game window found is hidden.
+//! * When Omsi-Hub's companion server starts again on another port (Phone & tablet switched),
+//!   the window is pointed at the new address ([`hub_api::companion::device_url`], looked at
+//!   every [`URL_EVERY`] ticks; Omsi-Hub's language comes with it).
 //! * It sits in a corner of the monitor's work area ([`place`]); where it is let go it snaps to
 //!   the nearest corner ([`snap`]), and its corner, offset and width are kept in the settings
 //!   (`boordcomputer_corner`, `boordcomputer_offset`, `boordcomputer_width`). The page moves the
@@ -43,6 +47,8 @@ const SNAP: i32 = 48;
 const QUIET: Duration = Duration::from_millis(500);
 /// How often the device is put where it belongs again when it did not land there.
 const RETRIES: u32 = 3;
+/// How often (in [`TICK`]s) the thread following the game asks where the device page is now.
+const URL_EVERY: u32 = 8;
 
 const CORNER_KEY: &str = "boordcomputer_corner";
 const OFFSET_KEY: &str = "boordcomputer_offset";
@@ -265,7 +271,7 @@ pub fn open(app: &AppHandle, pid: u32) {
     }
     hub_core::log_line(&format!("boordcomputer: opened for the game (pid {pid})"));
     let app = app.clone();
-    std::thread::spawn(move || follow(app, run, pid));
+    std::thread::spawn(move || follow(app, run, pid, url));
 }
 
 /// The device closed (`game-ended`), a move not settled yet kept first.
@@ -292,7 +298,10 @@ fn build(app: &AppHandle, url: &str) -> Result<WebviewWindow, String> {
         .inner_size(f64::from(d.width), (f64::from(d.width) * ASPECT).round())
         .decorations(false)
         .transparent(true)
-        .always_on_top(true)
+        // (on top only where it hides as soon as the game is not in front: on Windows. Elsewhere
+        // it is not known what is in front, and a window on top of every program after alt-tab
+        // is what the device must never be)
+        .always_on_top(cfg!(windows))
         .skip_taskbar(true)
         .focused(false)
         .focusable(false)
@@ -380,12 +389,17 @@ fn look(win: &WebviewWindow, pid: u32) -> Look {
         // (the device itself in front: a click does not activate it, but the system's move of it
         // (`startDragging`) does - the keyboard handed back to the game once the mouse button is
         // up, the device left as it is)
-        Some((h, _)) if Some(h) == own => {
-            if let Some(game) = game.filter(|_| !button_down()) {
-                win32::give_back(game);
+        Some((h, _)) if Some(h) == own => match game {
+            Some(game) => {
+                if !button_down() {
+                    win32::give_back(game);
+                }
+                None
             }
-            None
-        }
+            // (no game window to hand the keyboard back to - it closed or hides: the device
+            // does not stay in front on its own)
+            None => Some(false),
+        },
         _ => Some(visible(front.map(|f| f.1), Some(pid), minimised)),
     };
     // (the game's monitor: the one its window's middle is on)
@@ -398,8 +412,8 @@ fn look(win: &WebviewWindow, pid: u32) -> Look {
     Look { show, screen }
 }
 
-/// Elsewhere the program in front is not asked: shown while the game runs, on the monitor the
-/// device is on.
+/// Elsewhere the program in front is not asked: shown while the game runs (best effort: a
+/// normal window there, not always on top - [`build`]), on the monitor the device is on.
 #[cfg(not(windows))]
 fn look(win: &WebviewWindow, pid: u32) -> Look {
     Look { show: Some(visible(Some(pid), Some(pid), false)), screen: screen_of(win) }
@@ -415,11 +429,13 @@ fn set_shown(win: &WebviewWindow, show: bool) {
     let _ = if show { win.show() } else { win.hide() };
 }
 
-/// The thread that follows the game `pid` for the drive `run`.
-fn follow(app: AppHandle, run: u64, pid: u32) {
+/// The thread that follows the game `pid` for the drive `run`, the device opened at `url`.
+fn follow(app: AppHandle, run: u64, pid: u32, mut url: String) {
     let mut shown = false;
+    let mut ticks = 0u32;
     loop {
         std::thread::sleep(TICK);
+        ticks = ticks.wrapping_add(1);
         let (current, moved_at) = {
             let s = shared();
             (s.run == run, s.moved_at)
@@ -432,6 +448,23 @@ fn follow(app: AppHandle, run: u64, pid: u32) {
         if hub_api::drive::state()["running"] != true {
             close(&app);
             return;
+        }
+        // (the companion's server started again on another port, or Omsi-Hub's language changed:
+        // the device page there)
+        if ticks.is_multiple_of(URL_EVERY) {
+            if let Some(now) = hub_api::companion::device_url().filter(|u| *u != url) {
+                match now.parse::<tauri::Url>() {
+                    Ok(to) => {
+                        hub_core::log_line("boordcomputer: the device page moved, the window follows");
+                        let w = win.clone();
+                        let _ = app.run_on_main_thread(move || {
+                            let _ = w.navigate(to);
+                        });
+                    }
+                    Err(e) => hub_core::log_line(&format!("boordcomputer: the device page's address is wrong: {e}")),
+                }
+                url = now;
+            }
         }
         let look = look(&win, pid);
         // (the mouse button up: a move of the window by the system, or the page's size grip, is

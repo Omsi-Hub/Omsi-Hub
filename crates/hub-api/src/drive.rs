@@ -145,7 +145,8 @@ fn say(text: &str) -> String {
 }
 
 /// openOMSI's settings made ready for the drive: its own navigator and corner notes off (the
-/// on-board computer is the one device; the game shows no second map), full screen only told.
+/// on-board computer is the one device; the game shows no second map), full screen only told -
+/// but under Wayland, where no on-board computer shows over the game, they stay as they are.
 /// Returns the notes for the player. Never fails the launch: a settings file that cannot be
 /// read or written means no change (logged).
 pub fn prepare_settings(home: &Path) -> Vec<String> {
@@ -158,6 +159,8 @@ fn prepare_settings_for(home: &Path, wayland: bool) -> Vec<String> {
     let mut notes = Vec::new();
     let path = gs::path(home);
     match std::fs::read(&path).map(String::from_utf8) {
+        // (under Wayland no on-board computer shows over the game: openOMSI keeps its own)
+        Ok(Ok(_)) if wayland => {}
         Ok(Ok(text)) => {
             let mut changed = false;
             for key in ["navigator", "notes"] {
@@ -406,6 +409,19 @@ mod tests {
         let n = prepare_settings_for(&home, true);
         assert_eq!(n, vec![say(WAYLAND_NOTE)]);
         assert!(!hub_game::gamesettings::path(&home).exists());
+    }
+
+    #[test]
+    fn under_wayland_the_games_navigator_and_notes_stay_on() {
+        let home = std::env::temp_dir().join(format!("omsihub-prep-{}-d", std::process::id()));
+        let path = hub_game::gamesettings::path(&home);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let before = "navigator=1\r\nnotes=1\r\nfullscreen=1\r\n";
+        std::fs::write(&path, before).unwrap();
+        // (no on-board computer shows there: openOMSI keeps its own, and only the companion is said)
+        assert_eq!(prepare_settings_for(&home, true), vec![say(WAYLAND_NOTE)]);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), before);
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     #[test]
