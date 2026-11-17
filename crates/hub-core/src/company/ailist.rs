@@ -273,10 +273,13 @@ pub fn remove_all(content: &Path) -> usize {
     let Some(maps) = hub_omsi::vfs::find_child(content, "maps") else { return 0 };
     let mut n = 0;
     for e in std::fs::read_dir(maps).into_iter().flatten().flatten() {
-        let Some(dir) = hub_omsi::vfs::find_child(&e.path(), "Chrono").and_then(|c| hub_omsi::vfs::find_child(&c, FOLDER)) else { continue };
+        let Some(chrono) = hub_omsi::vfs::find_child(&e.path(), "Chrono") else { continue };
+        let Some(dir) = hub_omsi::vfs::find_child(&chrono, FOLDER) else { continue };
         if std::fs::remove_dir_all(&dir).is_ok() {
             n += 1;
         }
+        // (a Chrono folder that only held this one goes with it: openOMSI's copy as it was)
+        let _ = std::fs::remove_dir(&chrono);
     }
     n
 }
@@ -374,6 +377,11 @@ mod tests {
         std::fs::create_dir_all(content.join("maps").join("Town").join("Chrono").join("Fest")).unwrap();
         assert_eq!(remove_all(&content), 1);
         assert!(!f.exists() && content.join("maps").join("Town").join("Chrono").join("Fest").is_dir(), "the map's own Chrono stays");
+        // (a Chrono folder that held only the company's goes too)
+        let alone = folder_of(&content, "maps/Dorf/global.cfg").unwrap();
+        std::fs::create_dir_all(&alone).unwrap();
+        assert_eq!(remove_all(&content), 1);
+        assert!(!content.join("maps").join("Dorf").join("Chrono").exists());
         let _ = std::fs::remove_dir_all(&content);
     }
 }
