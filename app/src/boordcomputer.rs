@@ -16,7 +16,10 @@
 //!   window with `startDragging` (the move is the system's: the page never sees it end), so a
 //!   move is settled [`SETTLE`] after the window's last `Moved` event, once the mouse button is
 //!   up; the size grip's release (`boordcomputer_drop`) settles at once, and S / M / L keep the
-//!   device in its corner.
+//!   device in its corner. Where Omsi-Hub puts the window itself it is moved before it is sized
+//!   (a monitor of another scale rescales it on arrival), its own `Moved` events are not taken
+//!   for the player's, and a window that did not land where it was put is put right on the next
+//!   look ([`reapply`]).
 
 use serde_json::{json, Map, Value};
 use std::sync::{Mutex, MutexGuard};
@@ -36,6 +39,10 @@ const MIN_WIDTH: i32 = 360;
 const MAX_WIDTH: i32 = 1200;
 /// Let go this close to an edge (physical pixels), the device goes flush with it.
 const SNAP: i32 = 48;
+/// The window's `Moved` events this long after Omsi-Hub put it somewhere are its own.
+const QUIET: Duration = Duration::from_millis(500);
+/// How often the device is put where it belongs again when it did not land there.
+const RETRIES: u32 = 3;
 
 const CORNER_KEY: &str = "boordcomputer_corner";
 const OFFSET_KEY: &str = "boordcomputer_offset";
@@ -128,6 +135,19 @@ pub fn visible(foreground_pid: Option<u32>, game_pid: Option<u32>, game_minimise
     game_pid.is_some() && foreground_pid == game_pid && !game_minimised
 }
 
+/// Whether the device is put at `wanted` (now `tries` times again since it was first put there):
+/// Some(the new count) when it is somewhere new, or - a few times, not forever - when the window
+/// (`actual`) did not land there (a monitor of another scale rescales the window as it moves).
+pub fn reapply(wanted: Rect, placed: Option<Rect>, actual: Option<Rect>, tries: u32) -> Option<u32> {
+    if placed != Some(wanted) {
+        return Some(0);
+    }
+    match actual {
+        Some(a) if a != wanted && tries < RETRIES => Some(tries + 1),
+        _ => None,
+    }
+}
+
 /// Where the player keeps the device (the settings), in logical pixels.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Spot {
@@ -175,13 +195,19 @@ struct Shared {
     /// The current drive's number: a thread of an earlier one stops when it changed.
     run: u64,
     spot: Spot,
-    /// Where the device was last put (its own `Moved` events there are not the player's).
+    /// Where the device was last put.
     placed: Option<Rect>,
+    /// When it was last put there: the `Moved` events for [`QUIET`] after are Omsi-Hub's own
+    /// (the moves are asynchronous, and a monitor of another scale makes the system move and
+    /// size it once more).
+    applied_at: Option<Instant>,
+    /// How often it was put at `placed` again because it was not there ([`reapply`]).
+    tries: u32,
     /// When the player last moved or sized it, while that is not settled.
     moved_at: Option<Instant>,
 }
 
-static SHARED: Mutex<Shared> = Mutex::new(Shared { run: 0, spot: Spot::DEFAULT, placed: None, moved_at: None });
+static SHARED: Mutex<Shared> = Mutex::new(Shared { run: 0, spot: Spot::DEFAULT, placed: None, applied_at: None, tries: 0, moved_at: None });
 
 fn shared() -> MutexGuard<'static, Shared> {
     SHARED.lock().unwrap_or_else(|e| e.into_inner())
@@ -280,10 +306,11 @@ fn build(app: &AppHandle, url: &str) -> Result<WebviewWindow, String> {
         win32::not_activating(hwnd);
     }
     win.on_window_event(|e| {
-        if let WindowEvent::Moved(p) = e {
+        if let WindowEvent::Moved(_) = e {
             let mut s = shared();
-            // (not before it was placed, and not where it was put: those moves are Omsi-Hub's)
-            if s.placed.is_some_and(|r| (r.x, r.y) != (p.x, p.y)) {
+            // (not before it was placed, and not just after Omsi-Hub put it: those moves are
+            // its own, wherever they land - a correction follows on the next look)
+            if s.placed.is_some() && s.applied_at.is_none_or(|t| t.elapsed() >= QUIET) {
                 s.moved_at = Some(Instant::now());
             }
         }
@@ -295,21 +322,35 @@ fn build(app: &AppHandle, url: &str) -> Result<WebviewWindow, String> {
 // commands, the window's events, and what the thread following the game asks for there), so
 // one never undoes another half-way.
 
-/// The device put at `r` (main thread).
+/// The device put at `r` (main thread): moved first, so it is sized on the monitor it goes to
+/// (moved onto a monitor of another scale, the system rescales it), then put there once more.
 fn apply(win: &WebviewWindow, r: Rect) {
-    shared().placed = Some(r);
+    {
+        let mut s = shared();
+        if s.placed != Some(r) {
+            s.tries = 0;
+        }
+        s.placed = Some(r);
+        s.applied_at = Some(Instant::now());
+    }
+    let _ = win.set_position(PhysicalPosition::new(r.x, r.y));
     let _ = win.set_size(PhysicalSize::new(r.w.max(1) as u32, r.h.max(1) as u32));
     let _ = win.set_position(PhysicalPosition::new(r.x, r.y));
+}
+
+/// Where the window is now (physical pixels).
+fn actual(win: &WebviewWindow) -> Option<Rect> {
+    let (pos, size) = (win.outer_position().ok()?, win.outer_size().ok()?);
+    Some(Rect { x: pos.x, y: pos.y, w: size.width as i32, h: size.height as i32 })
 }
 
 /// Where the player let the device go: snapped to the nearest corner, kept, and put there
 /// (main thread).
 fn settle(win: &WebviewWindow) {
-    let (Ok(pos), Ok(size), Some(screen)) = (win.outer_position(), win.outer_size(), screen_of(win)) else {
+    let (Some(at), Some(screen)) = (actual(win), screen_of(win)) else {
         shared().moved_at = None;
         return;
     };
-    let at = Rect { x: pos.x, y: pos.y, w: size.width as i32, h: size.height as i32 };
     let (corner, offset) = snap(screen.rect, at);
     let logical = |v: i32| (f64::from(v) / screen.scale).round() as i32;
     let spot = Spot { corner, offset: (logical(offset.0), logical(offset.1)), width: logical(at.w).clamp(MIN_WIDTH, MAX_WIDTH) };
@@ -393,32 +434,41 @@ fn follow(app: AppHandle, run: u64, pid: u32) {
             return;
         }
         let look = look(&win, pid);
-        // (a move let go: the mouse button up - the system's move of the window, or the page's
-        // size grip, is over)
-        let let_go = moved_at.is_some_and(|t| t.elapsed() >= SETTLE) && !button_down();
+        // (the mouse button up: a move of the window by the system, or the page's size grip, is
+        // over - and none is starting either)
+        let held = button_down();
+        let let_go = moved_at.is_some_and(|t| t.elapsed() >= SETTLE) && !held;
         let show = look.show.filter(|s| *s != shown);
         shown = show.unwrap_or(shown);
-        let _ = app.run_on_main_thread(move || tend(&win, look.screen, let_go, show));
+        let _ = app.run_on_main_thread(move || tend(&win, look.screen, let_go, held, show));
     }
 }
 
-/// On the main thread, for the thread following the game: a move let go settled, else the
-/// device kept in its place on `screen`; then shown or hidden.
-fn tend(win: &WebviewWindow, screen: Option<Screen>, let_go: bool, show: Option<bool>) {
-    let (moved_at, spot, placed) = {
+/// On the main thread, for the thread following the game: a move let go settled, else (the
+/// mouse button up) the device kept in its place on `screen`, put right when it is not there;
+/// then shown or hidden.
+fn tend(win: &WebviewWindow, screen: Option<Screen>, let_go: bool, held: bool, show: Option<bool>) {
+    let (moved_at, spot, placed, tries) = {
         let s = shared();
-        (s.moved_at, s.spot, s.placed)
+        (s.moved_at, s.spot, s.placed, s.tries)
     };
     match (moved_at, screen) {
         // (not when it moved again since it was looked at)
         (Some(t), _) if let_go && t.elapsed() >= SETTLE => settle(win),
-        (Some(_), _) | (None, None) => {}
-        (None, Some(screen)) => {
+        (None, Some(screen)) if !held => {
             let r = place(screen.rect, spot.corner, spot.offset, spot.width, screen.scale);
-            if placed != Some(r) {
-                apply(win, r);
+            let now = actual(win);
+            match reapply(r, placed, now, tries) {
+                Some(tries) => {
+                    apply(win, r);
+                    shared().tries = tries;
+                }
+                // (there: a later change of scale may be put right again)
+                None if now == Some(r) && tries > 0 => shared().tries = 0,
+                None => {}
             }
         }
+        _ => {}
     }
     if let Some(show) = show {
         set_shown(win, show);
@@ -664,6 +714,21 @@ mod tests {
             let other = json!({ CORNER_KEY: c.name() }).as_object().cloned().unwrap();
             assert_eq!(Spot::of(&other).corner, c);
         }
+    }
+
+    /// Put on a monitor of another scale, the window is rescaled by the system as it lands: the
+    /// next look puts it right, a few times at most; somewhere new it is always put.
+    #[test]
+    fn a_boordcomputer_that_did_not_land_where_it_was_put_is_put_again() {
+        let wanted = Rect { x: 1700, y: 900, w: 840, h: 571 };
+        let inflated = Rect { x: 1700, y: 900, w: 1260, h: 857 };
+        assert_eq!(reapply(wanted, None, None, 0), Some(0), "never put yet");
+        assert_eq!(reapply(wanted, Some(Rect { x: 0, ..wanted }), Some(inflated), 3), Some(0), "somewhere new");
+        assert_eq!(reapply(wanted, Some(wanted), Some(wanted), 0), None, "there");
+        assert_eq!(reapply(wanted, Some(wanted), Some(inflated), 0), Some(1), "rescaled");
+        assert_eq!(reapply(wanted, Some(wanted), Some(Rect { x: 1690, ..wanted }), 2), Some(3), "nudged");
+        assert_eq!(reapply(wanted, Some(wanted), Some(inflated), RETRIES), None, "not forever");
+        assert_eq!(reapply(wanted, Some(wanted), None, 0), None, "not known where it is");
     }
 
     /// The remote page may call the device's commands and drag its window from Omsi-Hub's own
