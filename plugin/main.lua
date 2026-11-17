@@ -221,11 +221,14 @@ local function board_facts()
   local passengers = fn("bus.passengers") and omsi.bus.passengers() or nil
   local trip = require("trip")
   local line = assignment.line or ""
-  return company.facts(parts(), assignment, {
+  local f = company.facts(parts(), assignment, {
     duty = d, trips = d and fn("duty.trips") and omsi.duty.trips() or {}, clock = clock() or 0,
     boarded = { trip.boarded_on_trip(), trip.boarded_total(), passengers },
     signed = signon.signed(), can_start = signon.at_work() and not d and has["duty.start"] == true and line ~= "",
   })
+  -- (the control room's hold under way: `until`, `left`)
+  f.hold = require("messages").hold()
+  return f
 end
 
 -- the IBIS: typed by the game as each trip begins, unless Omsi-Hub says the driver types it -
@@ -401,7 +404,14 @@ companion.setup({
   sign_off = function()
     -- (only at work: not while the driver still signs on or has the duty order to accept)
     if not signon.at_work() then return false end
-    return strip.sign_off()
+    -- (the walk-around opens; with a pass the driver is back at the sign-on, and the game no
+    -- longer types the IBIS)
+    local ok = strip.sign_off()
+    if signon.sign_off() then
+      ibis_rule()
+      ok = true
+    end
+    return ok
   end,
   part = function(id, on)
     if not company.LABELS[id] then return false end

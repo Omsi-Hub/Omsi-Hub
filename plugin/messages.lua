@@ -71,9 +71,9 @@ local function hhmm(t)
   return string.format("%02d:%02d", (m // 60) % 24, m % 60)
 end
 
--- a notification for a while (notes.lua; `sticky`: until it is closed)
+-- a notification for a while (notes.lua; `sticky`: until it is closed); its number
 local function tell(text, title, icon, color, seconds, sticky)
-  notes.say(text, { title = title, icon = icon, color = color, seconds = seconds or 8, sticky = sticky })
+  return notes.say(text, { title = title, icon = icon, color = color, seconds = seconds or 8, sticky = sticky })
 end
 
 local function sound(priority)
@@ -215,8 +215,9 @@ function M.arrive(number)
       table.remove(todo, i)
       local now = clock()
       if now then
+        -- (its note stays until the hold is over)
         hold = { until_ = now + t.minutes * 60 }
-        tell(tr("Hold here for %{m} min", { m = t.minutes }), tr("Hold"), "timer", COLOR.instruction)
+        hold.note = tell(tr("Hold here for %{m} min", { m = t.minutes }), tr("Hold"), "timer", COLOR.instruction, nil, true)
       end
     elseif t.kind == "relief" and (t.name == "" or t.name == stop.name or t.name == (d.previous_stop or {}).name) then
       table.remove(todo, i)
@@ -290,10 +291,19 @@ function M.tick()
   if hold then
     local now = clock()
     if now and now >= hold.until_ then
+      if hold.note then notes.close(hold.note) end
       hold = nil
       tell(tr("Hold over: carry on"), tr("Hold"), "play_arrow", COLOR.info)
     end
   end
+end
+
+-- the hold under way, for the on-board computer's board: `until` (the game's clock, s of the
+-- day) and `left` (whole seconds); nil when there is none
+function M.hold()
+  if not hold then return nil end
+  local now = clock() or hold.until_
+  return { ["until"] = math.floor(hold.until_ + 0.5), left = math.max(math.ceil(hold.until_ - now), 0) }
 end
 
 -- the answers, one each (the on-board computer's and the phone's commands)

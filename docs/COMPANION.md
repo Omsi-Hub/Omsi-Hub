@@ -192,7 +192,9 @@ once after every answer (and backs off 2 s → 10 s after errors). `after` omitt
   // not sent it yet or was not heard for 5 s.
   "strip": { },                    // the duty strip: rows, checks, notes put on it
   "ontime": { },                   // the on-time / delay display
-  "board": { },                    // the board of the next stops
+  "board": { },                    // the company's board: parts, status, coach, fares, contract;
+                                   // "hold": { "until": 29100, "left": 42 } while the control
+                                   // room's hold runs (game clock, s of the day; whole seconds)
   "notes": [ ],                    // the trip's notes, all pages put together in order
   "card": { },                     // the trip card; absent when none is open
   "features": { "ibis": true, "printer": true, "nav": true, "messages": true, "signon": true }
@@ -381,7 +383,7 @@ To `127.0.0.1:47812` (`companion_udp_port`), each one JSON object with `t`:
 | `trips` | on change | the duty's trips |
 | `strip` | on change | the duty strip (sent whole; the latest one counts). For `strip`, `ontime`, `board` and `card` a datagram with nothing but `t` clears that part: the state omits it |
 | `ontime` | on change | the on-time display (sent whole) |
-| `board` | on change | the board of the next stops (sent whole) |
+| `board` | on change | the company's board, with the control room's `hold` while one runs (sent whole) |
 | `notes` | on change | the trip's notes (paged like `trip`: `v`, `page`, `pages`, items in `notes`) |
 | `card` | on change | the trip card (sent whole); `{"t":"card"}` alone: the card was closed |
 | `dev` | 0.5 s | the IBIS and printer variables and strings, `ticket_request`, `sales` |

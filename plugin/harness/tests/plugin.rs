@@ -520,6 +520,24 @@ fn nothing_is_drawn_while_driving() {
             h.frame().unwrap();
         }
         h.fire("stop_arrive", &[json!(null), json!(null), json!(1), json!(0.0)]).unwrap();
+        // the hold on the on-board computer's board while it runs, its note until it is over (the
+        // game's clock going on with the frames)
+        for _ in 0..30 {
+            h.state.borrow_mut().clock += 1.0;
+            h.frame().unwrap();
+        }
+        let board = sent(&h, "board").pop().unwrap();
+        let hold = &board["hold"];
+        assert!(hold["until"].is_number() && hold["left"].as_i64().is_some_and(|l| l > 0 && l <= 60), "{board}");
+        assert!(notes(&h).last().unwrap().iter().any(|n| n.contains("Hold here for 1 min")), "{:?}", notes(&h).last());
+        for _ in 0..40 {
+            h.state.borrow_mut().clock += 1.0;
+            h.frame().unwrap();
+        }
+        let board = sent(&h, "board").pop().unwrap();
+        assert!(board.get("hold").is_none(), "the hold over: {board}");
+        let last = notes(&h).pop().unwrap();
+        assert!(last.iter().any(|n| n.contains("Hold over")) && !last.iter().any(|n| n.contains("Hold here")), "{last:?}");
         h.fire("red_light", &[json!(30.0)]).unwrap();
         h.fire("trip_done", &[json!(1), json!("arrived"), json!(95.0), json!(88.0), json!(100.0)]).unwrap();
         // (the keys that once opened the inbox, gave the panels the mouse and closed the card)

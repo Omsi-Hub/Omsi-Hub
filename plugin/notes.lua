@@ -16,7 +16,7 @@ local list = {}
 local seq = 0
 
 -- `text` told the driver; `opts`: title, icon, color, seconds (about how long it is worth
--- showing), sticky
+-- showing), sticky. Its number (to `close` it).
 function M.say(text, opts)
   opts = opts or {}
   seq = seq + 1
@@ -25,6 +25,7 @@ function M.say(text, opts)
     left = math.max((tonumber(opts.seconds) or 8) * 3, 20), sticky = opts.sticky == true,
   })
   while #list > KEPT do table.remove(list) end
+  return seq
 end
 
 -- every second: the ones whose time is up go

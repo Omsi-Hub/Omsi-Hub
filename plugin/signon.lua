@@ -44,6 +44,14 @@ function M.accept(accepted)
   return true
 end
 
+-- the driver signed off: back at the sign-on, where there is a pass to sign on with again;
+-- whether there was
+function M.sign_off()
+  if not pass then return false end
+  M.stage, wrong = "signon", false
+  return true
+end
+
 -- the last number and code were not the driver's
 function M.wrong()
   return wrong

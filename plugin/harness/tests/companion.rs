@@ -651,8 +651,13 @@ fn the_driver_signs_on_works_and_signs_off() {
     command(&dir, &mut h, json!([{ "seq": 2, "do": "sign_on", "number": "482913", "code": "5821" }, { "seq": 3, "do": "accept_order" }]));
     assert_eq!(sent(&h, "live").last().unwrap()["signon"], "work");
     assert_eq!(h.state.borrow().started.len(), 1);
+    assert_eq!(h.state.borrow().ibis.last().map(String::as_str), Some("auto on"));
     command(&dir, &mut h, json!([{ "seq": 4, "do": "sign_off" }]));
     assert_eq!(acks(&h).last().unwrap(), &(4, true, String::new()));
+    // (signed off: back at the sign-on, the game no longer types the IBIS)
+    frames(&mut h, 2);
+    assert_eq!(sent(&h, "live").last().unwrap()["signon"], "signon");
+    assert_eq!(h.state.borrow().ibis.last().map(String::as_str), Some("auto off"));
 }
 
 #[test]
