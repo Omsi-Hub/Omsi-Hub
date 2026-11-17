@@ -398,7 +398,12 @@ impl Server {
         let listener = TcpListener::bind(listen)?;
         let addr = listener.local_addr()?;
         listener.set_nonblocking(true)?;
-        let socket = UdpSocket::bind(udp)?;
+        // (the plugin reads the port from the queue file: another free one will do)
+        let socket = match UdpSocket::bind(udp) {
+            Err(_) if udp.port() != 0 => UdpSocket::bind(SocketAddr::new(udp.ip(), 0))?,
+            bound => bound?,
+        };
+        shared.lock().queue.port = socket.local_addr()?.port();
         socket.set_read_timeout(Some(Duration::from_millis(250)))?;
         let stop = Arc::new(AtomicBool::new(false));
         if let Some(d) = shared.source.plugin_dir() {
@@ -539,7 +544,10 @@ pub fn handle(req: &Request, shared: &Arc<Shared>) -> Response {
             let gzip = req.header("accept-encoding").is_some_and(|v| v.split(',').any(|e| e.trim().starts_with("gzip")));
             crate::web::answer(&path, gzip).unwrap_or_else(|| Response::error(404, "not_found"))
         }
-        Route::Hello => Response::json(&json!({ "app": "omsi-hub", "api": crate::API, "version": shared.cfg.version, "name": shared.cfg.name, "pairing": true })),
+        Route::Hello => Response::json(&json!({ "app": "omsi-hub", "api": crate::API, "version": shared.cfg.version, "name": shared.cfg.name, "pairing": shared.cfg.lan })),
+        // (Omsi-Hub's own window needs no pairing: nobody pairs with a server that listens on this
+        // computer only)
+        Route::Pair if !shared.cfg.lan => Response::error(403, "pairing_off"),
         Route::Pair => {
             let body = req.json();
             let code = body.get("code").and_then(Value::as_str).unwrap_or("");
@@ -837,6 +845,16 @@ mod tests {
         // (it is no device: not seen, not kept)
         assert!(sh.lock().seen.is_empty());
         assert!(sh.lock().pairing.devices.is_empty());
+    }
+
+    #[test]
+    fn nobody_pairs_with_a_server_that_listens_on_this_computer_only() {
+        let (sh, _) = shared("pair-off");
+        let shared_off = Arc::new(Shared::new(Config { lan: false, ..sh.cfg.clone() }, sh.source.clone(), "123456".into(), 9));
+        let r = handle(&req("POST", "/api/pair", None, r#"{"code":"123456","device":"Pixel"}"#), &shared_off);
+        assert_eq!(r.status, 403);
+        assert!(shared_off.lock().pairing.devices.is_empty());
+        assert_eq!(handle(&req("POST", "/api/pair", None, r#"{"code":"123456","device":"Pixel"}"#), &sh).status, 200);
     }
 
     #[test]

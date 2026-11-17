@@ -282,6 +282,17 @@ mod tests {
     }
 
     #[test]
+    fn a_taken_plugin_port_falls_back_to_a_free_one_the_plugin_is_told() {
+        let held = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let mut cfg = config("udp-taken", false, 0);
+        cfg.udp_port = held.local_addr().unwrap().port();
+        let c = Companion::start(cfg, Arc::new(Nothing)).unwrap();
+        let told = c.server.shared.lock().queue.port;
+        assert_ne!(told, held.local_addr().unwrap().port());
+        assert_ne!(told, 0);
+    }
+
+    #[test]
     fn the_server_answers_on_the_network_and_hears_the_plugin() {
         use std::io::{Read, Write};
         let dir = std::env::temp_dir().join(format!("hub-companion-start-{}", std::process::id()));

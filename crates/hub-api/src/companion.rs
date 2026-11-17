@@ -40,6 +40,7 @@ const PORT: &str = "companion_port";
 /// (`hub_companion::server::lan_peer`) and only paired devices on. Read and set through the
 /// firewall's own API by Omsi-Hub itself (`hub_firewall`), never by a script.
 pub mod firewall {
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Mutex;
 
     pub use hub_firewall::{check, fix, from_args, RULE};
@@ -79,8 +80,20 @@ pub mod firewall {
         *GATE.lock().unwrap_or_else(|e| e.into_inner())
     }
 
+    /// Whether the phones are let in at all (the server listens on the network): a look that
+    /// began before it stopped does not go on to set the firewall or the word.
+    static LAN: AtomicBool = AtomicBool::new(false);
+
     fn set(g: Gate) {
-        *GATE.lock().unwrap_or_else(|e| e.into_inner()) = g;
+        if LAN.load(Ordering::SeqCst) {
+            *GATE.lock().unwrap_or_else(|e| e.into_inner()) = g;
+        }
+    }
+
+    /// The server no longer listens on the network: nothing to look at or set right.
+    pub fn stop() {
+        LAN.store(false, Ordering::SeqCst);
+        *GATE.lock().unwrap_or_else(|e| e.into_inner()) = Gate::Unknown;
     }
 
     /// Look (and with `fix_it`, set it right when it is shut), on a thread of its own: Windows'
@@ -91,6 +104,7 @@ pub mod firewall {
         }
         let Ok(exe) = std::env::current_exe() else { return };
         let exe = exe.to_string_lossy().to_string();
+        LAN.store(true, Ordering::SeqCst);
         set(Gate::Checking);
         let _ = std::thread::Builder::new().name("companion firewall".into()).spawn(move || {
             let open = check(&exe, port);
@@ -100,6 +114,9 @@ pub mod firewall {
             }
             if !fix_it {
                 set(Gate::Shut);
+                return;
+            }
+            if !LAN.load(Ordering::SeqCst) {
                 return;
             }
             set(Gate::Asking);
@@ -211,12 +228,20 @@ pub fn device_url() -> Option<String> {
 /// Start the server (`port`; for the home network's devices when `lan`, else for this computer
 /// only), stopping one that runs.
 fn start(port: u16, lan: bool) -> Result<(), String> {
+    start_with(port, hub_companion::UDP_PORT, lan)
+}
+
+/// [`start`] with the plugin's port given (the tests take a free one: the game's may be in use).
+fn start_with(port: u16, udp_port: u16, lan: bool) -> Result<(), String> {
+    if !lan {
+        firewall::stop();
+    }
     let mut running = RUNNING.lock().unwrap_or_else(|e| e.into_inner());
     // (the old one lets its ports go first)
     *running = None;
     let cfg = Config {
         port,
-        udp_port: hub_companion::UDP_PORT,
+        udp_port,
         name: computer_name(),
         version: env!("CARGO_PKG_VERSION").into(),
         devices_file: hub_core::data_dir().join(hub_companion::DEVICES_FILE),
@@ -239,11 +264,22 @@ fn start(port: u16, lan: bool) -> Result<(), String> {
     }
 }
 
+/// [`start`] for the setting: when the network side will not open (its port is taken), the
+/// server still runs for this computer, and the failure stays in the state.
+fn start_for(port: u16, lan: bool) -> Result<(), String> {
+    let started = start(port, lan);
+    if let (Err(text), true) = (&started, lan) {
+        let _ = start(port, false);
+        *FAILED.lock().unwrap_or_else(|e| e.into_inner()) = text.clone();
+    }
+    started
+}
+
 /// With the app: the server started, for the home network's devices when the player has it on.
 pub fn start_always() {
     let s = Settings::load();
     let (lan, port) = (setting_on(&s), setting_port(&s));
-    if start(port, lan).is_ok() && lan {
+    if start_for(port, lan).is_ok() && lan {
         // (looked at; set right only when the player turns it on or asks - Windows' question
         // should not come out of the blue as the app starts)
         firewall::watch(port, false);
@@ -277,7 +313,7 @@ pub fn call(cmd: &str, args: &Value, _p: &dyn Platform) -> Answer {
             s.save().map_err(|e| e.to_string())?;
             // (a port that will not open says so in the state; off, the server stays for
             // Omsi-Hub's own window, on this computer only)
-            if start(port, on).is_ok() && on {
+            if start_for(port, on).is_ok() && on {
                 firewall::watch(port, true);
             }
             Ok(state())
@@ -289,7 +325,8 @@ pub fn call(cmd: &str, args: &Value, _p: &dyn Platform) -> Answer {
             Ok(state())
         }
         "hub_companion_firewall" => {
-            let port = RUNNING.lock().unwrap_or_else(|e| e.into_inner()).as_ref().map(Companion::port);
+            // (only a server that listens on the network has a firewall to set right)
+            let port = RUNNING.lock().unwrap_or_else(|e| e.into_inner()).as_ref().filter(|c| c.lan()).map(Companion::port);
             if let Some(port) = port {
                 firewall::watch(port, true);
             }
@@ -317,14 +354,32 @@ mod tests {
         assert_eq!(map_name("/home/luc/.steam/steamapps/common/OMSI 2/Maps/Ruhrau/global.cfg"), "Maps/Ruhrau/global.cfg");
     }
 
+    /// The tests that start the server share the one that runs.
+    static SERVER: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn a_taken_network_port_leaves_the_server_on_this_computer() {
+        let _one = SERVER.lock().unwrap_or_else(|e| e.into_inner());
+        let held = std::net::TcpListener::bind("0.0.0.0:0").unwrap();
+        let port = held.local_addr().unwrap().port();
+        assert!(start_for(port, true).is_err());
+        assert!(FAILED.lock().unwrap_or_else(|e| e.into_inner()).contains("taken"));
+        assert!(RUNNING.lock().unwrap_or_else(|e| e.into_inner()).as_ref().is_some_and(|c| !c.lan()));
+        assert!(device_url().is_some());
+        *RUNNING.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        FAILED.lock().unwrap_or_else(|e| e.into_inner()).clear();
+    }
+
     #[test]
     fn local_key_survives_a_restart() {
+        let _one = SERVER.lock().unwrap_or_else(|e| e.into_inner());
         let key = |u: Option<String>| u.and_then(|u| u.split("#key=").nth(1).map(str::to_string));
-        // (loopback only, so no firewall and no settings are touched; a free port)
-        assert!(start(0, false).is_ok());
+        // (loopback only, so no firewall is touched; free ports, the game's may be in use. It
+        // does set the server and log a line, as the app does)
+        assert!(start_with(0, 0, false).is_ok());
         let first = key(device_url());
         assert!(first.as_ref().is_some_and(|k| k.len() == 32));
-        assert!(start(0, false).is_ok());
+        assert!(start_with(0, 0, false).is_ok());
         assert_eq!(key(device_url()), first);
         assert!(device_url().is_some_and(|u| u.starts_with("http://127.0.0.1:")));
         *RUNNING.lock().unwrap_or_else(|e| e.into_inner()) = None;
