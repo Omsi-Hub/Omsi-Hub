@@ -501,6 +501,23 @@ impl Session {
         self.vehicles.is_some()
     }
 
+    /// A livery the livery studio saved into the game for `buses`: among their paints at once
+    /// (the buses are read only once - without it the bus's window did not know the livery the
+    /// company had just paid for, and showed its own livery instead).
+    pub fn paint_added(&mut self, buses: &[String], name: &str) {
+        let Some(list) = self.vehicles.as_mut() else { return };
+        let mut added = false;
+        for v in Arc::make_mut(list).iter_mut().filter(|v| buses.iter().any(|b| b.eq_ignore_ascii_case(&v.file))) {
+            if !v.paints.iter().any(|p| p.eq_ignore_ascii_case(name)) {
+                v.paints.push(name.to_string());
+                added = true;
+            }
+        }
+        if added {
+            self.generation += 1;
+        }
+    }
+
     /// The maps (read the first time they are asked for).
     pub fn maps(&mut self) -> Arc<Vec<core::MapInfo>> {
         if self.maps.is_none() {

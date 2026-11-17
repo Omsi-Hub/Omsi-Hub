@@ -13,7 +13,8 @@
 
 import { html, useEffect, useRef, useState } from '../../../../vendor/preact-htm.js';
 import { S, set, useStore } from '../../../store.js';
-import { call } from '../../../api.js';
+import { call as ask } from '../../../api.js';
+import { language } from '../../../i18n.js';
 import { choose } from '../../drive.js';
 import { Btn, Field, Icon, IconBtn, status, tr } from '../../../editors/kit.js';
 import { Bus3D } from '../viewer.js';
@@ -22,6 +23,10 @@ import { forgetPhotos } from '../../photos.js';
 import { inverse } from '../math.js';
 import * as M from './model.js';
 import { Panel } from './panels.js';
+
+/** The studio's commands in the page's language: what they say - the save's button and its cost,
+ * the message once saved, a refusal - came in English without it. */
+const call = (cmd, args = {}) => ask(cmd, cmd.startsWith('lak_') ? { ...args, lang: language() } : args);
 
 // (the studio's look, loaded with it)
 if (!document.querySelector('link[data-lak-css]')) {

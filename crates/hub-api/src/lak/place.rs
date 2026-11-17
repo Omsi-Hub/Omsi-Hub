@@ -246,6 +246,9 @@ fn saved(s: Saving, files: Vec<String>) -> Value {
     let mut text = tr("'%{name}' is in the game: choose it on the bus step.").replace("%{name}", &name);
     let mut changed = None;
     let mut popup = Value::Null;
+    // (the bus company's buses know the new livery at once: its own bus and its family's)
+    let buses: Vec<String> = std::iter::once(project.bus.clone()).chain(project.family.iter().cloned()).collect();
+    company::with(|s| s.paint_added(&buses, &name));
     if let Some((id, vehicle)) = company {
         let bus = project.bus.clone();
         let booked = company::with(|s| {
