@@ -205,6 +205,10 @@ the Companion on a phone or tablet, which shows the same screens.
 - **openOMSI's full screen.** Check what `fullscreen=1` is in openOMSI (exclusive or borderless)
   and make sure a drive with the on-board computer runs in a mode where the window shows; tell
   the player in the app if Omsi-Hub has to change it.
+  *Status:* not checked in the real game yet. `drive::prepare_settings` currently only warns
+  (a note with the `game-started` event) when `fullscreen=1` and leaves the setting alone; whether
+  the window shows over openOMSI's full screen, and whether Omsi-Hub should set `fullscreen=0`
+  itself, still has to be tried with the real game.
 - **The local server.** How the window gets data with Phone & tablet off: e.g. the server always
   listening on `127.0.0.1` (a loopback listener needs no firewall rule - 1.2.1 fixed a crash on
   the firewall), and the window given a device key by Omsi-Hub itself instead of a pairing code;
