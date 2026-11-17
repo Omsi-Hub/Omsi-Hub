@@ -348,8 +348,9 @@ fn main() {
             hub_core::log_line(&format!("app {} started", env!("CARGO_PKG_VERSION")));
             // (a company's AI list left in the game's folders by a game that did not end well)
             std::thread::spawn(hub_api::company::fleetgame::startup);
-            // (the phone and tablet companion, when the player has it on)
-            hub_api::companion::start_if_on();
+            // (the companion's server: on this computer for the on-board computer, and for the
+            // phones and tablets when the player has them on)
+            hub_api::companion::start_always();
             let _ = app.get_webview_window("main");
             Ok(())
         })

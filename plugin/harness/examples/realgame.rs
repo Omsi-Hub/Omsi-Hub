@@ -64,7 +64,15 @@ fn main() {
     let roots = vec![PathBuf::from(omsi), PathBuf::from(openomsi)];
 
     let devices = std::env::temp_dir().join("hub-realgame-devices.json");
-    let cfg = Config { port: hub_companion::DEFAULT_PORT, udp_port: hub_companion::UDP_PORT, name: "Real game".into(), version: env!("CARGO_PKG_VERSION").into(), devices_file: devices };
+    let cfg = Config {
+        port: hub_companion::DEFAULT_PORT,
+        udp_port: hub_companion::UDP_PORT,
+        name: "Real game".into(),
+        version: env!("CARGO_PKG_VERSION").into(),
+        devices_file: devices,
+        lan: true,
+        local_key: hub_companion::random_key(),
+    };
     let companion = Companion::start(cfg, Arc::new(Game { plugin, roots })).expect("the companion's ports are free");
     let status = companion.status();
     println!("companion on port {}, pairing code {}", companion.port(), status["code"].as_str().unwrap_or("?"));

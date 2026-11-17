@@ -523,9 +523,13 @@ pub fn handle(req: &Request, shared: &Arc<Shared>) -> Response {
     let route = http::route(req);
     if route.needs_key() {
         let mut i = shared.lock();
-        let Some(d) = i.pairing.device_of(req.key()) else { return Response::error(401, "not_paired") };
-        let hash = i.pairing.devices[d].hash.clone();
-        i.seen.insert(hash, unix_now());
+        // (Omsi-Hub's own window: no pairing, and not among the devices)
+        let local = !shared.cfg.local_key.is_empty() && req.key() == shared.cfg.local_key;
+        if !local {
+            let Some(d) = i.pairing.device_of(req.key()) else { return Response::error(401, "not_paired") };
+            let hash = i.pairing.devices[d].hash.clone();
+            i.seen.insert(hash, unix_now());
+        }
     }
     match route {
         Route::Preflight => Response::new(204, "text/plain; charset=utf-8", ""),
@@ -768,6 +772,8 @@ mod tests {
         }
     }
 
+    const LOCAL: &str = "0123456789abcdef0123456789abcdef";
+
     fn shared(tag: &str) -> (Arc<Shared>, PathBuf) {
         shared_with(tag, false)
     }
@@ -776,7 +782,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("hub-companion-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("data")).unwrap();
-        let cfg = Config { port: 0, udp_port: 0, name: "Test-PC".into(), version: "0.1.0".into(), devices_file: dir.join("devices.json") };
+        let cfg = Config { port: 0, udp_port: 0, name: "Test-PC".into(), version: "0.1.0".into(), devices_file: dir.join("devices.json"), lan: true, local_key: LOCAL.into() };
         let omsi = bus.then(|| dir.join("OMSI 2"));
         if let Some(o) = &omsi {
             hub_devices::testbus::write(o).unwrap();
@@ -820,6 +826,17 @@ mod tests {
         assert!(kept.contains("Pixel") && !kept.contains(&key));
         assert!(sh.lock().seen.contains_key(&pairing::hash_key(&key)));
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn the_local_key_is_let_in_without_pairing() {
+        let (sh, _) = shared("local-key");
+        assert_eq!(handle(&req("GET", "/api/state?after=0", Some(LOCAL), ""), &sh).status, 200);
+        assert_eq!(handle(&req("GET", "/api/state?after=0", Some(&crate::random_key()), ""), &sh).status, 401);
+        assert_eq!(handle(&req("GET", "/api/state?after=0", None, ""), &sh).status, 401);
+        // (it is no device: not seen, not kept)
+        assert!(sh.lock().seen.is_empty());
+        assert!(sh.lock().pairing.devices.is_empty());
     }
 
     #[test]
