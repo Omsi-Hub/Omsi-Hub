@@ -95,7 +95,8 @@ impl Heard {
                 let k = k.to_owned();
                 let Value::Object(mut m) = d else { return false };
                 m.remove("t");
-                let part = Some(Value::Object(m));
+                // (nothing but `t`: the part is gone, a closed card for one)
+                let part = (!m.is_empty()).then_some(Value::Object(m));
                 let slot = match k.as_str() {
                     "strip" => &mut self.strip,
                     "ontime" => &mut self.ontime,

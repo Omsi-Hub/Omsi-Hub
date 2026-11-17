@@ -379,11 +379,11 @@ To `127.0.0.1:47812` (`companion_udp_port`), each one JSON object with `t`:
 | `alive` | 1 s | nothing: the game is there, also while it is busy and the others wait until its frames run smoothly again |
 | `trip` | on change | the trip's stops (paged: `page`, `pages`, ≤ 25 stops a page) |
 | `trips` | on change | the duty's trips |
-| `strip` | on change | the duty strip (sent whole; the latest one counts) |
+| `strip` | on change | the duty strip (sent whole; the latest one counts). For `strip`, `ontime`, `board` and `card` a datagram with nothing but `t` clears that part: the state omits it |
 | `ontime` | on change | the on-time display (sent whole) |
 | `board` | on change | the board of the next stops (sent whole) |
 | `notes` | on change | the trip's notes (paged like `trip`: `v`, `page`, `pages`, items in `notes`) |
-| `card` | on change | the trip card (sent whole) |
+| `card` | on change | the trip card (sent whole); `{"t":"card"}` alone: the card was closed |
 | `dev` | 0.5 s | the IBIS and printer variables and strings, `ticket_request`, `sales` |
 | `keys` | 5 s | the bus's triggers that belong to the IBIS, the printer and the change dispenser, and the map's tickets |
 | `lines` | 10 s | the map's lines and tours (paged) |

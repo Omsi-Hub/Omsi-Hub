@@ -981,6 +981,18 @@ mod tests {
     }
 
     #[test]
+    fn a_closed_card_is_no_longer_served() {
+        let (sh, dir) = shared("card");
+        let key = pair(&sh);
+        live(&sh, json!({ "clock": 30_000.0 }));
+        sh.hear(json!({ "t": "card", "title": "Trip 2" }).to_string().as_bytes());
+        assert_eq!(state_of(&sh, &key)["card"], json!({ "title": "Trip 2" }));
+        sh.hear(json!({ "t": "card" }).to_string().as_bytes());
+        assert!(state_of(&sh, &key).get("card").is_none(), "nothing but t clears the part");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn notes_come_paged() {
         let (sh, dir) = shared("notes");
         let key = pair(&sh);
@@ -1006,14 +1018,16 @@ mod tests {
             (r#"{"do":"strip_note","text":"call depot"}"#, json!({ "do": "strip_note", "text": "call depot" })),
             (r#"{"do":"strip_check","ok":true,"items":["a","b"],"text":"fine"}"#, json!({ "do": "strip_check", "ok": true, "items": ["a", "b"], "text": "fine" })),
         ];
+        let mut last = 0u64;
         for (body, want) in cases {
-            let (sh2, dir2) = (sh.clone(), dir.clone());
+            let (sh2, dir2, after) = (sh.clone(), dir.clone(), last);
+            // (the plugin waits for a command newer than the one before: the queue keeps the old)
             let plugin = std::thread::spawn(move || {
-                for _ in 0..100 {
+                for _ in 0..300 {
                     std::thread::sleep(Duration::from_millis(20));
                     let Ok(text) = std::fs::read_to_string(crate::queue::file_of(&dir2)) else { continue };
                     let q: Value = serde_json::from_str(&text).unwrap();
-                    if let Some(c) = q["cmds"].as_array().and_then(|c| c.last()) {
+                    if let Some(c) = q["cmds"].as_array().and_then(|c| c.last()).filter(|c| c["seq"].as_u64().unwrap_or(0) > after) {
                         sh2.hear(json!({ "t": "ack", "seq": c["seq"], "ok": true }).to_string().as_bytes());
                         return c.clone();
                     }
@@ -1023,7 +1037,7 @@ mod tests {
             let r = json_of(&handle(&req("POST", "/api/do", Some(&key), body), &sh));
             let mut got = plugin.join().unwrap();
             assert_eq!(r, json!({ "ok": true }), "{body}");
-            assert!(got["seq"].as_u64().is_some(), "{body} has a seq");
+            last = got["seq"].as_u64().expect("a seq");
             got.as_object_mut().unwrap().remove("seq");
             assert_eq!(got, want, "{body}");
         }
