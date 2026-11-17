@@ -570,3 +570,19 @@ fn a_card_of_60_stops_keeps_its_stops() {
     assert_eq!(visits.len(), 60);
     assert!(visits[1]["arr"].as_i64().is_some() && visits[1]["arrived"].as_i64().is_some(), "whole seconds: {}", visits[1]);
 }
+
+#[test]
+fn a_cut_text_stays_whole_characters() {
+    let dir = installed("cut-utf8");
+    let mut a = company_assignment();
+    a.crew.as_mut().unwrap().checks = (0..200).map(|i| (format!("check{i}"), format!("x{}", "ä".repeat(100)))).collect();
+    bridge::write_assignment(&dir, &a).unwrap();
+    queue(&dir, 5, json!([]));
+    let mut h = Harness::load(&dir, game()).unwrap();
+    on_duty(&h, 0.0);
+    frames(&mut h, 40);
+    let texts: Vec<String> = h.state.borrow().sent.iter().filter(|(p, t)| *p == PORT && t.contains("\"t\":\"strip\"")).map(|(_, t)| t.clone()).collect();
+    let s: Value = serde_json::from_str(texts.last().expect("a strip datagram")).expect("valid JSON");
+    let text = s["checks"][0]["text"].as_str().unwrap();
+    assert!(text.len() < 200 && !text.is_empty() && text.chars().skip(1).all(|c| c == 'ä'), "cut on a whole character: {text}");
+}

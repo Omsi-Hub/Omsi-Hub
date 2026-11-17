@@ -398,16 +398,27 @@ local CUTTABLE = {
   strip = function(f) return f, { "checks", "templates", "notes_in", "changes" }, true end,
   card = function(f) return type(f.run) == "table" and f.run or nil, { "visits", "offences" }, false end,
 }
--- (the longest text a cut list keeps, characters)
+-- (the longest text a cut list keeps, bytes)
 local CUT_TEXT = 80
 local told_cut = {}
+
+-- a text cut to at most `n` bytes, at the edge of a character (UTF-8: not inside one)
+local function cut_text(text, n)
+  if #text <= n then return text end
+  local i = n
+  while i > 0 do
+    local b = text:byte(i + 1)
+    if b and b >= 0x80 and b < 0xC0 then i = i - 1 else break end
+  end
+  return text:sub(1, i)
+end
 
 local function shorten(list)
   for i, it in ipairs(list) do
     if type(it) == "string" then
-      list[i] = it:sub(1, CUT_TEXT)
+      list[i] = cut_text(it, CUT_TEXT)
     elseif type(it) == "table" and type(it.text) == "string" then
-      it.text = it.text:sub(1, CUT_TEXT)
+      it.text = cut_text(it.text, CUT_TEXT)
     end
   end
 end
