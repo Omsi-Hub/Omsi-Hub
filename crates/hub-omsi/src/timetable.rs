@@ -945,8 +945,13 @@ pub fn timetable_for(vfs: &Vfs, map: &str, date: NaiveDate) -> Result<Option<Tim
     let dir_rel = rel.rsplit_once('/').map_or("", |(d, _)| d);
     let in_map = |name: &str| vfs.resolve(&format!("{dir_rel}/{name}"));
     let map_dir = global.parent().map(Path::to_path_buf).unwrap_or_default();
-    let chrono_base = in_map("Chrono").and_then(|c| c.parent().map(Path::to_path_buf)).unwrap_or_else(|| map_dir.clone());
-    let chrono = crate::map::active_chrono_dirs(&chrono_base, date);
+    // (the Chrono folders of every copy of the map, as openOMSI reads them: a folder in the
+    // content folder's copy does not hide the map's own)
+    let mut copies: Vec<std::path::PathBuf> = vfs.bases().iter().filter_map(|b| crate::vfs::resolve_in(b, dir_rel)).filter(|d| d.is_dir()).collect();
+    if !copies.contains(&map_dir) {
+        copies.push(map_dir.clone());
+    }
+    let chrono = crate::map::active_chrono_dirs_in(&copies, date);
     let off = crate::map::chrono_deactivated_lines(&chrono);
     let Some(ttdata) = in_map("TTData").filter(|p| p.is_dir()) else { return Ok(None) };
     Ok(Some(Timetable::load_with_chrono(&ttdata, &chrono, &off)))

@@ -302,11 +302,34 @@ impl ChronoDir {
     }
 }
 
-/// The map folder's Chrono folders active on `date`, in the order they apply (by their names).
+/// The Chrono folder Omsi-Hub writes into openOMSI's copy of a map for a company's duty (the
+/// company's own buses and lines alone, `hub_core::company::ailist`): never the map's, so
+/// every reader of the map's Chrono leaves it out.
+pub const HUB_CHRONO: &str = "zz_omsihub_company";
+
+/// The map folder's Chrono folders active on `date`, in the order they apply (by their names);
+/// Omsi-Hub's own ([`HUB_CHRONO`]) left out.
 pub fn active_chrono_dirs(map_dir: &Path, date: NaiveDate) -> Vec<ChronoDir> {
-    let Some(chrono) = find_child(map_dir, "Chrono").filter(|p| p.is_dir()) else { return Vec::new() };
-    let Ok(entries) = std::fs::read_dir(&chrono) else { return Vec::new() };
-    let mut dirs: Vec<PathBuf> = entries.flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect();
+    active_chrono_dirs_in(&[map_dir.to_path_buf()], date)
+}
+
+/// The Chrono folders active on `date` of every copy of the map (`map_dirs`, the first's
+/// winning where two have a folder of the same name), in the order they apply - as openOMSI
+/// reads them from its content folder and the OMSI 2 folder together. Omsi-Hub's own
+/// ([`HUB_CHRONO`]) left out.
+pub fn active_chrono_dirs_in(map_dirs: &[PathBuf], date: NaiveDate) -> Vec<ChronoDir> {
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    for map_dir in map_dirs {
+        let Some(chrono) = find_child(map_dir, "Chrono").filter(|p| p.is_dir()) else { continue };
+        let Ok(entries) = std::fs::read_dir(&chrono) else { continue };
+        for p in entries.flatten().map(|e| e.path()).filter(|p| p.is_dir()) {
+            let name = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            if same_name(&name, HUB_CHRONO) || dirs.iter().any(|d| d.file_name().is_some_and(|n| same_name(&n.to_string_lossy(), &name))) {
+                continue;
+            }
+            dirs.push(p);
+        }
+    }
     dirs.sort_by_key(|p| p.file_name().map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default());
     dirs.iter().filter_map(|d| ChronoDir::read(d)).filter(|c| c.active_on(date)).collect()
 }
@@ -482,6 +505,29 @@ mod tests {
 
     fn d(s: &str) -> NaiveDate {
         NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap()
+    }
+
+    /// The Chrono folders of the map's own copy and of the content folder's are read together
+    /// (the content folder's winning by name), Omsi-Hub's own company folder never.
+    #[test]
+    fn chrono_folders_of_every_copy_count_but_omsi_hub_s_own() {
+        let base = std::env::temp_dir().join(format!("hub-omsi-chrono-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let chrono = |copy: &str, name: &str, from: &str| {
+            let dir = base.join(copy).join("Chrono").join(name);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("Chrono.cfg"), format!("[startdate]\r\n{from}\r\n\r\n[enddate]\r\n29991231\r\n")).unwrap();
+        };
+        chrono("omsi2", "Baustelle", "19000101");
+        chrono("omsi2", "Zukunft", "30000101");
+        chrono("omsi2", "Fest", "19000101");
+        chrono("content", "Fest", "19000101");
+        chrono("content", HUB_CHRONO, "19000101");
+        let names = |dirs: Vec<ChronoDir>| dirs.into_iter().map(|c| (c.name, c.path.starts_with(base.join("content")))).collect::<Vec<_>>();
+        let both = active_chrono_dirs_in(&[base.join("content"), base.join("omsi2")], d("2026-11-12"));
+        assert_eq!(names(both), [("Baustelle".to_string(), false), ("Fest".to_string(), true)]);
+        assert!(active_chrono_dirs(&base.join("content"), d("2026-11-12")).iter().all(|c| c.name != HUB_CHRONO));
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]

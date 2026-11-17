@@ -27,6 +27,7 @@ pub mod adverts;
 // (what is coming: Beta 57's agenda)
 pub mod agency;
 pub mod agenda;
+pub mod ailist;
 pub mod auction;
 pub mod autopilot;
 pub mod bus_contracts;
