@@ -5,7 +5,7 @@
 
 use crate::heard::Heard;
 use crate::nav::Next;
-use hub_game::bridge::{Assignment, Inbox};
+use hub_game::bridge::{Assignment, Inbox, Personnel};
 use serde_json::{json, Map, Value};
 
 /// The game counts as there when it was heard within this many seconds.
@@ -103,17 +103,35 @@ pub fn build(h: &Heard, facts: &Facts, now: f64) -> Value {
     state
 }
 
-fn signon(h: &Heard, a: Option<&Assignment>, game: bool) -> Value {
-    let pass = a.and_then(|a| a.personnel.as_ref());
-    let stage = match (game.then(|| h.get("signon").and_then(Value::as_str)).flatten(), pass) {
+/// The sign-on stage the state shows.
+fn stage_of<'a>(h: &'a Heard, pass: Option<&Personnel>, game: bool) -> &'a str {
+    match (game.then(|| h.get("signon").and_then(Value::as_str)).flatten(), pass) {
         (_, None) => "none",
         (Some(st @ ("signon" | "order" | "work")), Some(_)) => st,
         // (not in the game yet: the pass waits for it)
         (_, Some(_)) => "signon",
-    };
+    }
+}
+
+fn signon(h: &Heard, a: Option<&Assignment>, game: bool) -> Value {
+    let pass = a.and_then(|a| a.personnel.as_ref());
+    let stage = stage_of(h, pass, game);
     let hint = pass.map(|p| format!("{}…", p.number.chars().take(2).collect::<String>()));
     let wrong = game && stage == "signon" && h.get("signon_wrong").and_then(Value::as_bool).unwrap_or(false);
     json!({ "stage": stage, "number_hint": hint, "error": if wrong { json!("wrong") } else { Value::Null } })
+}
+
+/// The driver's pass while the sign-on asks for it (`{number, code}`, else null): only for
+/// Omsi-Hub's own on-board computer (`signon.pass`, added by the server for the local key) - the
+/// driver reads it there, as on the old panel in the game. A paired phone never gets it: the
+/// state it is shown keeps to `number_hint`.
+pub fn pass(h: &Heard, facts: &Facts, now: f64) -> Value {
+    let game = h.fresh(now, GAME_FRESH);
+    let pass = assignment_of(h, facts, game).and_then(|a| a.personnel.as_ref());
+    match pass {
+        Some(p) if stage_of(h, Some(p), game) == "signon" => json!({ "number": p.number, "code": p.code }),
+        _ => Value::Null,
+    }
 }
 
 /// The duty's start, end and depot from its strip (a company's duty), in seconds of the day.
@@ -416,7 +434,7 @@ impl Pause {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hub_game::bridge::{Crew, InboxAction, InboxMsg, Personnel, StripRow};
+    use hub_game::bridge::{Crew, InboxAction, InboxMsg, StripRow};
 
     fn heard(live: Value, now: f64) -> Heard {
         let mut h = Heard::default();
@@ -500,7 +518,23 @@ mod tests {
         assert_eq!((v["bus"]["number"].as_str(), v["bus"]["passengers"].as_i64()), (Some("2604"), Some(12)));
         assert_eq!(v["signon"]["stage"], "work");
         assert_eq!(v["signon"]["number_hint"], "48…");
-        assert!(!v.to_string().contains("482913") && !v.to_string().contains("5821"), "the pass is never shown");
+        assert!(!v.to_string().contains("482913") && !v.to_string().contains("5821"), "the pass is never in the state");
+    }
+
+    #[test]
+    fn the_pass_is_there_while_the_sign_on_asks_for_it() {
+        let facts = Facts { assignment: Some(company()), ..Facts::default() };
+        // at work: no pass to show
+        assert_eq!(pass(&driving(), &facts, 1.0), Value::Null);
+        let mut h = driving();
+        add(&mut h, json!({ "t": "live", "issued": 100, "clock": 30_000.0, "signon": "signon" }));
+        assert_eq!(pass(&h, &facts, 0.0), json!({ "number": "482913", "code": "5821" }));
+        // (before the game: the sign-on waits for it, with the pass)
+        assert_eq!(pass(&h, &facts, 60.0), json!({ "number": "482913", "code": "5821" }));
+        add(&mut h, json!({ "t": "live", "issued": 100, "clock": 30_000.0, "signon": "order" }));
+        assert_eq!(pass(&h, &facts, 0.0), Value::Null);
+        // a drive without a pass
+        assert_eq!(pass(&h, &Facts::default(), 0.0), Value::Null);
     }
 
     #[test]

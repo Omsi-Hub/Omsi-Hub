@@ -42,6 +42,9 @@ pub const SEEN_FOR: u64 = 45;
 const SIGN_ON_TRIES: usize = 10;
 /// The bus moved this far (m) from where the street was last asked for: asked again.
 const PROBE_MOVE: f64 = 5.0;
+/// Omsi-Hub's own on-board computer counts as there while it waits for the state, and this long
+/// after it last asked (the queue's `device`).
+pub const DEVICE_FRESH: Duration = Duration::from_secs(10);
 
 /// The route of the trip under way, in the game's coordinates.
 #[derive(Default)]
@@ -76,6 +79,31 @@ pub struct Inner {
     /// The devices of the bus the player drives.
     pub board: Board,
     pub stopped: bool,
+    /// The driver's pass while the sign-on asks for it (`state::pass`): served to the local key
+    /// only, in `signon.pass`.
+    pub pass: Value,
+    /// The local key's state requests waiting now, and when it last asked ([`DEVICE_FRESH`]).
+    local_polls: usize,
+    local_at: Option<Instant>,
+}
+
+impl Inner {
+    /// Whether Omsi-Hub's own on-board computer is there: it waits for the state now, or asked
+    /// within [`DEVICE_FRESH`].
+    fn device_there(&self) -> bool {
+        self.local_polls > 0 || self.local_at.is_some_and(|t| t.elapsed() <= DEVICE_FRESH)
+    }
+
+    /// The queue's `device` set to what is so, the file written when it changed.
+    fn tell_device(&mut self) {
+        let there = self.device_there();
+        if there != self.queue.device {
+            self.queue.device = there;
+            if let Some(d) = &self.plugin_dir {
+                let _ = self.queue.write(d);
+            }
+        }
+    }
 }
 
 pub struct Shared {
@@ -112,6 +140,9 @@ impl Shared {
             sign_ons: Vec::new(),
             board: Board::default(),
             stopped: false,
+            pass: Value::Null,
+            local_polls: 0,
+            local_at: None,
         };
         Shared { inner: Mutex::new(inner), news: Condvar::new(), pos: Mutex::default(), pos_news: Condvar::new(), source, cfg, start: Instant::now(), finder: Finder::default() }
     }
@@ -207,11 +238,14 @@ impl Shared {
             devices: if game { i.board.json() } else { json!([]) },
         };
         let s = state::build(&i.heard, &facts, now);
-        if s != i.state {
+        let pass = state::pass(&i.heard, &facts, now);
+        if s != i.state || pass != i.pass {
             i.state = s;
+            i.pass = pass;
             i.version += 1;
             self.news.notify_all();
         }
+        i.tell_device();
     }
 
     /// The next turn, with the route of the trip under way read (on a thread of its own) when
@@ -526,10 +560,10 @@ pub fn unix_now() -> u64 {
 /// The answer to one request.
 pub fn handle(req: &Request, shared: &Arc<Shared>) -> Response {
     let route = http::route(req);
+    // (Omsi-Hub's own window: no pairing, and not among the devices)
+    let local = route.needs_key() && !shared.cfg.local_key.is_empty() && req.key() == shared.cfg.local_key;
     if route.needs_key() {
         let mut i = shared.lock();
-        // (Omsi-Hub's own window: no pairing, and not among the devices)
-        let local = !shared.cfg.local_key.is_empty() && req.key() == shared.cfg.local_key;
         if !local {
             let Some(d) = i.pairing.device_of(req.key()) else { return Response::error(401, "not_paired") };
             let hash = i.pairing.devices[d].hash.clone();
@@ -567,6 +601,12 @@ pub fn handle(req: &Request, shared: &Arc<Shared>) -> Response {
         Route::State(after) => {
             let deadline = Instant::now() + STATE_WAIT;
             let mut i = shared.lock();
+            // (Omsi-Hub's own on-board computer is there while it waits: the plugin is told)
+            if local {
+                i.local_polls += 1;
+                i.local_at = Some(Instant::now());
+                i.tell_device();
+            }
             while after.is_some_and(|a| a >= i.version) && !i.stopped {
                 let left = deadline.saturating_duration_since(Instant::now());
                 if left.is_zero() {
@@ -576,6 +616,14 @@ pub fn handle(req: &Request, shared: &Arc<Shared>) -> Response {
             }
             let mut v = i.state.clone();
             v["v"] = json!(i.version);
+            if local {
+                i.local_polls = i.local_polls.saturating_sub(1);
+                i.local_at = Some(Instant::now());
+                // (the driver's pass, for the on-board computer only)
+                if !i.pass.is_null() && v["signon"].is_object() {
+                    v["signon"]["pass"] = i.pass.clone();
+                }
+            }
             Response::json(&v)
         }
         Route::Pos(after) => {
@@ -754,6 +802,7 @@ mod tests {
     struct Fake {
         dir: PathBuf,
         omsi: Option<PathBuf>,
+        assignment: Option<Assignment>,
     }
 
     impl Source for Fake {
@@ -761,7 +810,7 @@ mod tests {
             Some(self.dir.clone())
         }
         fn assignment(&self) -> Option<Assignment> {
-            None
+            self.assignment.clone()
         }
         fn route(&self, _map: &str, _date: &str, _trip: &str) -> Option<Vec<[f64; 2]>> {
             // (the add-on's map metres: the game's are 1000 m further east)
@@ -787,6 +836,10 @@ mod tests {
     }
 
     fn shared_with(tag: &str, bus: bool) -> (Arc<Shared>, PathBuf) {
+        shared_of(tag, bus, None)
+    }
+
+    fn shared_of(tag: &str, bus: bool, assignment: Option<Assignment>) -> (Arc<Shared>, PathBuf) {
         let dir = std::env::temp_dir().join(format!("hub-companion-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("data")).unwrap();
@@ -795,7 +848,7 @@ mod tests {
         if let Some(o) = &omsi {
             hub_devices::testbus::write(o).unwrap();
         }
-        (Arc::new(Shared::new(cfg, Arc::new(Fake { dir: dir.clone(), omsi }), "123456".into(), 9)), dir)
+        (Arc::new(Shared::new(cfg, Arc::new(Fake { dir: dir.clone(), omsi, assignment }), "123456".into(), 9)), dir)
     }
 
     fn req(method: &str, path: &str, key: Option<&str>, body: &str) -> Request {
@@ -845,6 +898,64 @@ mod tests {
         // (it is no device: not seen, not kept)
         assert!(sh.lock().seen.is_empty());
         assert!(sh.lock().pairing.devices.is_empty());
+    }
+
+    #[test]
+    fn the_pass_goes_to_the_local_key_only() {
+        let a = Assignment {
+            issued: 100,
+            company: "Stadtbus".into(),
+            duty: "14".into(),
+            personnel: Some(hub_game::bridge::Personnel { number: "482913".into(), code: "5821".into() }),
+            ..Assignment::default()
+        };
+        let (sh, dir) = shared_of("pass", false, Some(a));
+        let key = pair(&sh);
+        live(&sh, json!({ "clock": 30_000.0, "issued": 100, "signon": "signon" }));
+        let mine = state_of(&sh, LOCAL);
+        assert_eq!(mine["signon"]["pass"], json!({ "number": "482913", "code": "5821" }));
+        assert_eq!(mine["signon"]["number_hint"], "48…");
+        let phone = state_of(&sh, &key);
+        assert_eq!(phone["signon"]["stage"], "signon");
+        assert!(phone["signon"].get("pass").is_none() && !phone.to_string().contains("5821"), "a paired phone never gets the pass: {phone}");
+        // signed on: the pass is not shown any more
+        live(&sh, json!({ "clock": 30_001.0, "issued": 100, "signon": "order" }));
+        assert!(state_of(&sh, LOCAL)["signon"].get("pass").is_none());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn the_plugin_is_told_whether_the_on_board_computer_asks() {
+        let (sh, dir) = shared("device");
+        let key = pair(&sh);
+        let device = || serde_json::from_str::<Value>(&std::fs::read_to_string(crate::queue::file_of(&dir)).unwrap()).unwrap()["device"].clone();
+        sh.refresh(&mut sh.lock());
+        assert_eq!(device(), false, "nobody asked yet");
+        // a paired phone is not the on-board computer
+        state_of(&sh, &key);
+        sh.refresh(&mut sh.lock());
+        assert_eq!(device(), false);
+        state_of(&sh, LOCAL);
+        assert_eq!(device(), true, "the local key asked");
+        sh.refresh(&mut sh.lock());
+        assert_eq!(device(), true, "and is there for a while after");
+        // waiting for news: there all along
+        let (sh2, started) = (sh.clone(), Instant::now());
+        let v = sh.lock().version;
+        let waiting = std::thread::spawn(move || json_of(&handle(&req("GET", &format!("/api/state?after={v}"), Some(LOCAL), ""), &sh2)));
+        while sh.lock().local_polls == 0 && started.elapsed() < Duration::from_secs(5) {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        sh.lock().local_at = Instant::now().checked_sub(DEVICE_FRESH * 2);
+        sh.refresh(&mut sh.lock());
+        assert_eq!(device(), true, "a request waiting");
+        live(&sh, json!({ "clock": 30_000.0 }));
+        waiting.join().unwrap();
+        // not asked for longer than DEVICE_FRESH: gone
+        sh.lock().local_at = Instant::now().checked_sub(DEVICE_FRESH + Duration::from_secs(1));
+        sh.refresh(&mut sh.lock());
+        assert_eq!(device(), false);
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -1011,7 +1122,7 @@ mod tests {
         live(&sh, json!({ "clock": 30_000.0 }));
         let cases = [
             (r#"{"do":"sign_off"}"#, json!({ "do": "sign_off" })),
-            (r#"{"do":"start_duty"}"#, json!({ "do": "start_duty" })),
+            (r#"{"do":"duty_start"}"#, json!({ "do": "duty_start" })),
             (r#"{"do":"card_close"}"#, json!({ "do": "card_close" })),
             (r#"{"do":"part","id":"strip","on":true}"#, json!({ "do": "part", "id": "strip", "on": true })),
             (r#"{"do":"note_close","n":3}"#, json!({ "do": "note_close", "n": 3 })),
