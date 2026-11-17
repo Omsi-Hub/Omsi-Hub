@@ -295,8 +295,9 @@ end
 local takeover = require("takeover")
 takeover.setup(assignment, function(text, title, icon) say(tr(text), tr(title), icon, 8) end)
 
+-- the duty at the depot started; whether there was one to start
 local function start_duty()
-  if not (assignment and has["duty.start"]) or duty_now() or start.busy() then return end
+  if not (assignment and has["duty.start"]) or duty_now() or start.busy() then return false end
   local line, tour, trip, stop
   if legs.any() then
     line, tour, trip, stop = legs.first()
@@ -311,6 +312,7 @@ local function start_duty()
     panel()
   end)
   panel()
+  return true
 end
 
 -- the part of the duty under way is done (legs.lua): the next one taken, or the duty ended
@@ -452,6 +454,21 @@ companion.setup({
     panel()
   end,
   changed = function() panel() end,
+  -- (the on-board computer's commands: the panels' own buttons do the same)
+  start_duty = start_duty,
+  sign_off = function()
+    if not (signon.signed() or signon.at_work()) then return false end
+    return strip.sign_off()
+  end,
+  part = function(id, on)
+    if not company.LABELS[id] then return false end
+    omsi.data.board_parts[id] = on == true
+    -- (the duty strip is duty_strip.lua's, the only one: its switch is the board's "strip" part)
+    if id == "strip" then strip.set_enabled(on == true) end
+    panel()
+    return true
+  end,
+  strip = strip, notes = notes, card = card,
   -- (what each driving part reports of itself: the on-board computer shows them)
   facts = { strip = strip.facts, ontime = ontime.facts, board = board_facts, card = card.facts, notes = notes.list },
 })
@@ -628,10 +645,7 @@ omsi.on("ui_change", function(p, element, value)
   if strip.change(p, element, value) then return end
   local part = company_panel(p) and type(element) == "string" and element:match("^part_(%w+)$")
   if part and company.LABELS[part] then
-    omsi.data.board_parts[part] = value == true
-    -- (the duty strip is duty_strip.lua's, the only one: its switch is the board's "strip" part)
-    if part == "strip" then strip.set_enabled(value == true) end
-    panel()
+    companion.part(part, value == true)
     return navigator.flush()
   end
   if company_panel(p) and signon.change(element, value) then panel() end

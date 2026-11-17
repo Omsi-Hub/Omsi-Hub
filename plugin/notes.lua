@@ -86,14 +86,22 @@ end
 function M.click(element)
   local id = type(element) == "string" and tonumber(element:match("^note_close_(%d+)$"))
   if not id then return false end
+  M.close(id)
+  return true
+end
+
+-- the notification `id` put away; whether there was one
+function M.close(id)
+  local found = false
   for k, n in ipairs(list) do
     if n.id == id then
       table.remove(list, k)
+      found = true
       break
     end
   end
   put()
-  return true
+  return found
 end
 
 -- the notifications now, newest first, as data (for the on-board computer): `n` its number,

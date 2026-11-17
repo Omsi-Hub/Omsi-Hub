@@ -387,6 +387,29 @@ function M.tick()
   if hold or shown then panel() end
 end
 
+-- the answers, one each (the panel's buttons and the phone's commands share them)
+local function answer_quick(key)
+  reply("quick", 0, key)
+  quick = false
+  toast(tr("Sent to control"), tr("Control"), "campaign", COLOR.info, 5)
+end
+
+local function answer_accept(m)
+  reply("accept", m.id)
+  answered[m.id] = "Accepted"
+  carry(m.action)
+end
+
+local function answer_decline(m)
+  reply("decline", m.id)
+  answered[m.id] = "Declined"
+end
+
+local function answer_reply(m, key)
+  reply("reply", m.id, key)
+  answered[m.id] = "Read"
+end
+
 -- a click of the inbox; whether it was this module's
 function M.click(p, element)
   local e = element or ""
@@ -396,25 +419,17 @@ function M.click(p, element)
   elseif e == "msg_quick" then
     quick = not quick
   elseif e:sub(1, 6) == "msg_q_" then
-    local key = e:sub(7)
-    reply("quick", 0, key)
-    quick = false
-    toast(tr("Sent to control"), tr("Control"), "campaign", COLOR.info, 5)
+    answer_quick(e:sub(7))
   else
     local verb, id = e:match("^msg_(%a+)_(%d+)")
     id = tonumber(id)
     local m = id and find(id)
     if m and verb == "accept" and waiting(m) then
-      reply("accept", id)
-      answered[id] = "Accepted"
-      carry(m.action)
+      answer_accept(m)
     elseif m and verb == "decline" and waiting(m) then
-      reply("decline", id)
-      answered[id] = "Declined"
+      answer_decline(m)
     elseif m and verb == "reply" then
-      local key = e:match("^msg_reply_%d+_(.+)$")
-      reply("reply", id, key)
-      answered[id] = "Read"
+      answer_reply(m, e:match("^msg_reply_%d+_(.+)$"))
     end
   end
   panel()
@@ -427,7 +442,9 @@ end
 function M.answer(kind, id, key)
   if kind == "quick" then
     if not key or key == "" then return false end
-    return M.click(PANEL, "msg_q_" .. tostring(key))
+    answer_quick(tostring(key))
+    panel()
+    return true
   end
   id = math.tointeger(tonumber(id))
   local m = id and find(id)
@@ -435,13 +452,17 @@ function M.answer(kind, id, key)
   if kind == "read" then
     reply("read", id)
     answered[id] = "Read"
-    panel()
-    return true
+  elseif kind == "accept" and waiting(m) then
+    answer_accept(m)
+  elseif kind == "decline" and waiting(m) then
+    answer_decline(m)
+  elseif kind == "reply" then
+    answer_reply(m, tostring(key or ""))
+  else
+    return false
   end
-  if (kind == "accept" or kind == "decline") and not waiting(m) then return false end
-  if kind == "reply" then return M.click(PANEL, "msg_reply_" .. id .. "_" .. tostring(key or "")) end
-  if kind ~= "accept" and kind ~= "decline" then return false end
-  return M.click(PANEL, "msg_" .. kind .. "_" .. id)
+  panel()
+  return true
 end
 
 -- F9: the inbox shown or put away; whether it was this module's

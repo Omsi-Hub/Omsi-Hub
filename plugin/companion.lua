@@ -88,6 +88,11 @@ function M.setup(hooks)
   hook = hooks or {}
 end
 
+-- a board part switched in the panel: the same as the computer's `part` command
+function M.part(id, on)
+  return hook.part ~= nil and hook.part(id, on)
+end
+
 local function send(t)
   if not (on and fn("send")) then return false end
   local text = json.encode(t)
@@ -586,6 +591,30 @@ local function carry_out(c)
     return false, "wrong"
   elseif what == "accept_order" then
     if not (hook.accept and hook.accept()) then return false, "not_now" end
+    return true
+  elseif what == "start_duty" then
+    if not (hook.start_duty and hook.start_duty()) then return false, "not_now" end
+    return true
+  elseif what == "sign_off" then
+    if not (hook.sign_off and hook.sign_off()) then return false, "not_now" end
+    return true
+  elseif what == "part" then
+    if type(c.id) ~= "string" or type(c.on) ~= "boolean" then return false, "bad_command" end
+    if not (hook.part and hook.part(c.id, c.on)) then return false, "unknown_part" end
+    return true
+  elseif what == "note_close" then
+    local n = math.tointeger(tonumber(c.n))
+    if not n then return false, "bad_command" end
+    if not (hook.notes and hook.notes.close(n)) then return false, "no_note" end
+    return true
+  elseif what == "strip_note" then
+    if not hook.strip then return false, "not_now" end
+    return hook.strip.note(c.text)
+  elseif what == "strip_check" then
+    if not hook.strip then return false, "not_now" end
+    return hook.strip.check(c.ok, c.items, c.text)
+  elseif what == "card_close" then
+    if not (hook.card and hook.card.close()) then return false, "no_card" end
     return true
   elseif what == "msg" then
     local m = hook.messages

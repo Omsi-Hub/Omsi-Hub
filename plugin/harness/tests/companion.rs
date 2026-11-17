@@ -586,3 +586,123 @@ fn a_cut_text_stays_whole_characters() {
     let text = s["checks"][0]["text"].as_str().unwrap();
     assert!(text.len() < 200 && !text.is_empty() && text.chars().skip(1).all(|c| c == 'ä'), "cut on a whole character: {text}");
 }
+
+// --- the on-board computer's commands ---------------------------------------------------------------
+
+/// Commands queued as the session's next, numbered from `from`; each of them acked.
+fn command(dir: &Path, h: &mut Harness, cmds: Value) {
+    queue(dir, 5, cmds);
+    frames(h, 3);
+}
+
+#[test]
+fn the_computer_starts_the_duty_and_signs_off() {
+    let dir = installed("cmd-duty");
+    bridge::write_assignment(&dir, &company_assignment()).unwrap();
+    queue(&dir, 5, json!([]));
+    let mut h = Harness::load(&dir, game()).unwrap();
+    frames(&mut h, 3);
+    command(&dir, &mut h, json!([{ "seq": 1, "do": "start_duty" }]));
+    assert_eq!(h.state.borrow().started.len(), 1, "the duty started as the panel's button does");
+    assert_eq!(acks(&h).last().unwrap(), &(1, true, String::new()));
+    // (signed off: the walk-around opens; a second time there is nothing to sign off)
+    command(&dir, &mut h, json!([{ "seq": 2, "do": "sign_off" }]));
+    assert_eq!(acks(&h).last().unwrap(), &(2, true, String::new()));
+    on_duty(&h, 0.0);
+    frames(&mut h, 40);
+    assert_eq!(sent(&h, "strip").last().unwrap()["open"], "check");
+    command(&dir, &mut h, json!([{ "seq": 3, "do": "sign_off" }]));
+    assert_eq!(acks(&h).last().unwrap(), &(3, true, String::new()), "already open: still fine");
+}
+
+#[test]
+fn start_duty_with_no_duty_is_not_now() {
+    let dir = installed("cmd-nostart");
+    queue(&dir, 5, json!([]));
+    let mut h = Harness::load(&dir, game()).unwrap();
+    frames(&mut h, 3);
+    command(&dir, &mut h, json!([{ "seq": 1, "do": "start_duty" }, { "seq": 2, "do": "sign_off" }]));
+    let a = acks(&h);
+    assert_eq!(a, [(1, false, "not_now".to_string()), (2, false, "not_now".to_string())]);
+}
+
+#[test]
+fn the_computer_switches_a_part_off() {
+    let dir = installed("cmd-part");
+    bridge::write_assignment(&dir, &company_assignment()).unwrap();
+    queue(&dir, 5, json!([]));
+    let mut h = Harness::load(&dir, game()).unwrap();
+    on_duty(&h, 0.0);
+    frames(&mut h, 40);
+    assert!(sent(&h, "strip").last().unwrap().get("piece").is_some());
+    command(
+        &dir,
+        &mut h,
+        json!([{ "seq": 1, "do": "part", "id": "strip", "on": false }, { "seq": 2, "do": "part", "id": "bogus", "on": false }, { "seq": 3, "do": "part", "id": "coach", "on": "yes" }]),
+    );
+    let a = acks(&h);
+    assert_eq!(a, [(1, true, String::new()), (2, false, "unknown_part".to_string()), (3, false, "bad_command".to_string())]);
+    frames(&mut h, 40);
+    assert_eq!(sent(&h, "strip").pop().unwrap(), json!({ "t": "strip" }));
+    assert_eq!(sent(&h, "board").pop().unwrap()["parts"]["strip"], false);
+    command(&dir, &mut h, json!([{ "seq": 4, "do": "part", "id": "strip", "on": true }]));
+    frames(&mut h, 40);
+    assert_eq!(sent(&h, "board").pop().unwrap()["parts"]["strip"], true);
+    assert!(sent(&h, "strip").pop().unwrap().get("piece").is_some());
+}
+
+#[test]
+fn the_computer_closes_a_note_and_the_card() {
+    let dir = installed("cmd-close");
+    bridge::write_assignment(&dir, &company_assignment()).unwrap();
+    queue(&dir, 5, json!([]));
+    let mut h = Harness::load(&dir, game()).unwrap();
+    on_duty(&h, 0.0);
+    frames(&mut h, 3);
+    h.lua.load("require('notes').say('hello', { title = 'T1', sticky = true })").exec().unwrap();
+    frames(&mut h, 40);
+    let n = sent(&h, "notes").last().unwrap()["notes"][0]["n"].as_i64().unwrap();
+    command(&dir, &mut h, json!([{ "seq": 1, "do": "note_close", "n": n }, { "seq": 2, "do": "note_close", "n": n }, { "seq": 3, "do": "card_close" }]));
+    let a = acks(&h);
+    assert_eq!(a, [(1, true, String::new()), (2, false, "no_note".to_string()), (3, false, "no_card".to_string())]);
+    frames(&mut h, 40);
+    let last = sent(&h, "notes").pop().unwrap();
+    assert!(last.get("notes").is_none_or(|x| x.as_array().unwrap().is_empty()), "{last}");
+    h.fire("trip_done", &[json!(1), json!("arrived"), json!(95.0), json!(88.0), json!(100.0)]).unwrap();
+    frames(&mut h, 8);
+    command(&dir, &mut h, json!([{ "seq": 4, "do": "card_close" }]));
+    assert_eq!(acks(&h).last().unwrap(), &(4, true, String::new()));
+    frames(&mut h, 40);
+    assert_eq!(sent(&h, "card").pop().unwrap(), json!({ "t": "card" }));
+}
+
+#[test]
+fn the_computer_reports_a_note_and_defects() {
+    let dir = installed("cmd-report");
+    bridge::write_assignment(&dir, &company_assignment()).unwrap();
+    queue(&dir, 5, json!([]));
+    let mut h = Harness::load(&dir, game()).unwrap();
+    on_duty(&h, 0.0);
+    frames(&mut h, 3);
+    let long = "x".repeat(150);
+    command(
+        &dir,
+        &mut h,
+        json!([
+            { "seq": 1, "do": "strip_note", "text": long },
+            { "seq": 2, "do": "strip_check", "ok": false, "items": ["lights"], "text": "left one dim" },
+            { "seq": 3, "do": "strip_check", "ok": true, "items": [], "text": "" },
+            { "seq": 4, "do": "strip_note", "text": 5 },
+        ]),
+    );
+    let a = acks(&h);
+    assert_eq!(a.iter().map(|x| x.1).collect::<Vec<_>>(), [true, true, true, false], "{a:?}");
+    assert_eq!(a[3].2, "bad_command");
+    let reports = bridge::ReportReader::default().read_new(&dir);
+    let notes: Vec<_> = reports.iter().filter(|r| r.kind == "note").collect();
+    assert_eq!(notes.len(), 1);
+    assert_eq!(notes[0].text.len(), 140, "cut to text_max");
+    let defects: Vec<_> = reports.iter().filter(|r| r.kind == "defect").collect();
+    assert_eq!(defects.len(), 1);
+    assert_eq!((defects[0].defect.as_str(), defects[0].text.as_str()), ("lights", "left one dim"));
+}

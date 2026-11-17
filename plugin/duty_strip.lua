@@ -369,9 +369,44 @@ end
 
 -- the driver signs off (or the duty ended): the walk-around opens, once
 function M.sign_off()
-  if not crew or check.done then return end
-  open = "check"
+  if not crew then return false end
+  if not check.done then
+    open = "check"
+    M.update(true)
+  end
+  return true
+end
+
+-- a text cut to the longest the company allows, at the edge of a character
+local function cut(text)
+  local n = math.tointeger(tonumber(crew and crew.text_max)) or 140
+  if #text <= n then return text end
+  local i = n
+  while i > 0 do
+    local b = text:byte(i + 1)
+    if b and b >= 0x80 and b < 0xC0 then i = i - 1 else break end
+  end
+  return text:sub(1, i)
+end
+
+-- the handover note typed, left for the next driver
+local function send_note()
+  if not (note.template or note.text ~= "") then return false end
+  report("note", { template = note.template or "", text = note.text, bus_id = crew.bus })
+  notify("sticky_note_2", tr("Note left"), tr("The next driver of bus %{bus} sees it", { bus = crew.bus_number or "" }))
+  note = { template = nil, text = "" }
+  open = nil
+  return true
+end
+
+-- a note left from the on-board computer; false and why when it was not
+function M.note(text)
+  if type(text) ~= "string" then return false, "bad_command" end
+  if not crew then return false, "not_now" end
+  note = { template = nil, text = cut(text) }
+  if not send_note() then return false, "empty" end
   M.update(true)
+  return true
 end
 
 local function send_check(all_fine)
@@ -395,6 +430,20 @@ local function send_check(all_fine)
   end
 end
 
+-- the walk-around done from the on-board computer: `ok` all in order, else `items` (check ids)
+-- and `text` are the defects
+function M.check(ok, items, text)
+  if type(ok) ~= "boolean" or type(items) ~= "table" or type(text) ~= "string" then return false, "bad_command" end
+  if not crew then return false, "not_now" end
+  check = { ticked = {}, text = cut(text), done = false }
+  for _, id in ipairs(items) do
+    if type(id) == "string" then check.ticked[id] = true end
+  end
+  send_check(ok)
+  M.update(true)
+  return true
+end
+
 -- a click on the strip: whether it was the strip's
 function M.click(p, element)
   element = element or ""
@@ -403,12 +452,7 @@ function M.click(p, element)
   elseif element == "strip_check" then open = "check"
   elseif element == "strip_close" then open = nil
   elseif element == "strip_note_send" or element == "strip_note_text" then
-    if note.template or note.text ~= "" then
-      report("note", { template = note.template or "", text = note.text, bus_id = crew.bus })
-      notify("sticky_note_2", tr("Note left"), tr("The next driver of bus %{bus} sees it", { bus = crew.bus_number or "" }))
-      note = { template = nil, text = "" }
-      open = nil
-    end
+    send_note()
   elseif element == "strip_chk_send" then send_check(false)
   elseif element == "strip_chk_ok" then send_check(true)
   end
