@@ -27,7 +27,14 @@ game's (x east, y north).
 
 ## Finding and pairing
 
-The server is off by default. The player turns it on in the add-on under
+The server itself always runs as long as Omsi-Hub does, but without the setting it listens on
+**127.0.0.1 only**: nothing on the network reaches it, and `POST /api/pair` is refused there. Omsi-Hub's own
+window (the on-board computer, `/device`) is the one client of that: it carries a **local
+key** made once as the app runs (`#key=…` in its address, sent as the bearer key like a
+device's), which the server lets in without pairing. The local key is not a device: it is not
+listed, not kept and not revoked. A taken network port falls back to any free loopback port,
+and a taken plugin port to a free one that the plugin is told through the queue file. The
+phones and tablets on the home network are off by default: the player turns them on in the add-on under
 **Settings › General › Phone & tablet**; the launcher then shows the address, a six-digit
 **pairing code** and a QR code. The QR code holds the web app's pairing page
 
@@ -180,6 +187,14 @@ once after every answer (and backs off 2 s → 10 s after errors). `after` omitt
     "keys": ["ticketprinter_button_ticket_1", "…"],
     "change_keys": []              // the change dispenser's triggers, where the bus has one
   },
+  // The driving parts, each as the plugin last sent it (its datagram without `t`; their shape
+  // is the plugin's, the on-board computer draws them). Each is absent when the plugin has
+  // not sent it yet or was not heard for 5 s.
+  "strip": { },                    // the duty strip: rows, checks, notes put on it
+  "ontime": { },                   // the on-time / delay display
+  "board": { },                    // the board of the next stops
+  "notes": [ ],                    // the trip's notes, all pages put together in order
+  "card": { },                     // the trip card; absent when none is open
   "features": { "ibis": true, "printer": true, "nav": true, "messages": true, "signon": true }
 }
 ```
@@ -335,6 +350,13 @@ bus's devices' taps and keys are pressed; anything else is `unknown_key`.
 | `msg_answer` | `id`, `key` | Answers a message with one of its `answers` (`read`, `accept`, `decline` or a canned reply's key) |
 | `msg_quick` | `key` | A quick button to control |
 | `pause_end` | | Ends the break early |
+| `start_duty` | | Starts the duty at the depot |
+| `sign_off` | | Signs the driver off at the end of the duty |
+| `part` | `id`, `on` | Shows (`on: true`) or hides one of the driving parts |
+| `note_close` | `n` | Closes note `n` of `notes` |
+| `strip_note` | `text` | Puts a note on the duty strip |
+| `strip_check` | `ok`, `items`, `text` | Answers the strip's check: `ok`, its `items` (strings) and a `text` |
+| `card_close` | | Closes the trip card |
 | `press` | `trigger`, `down?` | Presses a tap or key of one of `devices` (above) |
 
 Only the keys the state lists can be pressed: the plugin refuses any other trigger. The game
@@ -357,6 +379,11 @@ To `127.0.0.1:47812` (`companion_udp_port`), each one JSON object with `t`:
 | `alive` | 1 s | nothing: the game is there, also while it is busy and the others wait until its frames run smoothly again |
 | `trip` | on change | the trip's stops (paged: `page`, `pages`, ≤ 25 stops a page) |
 | `trips` | on change | the duty's trips |
+| `strip` | on change | the duty strip (sent whole; the latest one counts) |
+| `ontime` | on change | the on-time display (sent whole) |
+| `board` | on change | the board of the next stops (sent whole) |
+| `notes` | on change | the trip's notes (paged like `trip`: `v`, `page`, `pages`, items in `notes`) |
+| `card` | on change | the trip card (sent whole) |
 | `dev` | 0.5 s | the IBIS and printer variables and strings, `ticket_request`, `sales` |
 | `keys` | 5 s | the bus's triggers that belong to the IBIS, the printer and the change dispenser, and the map's tickets |
 | `lines` | 10 s | the map's lines and tours (paged) |

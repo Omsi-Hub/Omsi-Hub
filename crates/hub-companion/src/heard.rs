@@ -56,6 +56,13 @@ pub struct Heard {
     /// What the plugin read for the devices' screens (`crate::devices::Screen`): taken whole
     /// once every page of a version is in; `v` is the stands' version.
     pub screen: Paged,
+    /// The driving parts the plugin sends whole (`strip`, `ontime`, `board`, `card`), as the
+    /// latest datagram had them (without `t`), and the trip's notes (`notes`, paged).
+    pub strip: Option<Value>,
+    pub ontime: Option<Value>,
+    pub board: Option<Value>,
+    pub card: Option<Value>,
+    pub notes: Paged,
     /// The commands the plugin has carried out: (seq, ok, error).
     pub acks: Vec<(u64, bool, String)>,
 }
@@ -83,6 +90,22 @@ impl Heard {
             Some("trip") => self.stops.take(&d, "stops"),
             Some("trips") => self.trips.take(&d, "trips"),
             Some("lines") => self.lines.take(&d, "lines"),
+            Some("notes") => self.notes.take(&d, "notes"),
+            Some(k @ ("strip" | "ontime" | "board" | "card")) => {
+                let k = k.to_owned();
+                let Value::Object(mut m) = d else { return false };
+                m.remove("t");
+                let part = Some(Value::Object(m));
+                let slot = match k.as_str() {
+                    "strip" => &mut self.strip,
+                    "ontime" => &mut self.ontime,
+                    "board" => &mut self.board,
+                    _ => &mut self.card,
+                };
+                let changed = *slot != part;
+                *slot = part;
+                changed
+            }
             // (no change of the state: the screens wait for it on their own)
             Some("scr") => {
                 self.screen.take(&d, "items");

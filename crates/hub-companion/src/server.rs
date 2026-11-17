@@ -946,6 +946,100 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
+    fn state_of(sh: &Arc<Shared>, key: &str) -> Value {
+        json_of(&handle(&req("GET", "/api/state", Some(key), ""), sh))
+    }
+
+    #[test]
+    fn the_strip_is_heard_and_served() {
+        let (sh, dir) = shared("parts");
+        let key = pair(&sh);
+        live(&sh, json!({ "clock": 30_000.0 }));
+        let s = state_of(&sh, &key);
+        for k in ["strip", "ontime", "board", "notes", "card"] {
+            assert!(s.get(k).is_none(), "{k} absent until heard");
+        }
+        let parts = [
+            ("strip", json!({ "rows": [{ "kind": "sign_on", "from": 400 }], "checks": [] })),
+            ("ontime", json!({ "delay": 90, "text": "+1:30" })),
+            ("board", json!({ "stops": ["A", "B"], "next": 1 })),
+            ("card", json!({ "title": "Trip 2", "lines": ["29", "Hbf"] })),
+        ];
+        for (k, p) in &parts {
+            let mut d = p.clone();
+            d["t"] = json!(k);
+            sh.hear(d.to_string().as_bytes());
+        }
+        let s = state_of(&sh, &key);
+        for (k, p) in &parts {
+            assert_eq!(&s[*k], p, "{k} served as heard, without t");
+        }
+        // a newer datagram replaces the older
+        sh.hear(json!({ "t": "ontime", "delay": 0, "text": "0:00" }).to_string().as_bytes());
+        assert_eq!(state_of(&sh, &key)["ontime"], json!({ "delay": 0, "text": "0:00" }));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn notes_come_paged() {
+        let (sh, dir) = shared("notes");
+        let key = pair(&sh);
+        live(&sh, json!({ "clock": 30_000.0 }));
+        sh.hear(json!({ "t": "notes", "v": 1, "page": 2, "pages": 2, "notes": [{ "n": 3 }] }).to_string().as_bytes());
+        assert!(state_of(&sh, &key).get("notes").is_none(), "half a list is not shown");
+        sh.hear(json!({ "t": "notes", "v": 1, "page": 1, "pages": 2, "notes": [{ "n": 1 }, { "n": 2 }] }).to_string().as_bytes());
+        assert_eq!(state_of(&sh, &key)["notes"], json!([{ "n": 1 }, { "n": 2 }, { "n": 3 }]));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn the_new_commands_reach_the_plugin_under_their_names() {
+        let (sh, dir) = shared("newcmds");
+        let key = pair(&sh);
+        live(&sh, json!({ "clock": 30_000.0 }));
+        let cases = [
+            (r#"{"do":"sign_off"}"#, json!({ "do": "sign_off" })),
+            (r#"{"do":"start_duty"}"#, json!({ "do": "start_duty" })),
+            (r#"{"do":"card_close"}"#, json!({ "do": "card_close" })),
+            (r#"{"do":"part","id":"strip","on":true}"#, json!({ "do": "part", "id": "strip", "on": true })),
+            (r#"{"do":"note_close","n":3}"#, json!({ "do": "note_close", "n": 3 })),
+            (r#"{"do":"strip_note","text":"call depot"}"#, json!({ "do": "strip_note", "text": "call depot" })),
+            (r#"{"do":"strip_check","ok":true,"items":["a","b"],"text":"fine"}"#, json!({ "do": "strip_check", "ok": true, "items": ["a", "b"], "text": "fine" })),
+        ];
+        for (body, want) in cases {
+            let (sh2, dir2) = (sh.clone(), dir.clone());
+            let plugin = std::thread::spawn(move || {
+                for _ in 0..100 {
+                    std::thread::sleep(Duration::from_millis(20));
+                    let Ok(text) = std::fs::read_to_string(crate::queue::file_of(&dir2)) else { continue };
+                    let q: Value = serde_json::from_str(&text).unwrap();
+                    if let Some(c) = q["cmds"].as_array().and_then(|c| c.last()) {
+                        sh2.hear(json!({ "t": "ack", "seq": c["seq"], "ok": true }).to_string().as_bytes());
+                        return c.clone();
+                    }
+                }
+                panic!("no command");
+            });
+            let r = json_of(&handle(&req("POST", "/api/do", Some(&key), body), &sh));
+            let mut got = plugin.join().unwrap();
+            assert_eq!(r, json!({ "ok": true }), "{body}");
+            assert!(got["seq"].as_u64().is_some(), "{body} has a seq");
+            got.as_object_mut().unwrap().remove("seq");
+            assert_eq!(got, want, "{body}");
+        }
+        // malformed ones are refused
+        for body in [
+            r#"{"do":"part","id":"strip"}"#,
+            r#"{"do":"part","id":"strip","on":"yes"}"#,
+            r#"{"do":"note_close"}"#,
+            r#"{"do":"strip_note"}"#,
+            r#"{"do":"strip_check","ok":true,"items":"x","text":"t"}"#,
+        ] {
+            assert_eq!(handle(&req("POST", "/api/do", Some(&key), body), &sh).status, 400, "{body}");
+        }
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
     #[test]
     fn the_route_is_read_once_per_trip_in_the_games_coordinates_and_the_turn_said() {
         let (sh, dir) = shared("route");

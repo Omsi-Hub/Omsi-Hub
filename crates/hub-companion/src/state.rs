@@ -65,7 +65,7 @@ pub fn build(h: &Heard, facts: &Facts, now: f64) -> Value {
     let a = assignment_of(h, facts, game);
     let duty_live = if game { duty_of(h) } else { None };
     let clock = if game { f(h.get("clock")) } else { None };
-    json!({
+    let mut state = json!({
         "game": game,
         "clock": clock,
         "paused": game && h.get("paused").and_then(Value::as_bool).unwrap_or(false),
@@ -86,7 +86,21 @@ pub fn build(h: &Heard, facts: &Facts, now: f64) -> Value {
             "messages": facts.inbox.is_some(),
             "signon": a.is_some_and(|a| a.personnel.is_some()),
         },
-    })
+    });
+    // the driving parts (`strip`, `ontime`, `board`, `notes`, `card`): as the plugin sent them,
+    // absent when not heard or when the plugin is gone
+    if game {
+        let parts = [("strip", &h.strip), ("ontime", &h.ontime), ("board", &h.board), ("card", &h.card)];
+        for (k, p) in parts {
+            if let Some(p) = p {
+                state[k] = p.clone();
+            }
+        }
+        if h.notes.v != 0 {
+            state["notes"] = Value::Array(h.notes.items.clone());
+        }
+    }
+    state
 }
 
 fn signon(h: &Heard, a: Option<&Assignment>, game: bool) -> Value {
@@ -575,5 +589,17 @@ mod tests {
         let mut q = Pause::default();
         add(&mut h, json!({ "t": "live", "issued": 100, "clock": 29_000.0, "duty": { "trip": 2, "next": 0, "at_stop": true } }));
         assert_eq!(q.look(&h).unwrap()["until"], 29_900.0);
+    }
+
+    #[test]
+    fn the_driving_parts_are_served_while_the_game_is_fresh_and_gone_after() {
+        let mut h = driving();
+        assert!(build(&h, &Facts::default(), 1.0).get("strip").is_none(), "never heard: absent");
+        add(&mut h, json!({ "t": "strip", "rows": [1, 2] }));
+        add(&mut h, json!({ "t": "notes", "v": 1, "notes": [{ "n": 1 }] }));
+        let v = build(&h, &Facts::default(), 1.0);
+        assert_eq!((&v["strip"], &v["notes"]), (&json!({ "rows": [1, 2] }), &json!([{ "n": 1 }])));
+        let later = build(&h, &Facts::default(), GAME_FRESH + 1.0);
+        assert!(later.get("strip").is_none() && later.get("notes").is_none(), "the plugin older than GAME_FRESH: absent");
     }
 }
