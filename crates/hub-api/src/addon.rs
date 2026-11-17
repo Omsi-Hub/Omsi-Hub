@@ -980,6 +980,6 @@ mod tests {
             }
         }
         assert!(missing.is_empty(), "{} missing or with other holes (crates/hub-locales/locales/tauri-addon.yml):\n{}", missing.len(), missing.join("\n"));
-        assert_eq!(plugin_texts("de").get("Start duty").map(String::as_str), hub_locales::texts("de").get("Start duty").map(String::as_str));
+        assert_eq!(plugin_texts("de").get("Duty finished").map(String::as_str), hub_locales::texts("de").get("Duty finished").map(String::as_str));
     }
 }

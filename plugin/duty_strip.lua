@@ -6,20 +6,15 @@
 -- and the walk-around at sign-off whose defects go to the company's workshop. A collision the
 -- game sees is logged to the workshop by itself.
 --
--- Self-contained: in the navigator under the duty board (navigator.lua; an older openOMSI: a
--- panel of its own, `omsihub_strip`), its data from the assignment's `crew`
--- (Omsi-Hub's `bridge::Crew`, made from the RosterFlow duty the company launched), and what it
--- reports goes through the `report` main.lua hands it. Switched off by the assignment
--- (`crew.strip = false`) or by another module that draws a strip of its own (`M.set_enabled`):
--- there is only ever one duty strip on the screen.
-
-local layout = require("layout")
-local navigator = require("navigator")
+-- Self-contained: reported to the on-board computer (`facts`; Omsi-Hub's window shows it,
+-- nothing is drawn in the game), which leaves the note and does the walk-around with its
+-- commands (`note`, `check`); its data from the assignment's `crew` (Omsi-Hub's `bridge::Crew`,
+-- made from the RosterFlow duty the company launched), and what it reports goes through the
+-- `report` main.lua hands it. Switched off by the assignment (`crew.strip = false`) or by the
+-- driver's switch of the board's "strip" part (`M.set_enabled`).
 
 local M = {}
 
-local PANEL = "omsihub_strip"
-local GREEN, AMBER, RED, DIM, ACCENT = "#37D67A", "#F0B429", "#FF5F57", "#9AA3AD", "#F47F30"
 -- (a stand shorter than this is a layover, not a break; the relief is told this long before)
 local BREAK_MIN = 10
 local RELIEF_WARN = 10
@@ -32,7 +27,6 @@ local report = function() end
 local notify = function() end
 
 local enabled = true
-local shown = false
 -- what the driver has open: nil, "note" or "check"
 local open = nil
 local note = { template = nil, text = "" }
@@ -52,18 +46,13 @@ function M.setup(translate, c, send, say)
   enabled = crew ~= nil and crew.strip ~= false
 end
 
--- whether the strip is shown (another module may take the place: `set_enabled(false)`)
+-- whether the strip is on (the driver may switch it off: `set_enabled(false)`)
 function M.enabled()
   return enabled
 end
 
 function M.set_enabled(on)
   enabled = on and crew ~= nil
-  if not enabled then navigator.put("strip", nil) end
-  if not enabled and shown and omsi.ui and omsi.ui.remove then
-    layout.remove(PANEL)
-    shown = false
-  end
 end
 
 local function fn(t, name)
@@ -80,12 +69,6 @@ local function minute()
   local i = fn(omsi, "info") and omsi.info() or nil
   local s = type(i) == "table" and tonumber(i.clock) or 0
   return (s or 0) / 60
-end
-
--- "in 5 min" for `left` whole minutes to go
-local function until_text(left)
-  if left >= 60 then return tr("in %{h} h %{m} min", { h = left // 60, m = left % 60 }) end
-  return tr("in %{m} min", { m = left })
 end
 
 -- --- what the duty looks like now ---------------------------------------------------------------
@@ -182,57 +165,15 @@ function M.frame(dt)
   end
 end
 
--- --- the strip ----------------------------------------------------------------------------------
-
-local function line(icon, label, value, color)
-  return { type = "row", children = {
-    { type = "icon", name = icon, color = color or DIM, size = 16 },
-    { type = "text", text = label, size = 12, color = DIM, wrap = false },
-    { type = "text", text = value, size = 13, color = color, grow = true, align = "right" },
-  } }
-end
-
-local function note_form(children)
-  local function add(x) children[#children + 1] = x end
-  add({ type = "divider" })
-  add({ type = "text", text = tr("A note for the next driver of bus %{bus}", { bus = crew.bus_number or "" }), weight = "bold", size = 13 })
-  for _, t in ipairs(crew.templates or {}) do
-    add({ type = "checkbox", id = "strip_tpl_" .. t[1], text = t[2], checked = note.template == t[1] })
-  end
-  add({ type = "input", id = "strip_note_text", text = note.text, placeholder = tr("Or type a note"), max = tonumber(crew.text_max) or 140 })
-  add({ type = "row", children = {
-    { type = "button", id = "strip_note_send", text = tr("Leave the note"), icon = "sticky_note_2", grow = true },
-    { type = "button", id = "strip_close", text = tr("Close"), grow = true },
-  } })
-end
-
-local function check_form(children)
-  local function add(x) children[#children + 1] = x end
-  add({ type = "divider" })
-  add({ type = "text", text = tr("Walk-around check of bus %{bus}", { bus = crew.bus_number or "" }), weight = "bold", size = 13 })
-  add({ type = "text", text = tr("Tick what is not in order: the workshop gets it."), size = 12, color = DIM })
-  for _, k in ipairs(crew.checks or {}) do
-    add({ type = "checkbox", id = "strip_chk_" .. k[1], text = k[2], checked = check.ticked[k[1]] == true })
-  end
-  add({ type = "input", id = "strip_chk_text", text = check.text, placeholder = tr("What is wrong (optional)"), max = tonumber(crew.text_max) or 140 })
-  add({ type = "row", children = {
-    { type = "button", id = "strip_chk_send", text = tr("Report defects"), icon = "build", grow = true },
-    { type = "button", id = "strip_chk_ok", text = tr("All in order"), icon = "task_alt", grow = true },
-  } })
-end
-
 -- --- the strip as data ----------------------------------------------------------------------------
-
-local TONE = { dim = DIM, good = GREEN, warn = AMBER }
 
 -- (the minutes to go until minute `m`, whole, none under 0)
 local function minutes_to(m, now)
   return math.max(math.ceil(m - now), 0)
 end
 
--- the strip's facts at minute `now`, plain data (the strip's elements and the on-board computer
--- both read them; a list with nothing in it is left out): nil when the strip is off (no
--- company's duty, or another strip has the place)
+-- the strip's facts at minute `now`, plain data for the on-board computer (a list with nothing
+-- in it is left out): nil when the strip is off (no company's duty, or switched off)
 local function facts_at(now)
   if not (crew and enabled) then return nil end
   local out = {
@@ -280,50 +221,6 @@ function M.facts()
   return facts_at(minute())
 end
 
--- the strip's elements for its facts `f`
-function M.rows(f)
-  local children = {}
-  local function add(x) children[#children + 1] = x end
-  add({ type = "row", children = {
-    { type = "icon", name = "badge", color = ACCENT },
-    { type = "text", text = f.piece.text, weight = "bold", color = TONE[f.piece.tone], grow = true },
-  } })
-  local b = f.next_break
-  if b then
-    local when = b.under_way and tr("now, until %{time}", { time = b.to }) or (b.from .. " · " .. until_text(b.left))
-    add(line("coffee", tr("Next break"), b.at .. "  " .. when))
-  end
-  local r = f.next_relief
-  if r then
-    add(line("swap_horiz", tr("Next relief"), r.at .. "  " .. r.from .. " · " .. until_text(r.left), r.soon and AMBER or nil))
-  end
-  if f.ends then add(line("flag", tr("End of duty"), f.ends.from .. "  " .. f.ends.at)) end
-  for _, ch in ipairs(f.changes or {}) do
-    add({ type = "text", text = "• " .. ch, size = 12, color = AMBER })
-  end
-  local fu = f.fuel
-  if fu then
-    local label = fu.kind == "charge" and tr("Charge") or tr("Fuel")
-    add({ type = "row", children = {
-      { type = "icon", name = fu.kind == "charge" and "battery_charging_full" or "local_gas_station", color = fu.low and RED or DIM, size = 16 },
-      { type = "text", text = label .. " " .. math.floor(fu.level * 100 + 0.5) .. " %", size = 12, color = fu.low and RED or DIM, wrap = false },
-      { type = "bar", value = fu.level, grow = true, color = fu.low and RED or GREEN },
-    } })
-    if fu.to_depot then add({ type = "text", text = tr("Return to the depot to refuel"), size = 12, color = RED }) end
-  end
-  if open == "note" then
-    note_form(children)
-  elseif open == "check" then
-    check_form(children)
-  else
-    add({ type = "row", children = {
-      { type = "button", id = "strip_note", text = tr("Leave a note"), icon = "sticky_note_2", grow = true },
-      { type = "button", id = "strip_check", text = tr("Defect check"), icon = "build", grow = true },
-    } })
-  end
-  return children
-end
-
 -- the relief coming within the warning time, said once
 local function warn_relief(f)
   local r = f.next_relief
@@ -334,23 +231,11 @@ local function warn_relief(f)
   notify("swap_horiz", tr("Relief due"), tr("At %{place} at %{time}", { place = r.at, time = r.from }))
 end
 
--- the strip now (`on`: the driver is at work on the company's duty)
+-- every second (`on`: the driver is at work on the company's duty): the relief coming told
 function M.update(on)
   at_work = on == true
-  if not (crew and omsi.ui and omsi.ui.set) then return end
   local f = (enabled and on) and facts_at(minute()) or nil
-  if not f then
-    navigator.put("strip", nil)
-    if shown then
-      layout.remove(PANEL)
-      shown = false
-    end
-    return
-  end
-  warn_relief(f)
-  if navigator.docks() then return navigator.put("strip", M.rows(f)) end
-  layout.set(PANEL, { anchor = "bottom_left", x = 16, y = 16, width = 340, accent = ACCENT, draggable = true, children = M.rows(f) })
-  shown = true
+  if f then warn_relief(f) end
 end
 
 -- --- sign-on and sign-off -----------------------------------------------------------------------
@@ -370,10 +255,7 @@ end
 -- the driver signs off (or the duty ended): the walk-around opens, once
 function M.sign_off()
   if not crew then return false end
-  if not check.done then
-    open = "check"
-    M.update(true)
-  end
+  if not check.done then open = "check" end
   return true
 end
 
@@ -405,7 +287,6 @@ function M.note(text)
   if not crew then return false, "not_now" end
   note = { template = nil, text = cut(text) }
   if not send_note() then return false, "empty" end
-  M.update(true)
   return true
 end
 
@@ -440,49 +321,7 @@ function M.check(ok, items, text)
     if type(id) == "string" then check.ticked[id] = true end
   end
   send_check(ok)
-  M.update(true)
   return true
-end
-
--- a click on the strip: whether it was the strip's
-function M.click(p, element)
-  element = element or ""
-  if (p ~= PANEL and not (navigator.is(p) and element:sub(1, 6) == "strip_")) or not crew then return false end
-  if element == "strip_note" then open = "note"
-  elseif element == "strip_check" then open = "check"
-  elseif element == "strip_close" then open = nil
-  elseif element == "strip_note_send" or element == "strip_note_text" then
-    send_note()
-  elseif element == "strip_chk_send" then send_check(false)
-  elseif element == "strip_chk_ok" then send_check(true)
-  end
-  M.update(true)
-  return true
-end
-
--- a checkbox ticked or a field typed into: whether it was the strip's
-function M.change(p, element, value)
-  element = element or ""
-  if (p ~= PANEL and not (navigator.is(p) and element:sub(1, 6) == "strip_")) or not crew then return false end
-  local tpl = element:match("^strip_tpl_(.+)$")
-  local chk = element:match("^strip_chk_(.+)$")
-  if tpl then
-    note.template = value and tpl or nil
-  elseif element == "strip_note_text" then
-    note.text = tostring(value or "")
-  elseif element == "strip_chk_text" then
-    check.text = tostring(value or "")
-  elseif chk then
-    check.ticked[chk] = value and true or nil
-  else
-    return false
-  end
-  return true
-end
-
-function M.stop()
-  if shown and omsi.ui and omsi.ui.remove then layout.remove(PANEL) end
-  shown = false
 end
 
 return M

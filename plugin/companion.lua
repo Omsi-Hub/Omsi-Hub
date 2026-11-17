@@ -88,11 +88,6 @@ function M.setup(hooks)
   hook = hooks or {}
 end
 
--- a board part switched in the panel: the same as the computer's `part` command
-function M.part(id, on)
-  return hook.part ~= nil and hook.part(id, on)
-end
-
 local function send(t)
   if not (on and fn("send")) then return false end
   local text = json.encode(t)

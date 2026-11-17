@@ -410,8 +410,8 @@ fn on_time_is_sent() {
     let o = sent(&h, "ontime");
     let o = o.last().expect("an ontime datagram");
     assert_eq!((o["delay"].as_f64(), o["tone"].as_str()), (Some(400.0), Some("late")));
-    // (the driver switched it off for this drive: cleared)
-    h.fire("ui_click", &[json!("omsihub_board"), json!("ontime_close")]).unwrap();
+    // (the duty over: cleared)
+    h.state.borrow_mut().duty = None;
     frames(&mut h, 40);
     assert_eq!(sent(&h, "ontime").pop().unwrap(), json!({ "t": "ontime" }));
 }
@@ -489,8 +489,8 @@ fn the_trip_card_is_sent_when_it_opens() {
     assert_eq!(c["open"], true);
     assert_eq!(c["run"]["line"], "29");
     assert!(c["grade"].is_string() && c["score"].is_number() && c["stars"].is_number(), "{c}");
-    // (the driver closed it: cleared)
-    h.fire("ui_click", &[json!("omsihub_trip"), json!("close")]).unwrap();
+    // (the driver closed it on the on-board computer: cleared)
+    command(&dir, &mut h, json!([{ "seq": 1, "do": "card_close" }]));
     frames(&mut h, 40);
     assert_eq!(sent(&h, "card").pop().unwrap(), json!({ "t": "card" }));
 }
@@ -653,6 +653,19 @@ fn the_driver_signs_on_works_and_signs_off() {
     assert_eq!(h.state.borrow().started.len(), 1);
     command(&dir, &mut h, json!([{ "seq": 4, "do": "sign_off" }]));
     assert_eq!(acks(&h).last().unwrap(), &(4, true, String::new()));
+}
+
+#[test]
+fn signing_off_waits_until_the_duty_order_is_accepted() {
+    let dir = installed("signoff-order");
+    bridge::write_assignment(&dir, &passed_assignment()).unwrap();
+    queue(&dir, 5, json!([]));
+    let mut h = Harness::load(&dir, game()).unwrap();
+    frames(&mut h, 3);
+    command(&dir, &mut h, json!([{ "seq": 1, "do": "sign_on", "number": "482913", "code": "5821" }]));
+    assert_eq!(sent(&h, "live").last().unwrap()["signon"], "order");
+    command(&dir, &mut h, json!([{ "seq": 2, "do": "sign_off" }]));
+    assert_eq!(acks(&h).last().unwrap(), &(2, false, "not_now".to_string()), "signed on, the duty order not accepted yet");
 }
 
 #[test]

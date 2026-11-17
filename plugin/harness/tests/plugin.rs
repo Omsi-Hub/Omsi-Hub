@@ -2,10 +2,10 @@
 //! few seconds of game, and what reaches Omsi-Hub through the bridge. Ported from the old
 //! `omsihub-plugin/tests/plugin.rs`, which ran the plugin inside openOMSI's own runtime.
 
-use hub_game::bridge::{self, Assignment, Notice, ReportReader};
+use hub_game::bridge::{self, Assignment, Inbox, InboxAction, InboxMsg, Notice, ReportReader};
 use hub_game::{compat, install};
 use hub_plugin_harness::{GameState, Harness, Trip, FUNCTIONS};
-use serde_json::json;
+use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
@@ -46,10 +46,46 @@ fn game() -> GameState {
     GameState { trips: vec![trip("Zoo - Hbf"), trip("Hbf - Zoo")], ..GameState::default() }
 }
 
+/// The port of Omsi-Hub's companion server the tests have the plugin send to.
+const PORT: i64 = 47812;
+
+/// Omsi-Hub's companion on, as the on-board computer has it: the plugin sends what it shows to
+/// the companion's server (`data/companion.json`).
+fn computer_on(dir: &std::path::Path) {
+    std::fs::create_dir_all(dir.join("data")).unwrap();
+    std::fs::write(dir.join("data/companion.json"), json!({ "sid": 1, "port": PORT, "seq": 0, "cmds": [] }).to_string()).unwrap();
+}
+
+/// What the plugin sent the companion server, as JSON, of kind `t`.
+fn sent(h: &Harness, t: &str) -> Vec<Value> {
+    h.state.borrow().sent.iter().filter(|(p, _)| *p == PORT).filter_map(|(_, text)| serde_json::from_str::<Value>(text).ok()).filter(|v| v["t"] == t).collect()
+}
+
+/// Each `notes` datagram the plugin sent the on-board computer: its notes, as "title: text".
+fn notes(h: &Harness) -> Vec<Vec<String>> {
+    sent(h, "notes")
+        .iter()
+        .map(|p| p["notes"].as_array().cloned().unwrap_or_default().iter().map(|n| format!("{}: {}", n["title"].as_str().unwrap_or(""), n["text"].as_str().unwrap_or(""))).collect())
+        .collect()
+}
+
+/// Whether the on-board computer was sent a note that says `part`, within the next seconds of
+/// the game (one part a tick goes out, between the live data and the lists).
+fn noted(h: &mut Harness, part: &str) -> bool {
+    for _ in 0..40 {
+        if notes(h).iter().flatten().any(|n| n.contains(part)) {
+            return true;
+        }
+        h.frame().unwrap();
+    }
+    false
+}
+
 #[test]
 fn the_duty_is_taken_its_trips_reported_and_the_notices_shown() {
     let dir = installed("full");
     bridge::write_assignment(&dir, &assignment()).unwrap();
+    computer_on(&dir);
     let mut h = Harness::load(&dir, game()).unwrap();
 
     // the handshake: everything the add-on uses is there
@@ -77,22 +113,39 @@ fn the_duty_is_taken_its_trips_reported_and_the_notices_shown() {
     assert_eq!((trip.driving, trip.comfort, trip.tickets, trip.delay), (Some(95.0), Some(88.0), Some(100.0), Some(42.0)));
     assert_eq!(trip.clock, Some(28_800.0));
 
-    // the notice as a card, once; the company's panel
-    let toasts: Vec<String> = h.state.borrow().toasts.iter().map(|t| t.text.clone()).collect();
-    assert_eq!(toasts, ["Bus 4711 is in the workshop"]);
-    let panel = h.state.borrow().panels.get("omsihub").cloned().expect("the company's panel");
-    assert!(panel.to_string().contains("Stadtbus Berlin"), "{panel}");
+    // the notice as a note of the on-board computer, once; the company's board there too
+    assert!(noted(&mut h, "Depot: Bus 4711 is in the workshop"), "{:?}", notes(&h));
+    assert!(notes(&h).iter().all(|n| n.iter().filter(|n| n.contains("Bus 4711")).count() <= 1), "{:?}", notes(&h));
+    for _ in 0..10 {
+        h.frame().unwrap();
+    }
+    assert!(!sent(&h, "board").is_empty(), "the company's board");
+    // (nothing of it drawn in the game)
+    assert!(h.state.borrow().toasts.is_empty() && h.state.borrow().panels.is_empty());
 
     // a notice that comes while the game runs
     bridge::write_notices(&dir, &[Notice { id: "n2".into(), text: "Diversion on line 10".into(), ..Notice::default() }]).unwrap();
-    for _ in 0..6 {
-        h.frame().unwrap();
-    }
-    assert!(h.state.borrow().toasts.iter().any(|t| t.text == "Diversion on line 10"));
+    assert!(noted(&mut h, "Diversion on line 10"), "{:?}", notes(&h));
 }
 
 #[test]
-fn an_older_openomsi_without_files_panels_or_game_functions_still_works() {
+fn an_openomsi_without_send_is_refused() {
+    let dir = installed("no-send");
+    bridge::write_assignment(&dir, &assignment()).unwrap();
+    // (an openOMSI before `omsi.send`: the on-board computer would show nothing while driving)
+    let mut h = Harness::load_with(&dir, game(), "omsi.send = nil").unwrap();
+    h.frame().unwrap();
+    let hello = bridge::read_hello(&dir).expect("data/hello.json");
+    assert_eq!(hello.functions.get("send"), Some(&false));
+    let c = compat::negotiate(&hello);
+    assert_eq!(c.level, compat::Level::Unsupported, "{c:?}");
+    let link = c.features.iter().find(|f| f.id == "live_link").expect("the live link");
+    assert!(!link.on);
+    assert_eq!(link.fallback, "Omsi-Hub's on-board computer needs it");
+}
+
+#[test]
+fn an_older_openomsi_without_files_or_game_functions_reports_in_its_log() {
     let dir = installed("old");
     bridge::write_assignment(&dir, &Assignment { auto_start: false, ..assignment() }).unwrap();
     // (an openOMSI before the file functions, the panels and `game.*`)
@@ -114,9 +167,8 @@ fn an_older_openomsi_without_files_panels_or_game_functions_still_works() {
     let kinds: Vec<&str> = reports.iter().map(|r| r.kind.as_str()).collect();
     assert_eq!(kinds, ["duty_start", "trip"]);
     assert_eq!((reports[1].trip, reports[1].trip_name.as_str()), (1, "Zoo - Hbf"));
-    // the notice as a plain line of text
-    let messages = h.state.borrow().messages.clone();
-    assert!(messages.iter().any(|m| m == "Depot: Bus 4711 is in the workshop"), "{messages:?}");
+    // (the notice is not put on the screen as a line of text: the on-board computer shows it)
+    assert!(h.state.borrow().messages.is_empty(), "{:?}", h.state.borrow().messages);
 }
 
 #[test]
@@ -141,12 +193,14 @@ fn the_plugin_checks_every_function_the_add_on_negotiates() {
 fn an_assignment_of_an_earlier_day_is_not_taken() {
     let dir = installed("stale");
     bridge::write_assignment(&dir, &Assignment { issued: issued() - 2 * 86_400, ..assignment() }).unwrap();
+    computer_on(&dir);
     let mut h = Harness::load(&dir, game()).unwrap();
-    h.frame().unwrap();
-    h.frame().unwrap();
-    // (no duty taken, no company's panel)
+    for _ in 0..30 {
+        h.frame().unwrap();
+    }
+    // (no duty taken, no company's board)
     assert!(h.state.borrow().started.is_empty());
-    assert!(!h.state.borrow().panels.contains_key("omsihub"));
+    assert!(sent(&h, "board").is_empty(), "{:?}", sent(&h, "board"));
     assert_eq!(bridge::read_hello(&dir).map(|h| h.issued), Some(0));
 }
 
@@ -155,14 +209,11 @@ fn leg(line: &str, tour: &str, first: u32, trips: u32, from_stop: u32, to_stop: 
     bridge::Leg { line: line.into(), tour: tour.into(), first, trips, from_stop, to_stop }
 }
 
-fn toasted(h: &Harness, part: &str) -> bool {
-    h.state.borrow().toasts.iter().any(|t| t.text.contains(part))
-}
-
 #[test]
 fn a_shift_s_parts_are_chained_and_the_duty_ends_after_the_last() {
     let dir = installed("legs");
     bridge::write_assignment(&dir, &Assignment { auto_start: false, legs: vec![leg("10", "2", 1, 1, 0, 0), leg("11", "3", 2, 1, 0, 0)], ..assignment() }).unwrap();
+    computer_on(&dir);
     let mut h = Harness::load(&dir, game()).unwrap();
     // (the game's command line started the first part's tour)
     h.state.borrow_mut().duty = Some(hub_plugin_harness::Duty { line: "10".into(), tour: "2".into(), trip: 1, trips: 2, delay: 0.0 });
@@ -175,13 +226,11 @@ fn a_shift_s_parts_are_chained_and_the_duty_ends_after_the_last() {
     assert!(h.state.borrow().started.is_empty());
     h.frame().unwrap();
     assert_eq!(h.state.borrow().started, [("11".to_string(), "3".to_string(), 2, 0)]);
-    h.frame().unwrap();
-    assert!(toasted(&h, "Part 2 of 2: line 11, tour 3"));
+    assert!(noted(&mut h, "Part 2 of 2: line 11, tour 3"));
     // its last trip done: the duty ended
     h.fire("trip_done", &[json!(2), json!("arrived"), json!(90.0), json!(90.0), json!(100.0)]).unwrap();
     assert!(h.state.borrow().duty.is_none());
-    assert!(toasted(&h, "Your duty is done"));
-    h.frame().unwrap();
+    assert!(noted(&mut h, "Your duty is done"));
     let reports = ReportReader::default().read_new(&dir);
     let kinds: Vec<(&str, &str)> = reports.iter().map(|r| (r.kind.as_str(), r.line.as_str())).collect();
     assert_eq!(kinds, [("duty_start", "10"), ("trip", "10"), ("duty_end", "10"), ("duty_start", "11"), ("trip", "11"), ("duty_end", "11")]);
@@ -192,6 +241,7 @@ fn a_duty_with_reliefs_begins_and_ends_on_the_way() {
     let dir = installed("relief");
     // (taken over at the third stop of trip 1, handed over at the fourth stop of trip 2)
     bridge::write_assignment(&dir, &Assignment { auto_start: false, legs: vec![leg("10", "2", 1, 2, 3, 4)], ..assignment() }).unwrap();
+    computer_on(&dir);
     let mut h = Harness::load(&dir, game()).unwrap();
     h.state.borrow_mut().duty = Some(hub_plugin_harness::Duty { line: "10".into(), tour: "2".into(), trip: 1, trips: 2, delay: 0.0 });
     h.frame().unwrap();
@@ -206,18 +256,18 @@ fn a_duty_with_reliefs_begins_and_ends_on_the_way() {
     assert!(h.state.borrow().duty.is_some(), "not yet at the relief stop");
     h.fire("stop_arrive", &[json!(null), json!(null), json!(4), json!(0.0)]).unwrap();
     assert!(h.state.borrow().duty.is_none(), "the relief takes over");
-    assert!(toasted(&h, "Your relief takes over here"));
     let reports = ReportReader::default().read_new(&dir);
     assert!(reports.iter().any(|r| r.kind == "trip" && r.trip == 2 && r.how == "relieved"), "{reports:?}");
+    assert!(noted(&mut h, "Your relief takes over here"));
 }
 
 #[test]
 fn a_free_drive_says_its_route() {
     let dir = installed("free");
     bridge::write_assignment(&dir, &Assignment { auto_start: false, duty: String::new(), line: "14".into(), tour: String::new(), free_line: "14_Hbf-Zoo".into(), ..assignment() }).unwrap();
+    computer_on(&dir);
     let mut h = Harness::load(&dir, game()).unwrap();
-    h.frame().unwrap();
-    assert!(toasted(&h, "Free drive on line 14: 14_Hbf-Zoo"));
+    assert!(noted(&mut h, "Free drive on line 14: 14_Hbf-Zoo"));
     assert!(h.state.borrow().started.is_empty());
 }
 
@@ -422,129 +472,78 @@ fn the_live_dashboard_has_the_bus_s_ibis_and_heading_and_survives_a_variable_s_e
     assert!(d.ibis.is_none(), "{d:?}");
 }
 
-/// The panel `id` as the game has it now.
-fn panel(h: &Harness, id: &str) -> serde_json::Value {
-    h.state.borrow().panels.get(id).cloned().unwrap_or_else(|| panic!("no panel {id}"))
-}
-
 /// A Lua expression of the plugin's state, as JSON.
 fn eval(h: &Harness, lua: &str) -> serde_json::Value {
     let v: mlua::Value = h.lua.load(lua).eval().unwrap();
     serde_json::to_value(&v).unwrap()
 }
 
+/// A company's duty as the on-board computer has all of it - the duty strip (the handover notes,
+/// the walk-around), the control room's messages, on time, the drive watch, the trip's card and
+/// the notes - and nothing of it drawn in the game, whatever openOMSI's look.
 #[test]
-fn the_driver_sizes_and_moves_the_panels_and_they_stay_so() {
-    let dir = installed("layout");
-    bridge::write_assignment(&dir, &assignment()).unwrap();
-    let mut h = Harness::load(&dir, game()).unwrap();
-    h.frame().unwrap();
-    let before = panel(&h, "omsihub");
-    assert_eq!((before["width"].as_f64(), before["x"].as_f64(), before["y"].as_f64()), (Some(300.0), Some(16.0), Some(0.0)));
-    assert!(!before.to_string().contains("hub_size_up"), "no size row without the mouse");
-
-    // F10: the size row under the panel; two clicks on "larger"
-    h.fire("key", &[json!("F10"), json!(true)]).unwrap();
-    assert!(panel(&h, "omsihub").to_string().contains("hub_size_up"));
-    h.fire("ui_click", &[json!("omsihub"), json!("hub_size_up")]).unwrap();
-    h.fire("ui_click", &[json!("omsihub"), json!("hub_size_up")]).unwrap();
-    let big = panel(&h, "omsihub");
-    assert_eq!(big["width"].as_f64().map(f64::round), Some(360.0));
-    assert!(big.to_string().contains("120 %"), "{big}");
-    // (its texts grow with it; the padding the game would give it, too)
-    assert_eq!(big["children"][0]["children"][1]["size"].as_f64().map(|s| (s * 10.0).round() / 10.0), Some(16.8));
-    assert_eq!(big["padding"].as_f64().map(|s| (s * 10.0).round() / 10.0), Some(14.4));
-
-    // dragged 40 to the left and 25 down (the panel sits on the right: x grows leftwards)
-    h.state.borrow_mut().moved.insert("omsihub".into(), (-40.0, 25.0));
-    h.frame().unwrap();
-    h.frame().unwrap();
-    assert_eq!(eval(&h, "{ omsi.data.layout.omsihub.dx, omsi.data.layout.omsihub.dy, omsi.data.layout.omsihub.scale }"), json!([-40.0, 25.0, 1.2]));
-    // (the panels give the mouse back: the size row goes)
-    h.fire("key", &[json!("F10"), json!(true)]).unwrap();
-    assert!(!panel(&h, "omsihub").to_string().contains("hub_size_up"));
-
-    // the next drive: the panel comes where it was left, at its size
-    let kept = eval(&h, "omsi.data.layout");
-    let mut h = Harness::load_with(&dir, game(), &format!("omsi.data.layout = omsi.json.decode('{kept}')")).unwrap();
-    h.frame().unwrap();
-    let again = panel(&h, "omsihub");
-    assert_eq!((again["x"].as_f64(), again["y"].as_f64()), (Some(56.0), Some(25.0)));
-    assert_eq!(again["width"].as_f64().map(f64::round), Some(360.0));
-
-    // back to how it came
-    h.fire("key", &[json!("F10"), json!(true)]).unwrap();
-    h.fire("ui_click", &[json!("omsihub"), json!("hub_size_reset")]).unwrap();
-    let reset = panel(&h, "omsihub");
-    assert_eq!((reset["x"].as_f64(), reset["y"].as_f64(), reset["width"].as_f64()), (Some(16.0), Some(0.0), Some(300.0)));
-}
-
-/// The ids in a panel that start with `prefix`.
-fn ids(v: &serde_json::Value, prefix: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    match v {
-        serde_json::Value::Object(m) => {
-            if let Some(id) = m.get("id").and_then(|i| i.as_str()).filter(|i| i.starts_with(prefix)) {
-                out.push(id.to_string());
-            }
-            for x in m.values() {
-                out.extend(ids(x, prefix));
-            }
+fn nothing_is_drawn_while_driving() {
+    let row = |kind: &str, at: &str, from: i32, to: i32| bridge::StripRow { kind: kind.into(), at: at.into(), from, to, ..bridge::StripRow::default() };
+    let crew = bridge::Crew {
+        rows: vec![row("sign_on", "Depot", 470, 480), row("break", "Hbf", 485, 500), bridge::StripRow { relief: true, ..row("sign_off", "Hbf", 485, 485) }],
+        bus: 12,
+        bus_number: "4711".into(),
+        notes: vec!["Door 2 sticks".into()],
+        checks: vec![("lights".into(), "Lights".into())],
+        text_max: 140,
+        low_fuel: 0.15,
+        ..bridge::Crew::default()
+    };
+    let instruction = InboxMsg {
+        id: 7,
+        from: "Control".into(),
+        priority: "urgent".into(),
+        text: "Hold at the next stop".into(),
+        state: "sent".into(),
+        action: Some(InboxAction { kind: "hold".into(), minutes: 1, ..InboxAction::default() }),
+        ..InboxMsg::default()
+    };
+    // (an openOMSI with the navigator's board, and one without)
+    for (k, look) in ["omsi.ui.version = 5; omsi.ui.dock = function() return 320, 900, 400, true end", ""].into_iter().enumerate() {
+        let dir = installed(&format!("nothing-drawn-{k}"));
+        bridge::write_assignment(&dir, &Assignment { crew: Some(crew.clone()), ..assignment() }).unwrap();
+        bridge::write_inbox(&dir, &Inbox { line: "10".into(), tour: "2".into(), messages: vec![instruction.clone()], ..Inbox::default() }).unwrap();
+        computer_on(&dir);
+        let mut h = Harness::load_with(&dir, game(), look).unwrap();
+        for _ in 0..6 {
+            h.frame().unwrap();
         }
-        serde_json::Value::Array(a) => a.iter().for_each(|x| out.extend(ids(x, prefix))),
-        _ => {}
+        // the instruction accepted on the on-board computer: the hold counted down at the next stop
+        let accept = json!({ "sid": 1, "port": PORT, "seq": 1, "cmds": [{ "seq": 1, "do": "msg", "kind": "accept", "id": 7 }] });
+        std::fs::write(dir.join("data/companion.json"), accept.to_string()).unwrap();
+        for _ in 0..3 {
+            h.frame().unwrap();
+        }
+        h.fire("stop_arrive", &[json!(null), json!(null), json!(1), json!(0.0)]).unwrap();
+        h.fire("red_light", &[json!(30.0)]).unwrap();
+        h.fire("trip_done", &[json!(1), json!("arrived"), json!(95.0), json!(88.0), json!(100.0)]).unwrap();
+        // (the keys that once opened the inbox, gave the panels the mouse and closed the card)
+        for key in ["F9", "F10", "Enter"] {
+            h.fire("key", &[json!(key), json!(true)]).unwrap();
+        }
+        for _ in 0..40 {
+            h.frame().unwrap();
+        }
+        // all of it on the on-board computer
+        for part in ["strip", "ontime", "board", "card", "notes"] {
+            assert!(!sent(&h, part).is_empty(), "{part} sent to the on-board computer");
+        }
+        let all_notes = sent(&h, "notes").iter().map(Value::to_string).collect::<String>();
+        for said in ["Hold at the next stop", "Door 2 sticks", "Hold here for 1 min"] {
+            assert!(all_notes.contains(said), "{said} in {all_notes}");
+        }
+        h.fire("stop", &[]).unwrap();
+        // nothing in the game: no panel, no toast, no line of text
+        let st = h.state.borrow();
+        assert!(st.panels.is_empty(), "panels drawn: {:?}", st.panels.keys().collect::<Vec<_>>());
+        assert!(st.toasts.is_empty(), "toasts: {:?}", st.toasts.iter().map(|t| t.text.clone()).collect::<Vec<_>>());
+        assert!(st.messages.is_empty(), "lines of text: {:?}", st.messages);
     }
-    out
-}
-
-#[test]
-fn in_an_openomsi_with_the_navigator_s_board_everything_is_in_the_navigator_and_clicked_away_there() {
-    let dir = installed("navigator");
-    bridge::write_assignment(&dir, &assignment()).unwrap();
-    let navigator = "omsi.ui.version = 5; omsi.ui.dock = function() return 320, 900, 400, true end";
-    let mut h = Harness::load_with(&dir, game(), navigator).unwrap();
-    for _ in 0..3 {
-        h.frame().unwrap();
-    }
-    // one panel, the navigator's, that takes its clicks without F10; no toasts, no panels of their own
-    let nav = panel(&h, "omsihub_board");
-    assert_eq!((nav["anchor"].as_str(), nav["grab"].as_bool()), (Some("navigator"), Some(true)));
-    assert!(h.state.borrow().toasts.is_empty(), "{:?}", h.state.borrow().toasts.iter().map(|t| t.text.clone()).collect::<Vec<_>>());
-    for own in ["omsihub", "omsihub_ontime", "omsihub_msgs", "omsihub_strip"] {
-        assert!(!h.state.borrow().panels.contains_key(own), "{own} is a panel of its own");
-    }
-    let text = nav.to_string();
-    for part in ["Bus 4711 is in the workshop", "Stadtbus Berlin", "On time"] {
-        assert!(text.contains(part), "{part} in {text}");
-    }
-    // (the notification first, under the navigator's map)
-    let at = |part: &str| text.find(part).unwrap_or_else(|| panic!("{part} in {text}"));
-    assert!(at("Bus 4711 is in the workshop") < at("Stadtbus Berlin"));
-    // (the duty board is out for now: board.lua's SHOWN)
-    assert!(!text.contains("trip 1 of 2"), "{text}");
-
-    // the notice clicked away with the mouse, as it is
-    let close = ids(&nav, "note_close_");
-    assert_eq!(close.len(), 1, "{nav}");
-    h.fire("ui_click", &[json!("omsihub_board"), json!(close[0])]).unwrap();
-    assert!(!panel(&h, "omsihub_board").to_string().contains("Bus 4711 is in the workshop"));
-
-    // a notice while the game runs comes into the navigator too; one not clicked away goes by itself
-    bridge::write_notices(&dir, &[Notice { id: "n2".into(), text: "Diversion on line 10".into(), ..Notice::default() }]).unwrap();
-    for _ in 0..6 {
-        h.frame().unwrap();
-    }
-    assert!(panel(&h, "omsihub_board").to_string().contains("Diversion on line 10"));
-    for _ in 0..40 {
-        h.frame().unwrap();
-    }
-    assert!(!panel(&h, "omsihub_board").to_string().contains("Diversion on line 10"));
-
-    // the on-time card in the navigator, and closed there for the drive
-    assert_eq!(ids(&panel(&h, "omsihub_board"), "ontime_close").len(), 1);
-    h.fire("ui_click", &[json!("omsihub_board"), json!("ontime_close")]).unwrap();
-    h.frame().unwrap();
-    assert!(ids(&panel(&h, "omsihub_board"), "ontime_close").is_empty());
 }
 
 /// The plugin's folder is an interface theme (Omsi-Hub's look for openOMSI's own screens), put

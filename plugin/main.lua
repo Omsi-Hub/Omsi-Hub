@@ -1,6 +1,9 @@
 -- Omsi-Hub in openOMSI: the duty the bus company assigned, its trips reported back to the
--- company, and the company's notices on the screen - through openOMSI's own plugin API, so
--- that Omsi-Hub needs nothing of the game's code.
+-- company, and everything the driver is told while driving sent to Omsi-Hub's on-board computer
+-- (companion.lua) - through openOMSI's own plugin API, so that Omsi-Hub needs nothing of the
+-- game's code. Nothing is drawn in the game while driving: the on-board computer, Omsi-Hub's
+-- window over the game, shows it all; only Omsi-Hub's look for openOMSI's own screens (its
+-- interface theme) is the plugin's in the game.
 --
 -- Installed and kept up to date by Omsi-Hub (crates/omsihub-plugin); a change by hand goes
 -- with its next update. The files it shares with Omsi-Hub (see src/bridge.rs):
@@ -24,23 +27,20 @@
 
 local VERSION = "1.19.0"
 local BRIDGE = 1
-local PANEL = "omsihub"
 
 local json = require("hubjson")
 -- (each call into the plugin timed, and kept short: openOMSI stops a plugin whose one call runs
 -- longer than 50 ms - budget.lua)
 local budget = require("budget")
 budget.install()
--- (what the plugin shows while driving, in the navigator: navigator.lua; its notifications:
--- notes.lua)
-local navigator = require("navigator")
+-- (the notifications, for the on-board computer: notes.lua)
 local notes = require("notes")
 
 -- The functions the add-on uses (src/compat.rs FEATURES; a test keeps the two lists the same),
 -- looked up in the `omsi` table itself so that this works in an openOMSI without game.has.
 local NEEDS = {
   "duty.get", "duty.trips", "files.append", "files.write", "duty.start",
-  "ui.set", "ui.toast", "ui.remove", "files.read", "json.decode", "send",
+  "files.read", "json.decode", "send",
   "duty.set_auto_ibis", "duty.type_ibis", "bus.set_display_font", "game.action",
   "duty.skip_to", "duty.finish", "duty.trip_stops", "audio.play",
   "duty.set_closed_stops", "traffic.list", "timetable.buses",
@@ -179,7 +179,7 @@ local function live_notices()
   show_notices(omsi.json.decode(text))
 end
 
--- --- the panel ----------------------------------------------------------------------------
+-- --- the company's duty -------------------------------------------------------------------
 
 local state = { line = nil, tour = nil, last_trip = nil, started = false }
 
@@ -189,36 +189,32 @@ local function company_duty()
 end
 
 local signon = require("signon")
-local board = require("board")
 local company = require("company")
--- (the panels' sizes and places, the driver's: layout.lua)
-local layout = require("layout")
-layout.setup(tr)
-board.setup(tr)
+company.setup(tr)
 
--- the board's company parts the driver switched on and off (all on until they chose; kept for
--- the next drive)
+-- the board's company parts the driver switched on and off on the on-board computer (all on
+-- until they chose; kept for the next drive)
 omsi.data.board_parts = omsi.data.board_parts or {}
 local function parts()
   return company.parts(omsi.data.board_parts)
 end
--- (signing on: the on-board computer's unit, the panel's too; a duty with no pass is at work at once)
--- (its translator always: the panel's heading is its too; the pass only with a company duty)
-signon.setup(tr, company_duty() and assignment or nil)
+-- (signing on, on the on-board computer: a duty with no pass is at work at once; the pass only
+-- with a company duty)
+signon.setup(company_duty() and assignment or nil)
 -- (the on-time card: punctuality, headway, connections, diversions - `ontime.lua`, its own)
 local ontime = require("ontime")
 local fleet = require("fleet")
 ontime.setup(tr, assignment, has)
 
 -- the duty strip, the handover notes and the walk-around of a company's duty (duty_strip.lua):
--- its notes and defects go to Omsi-Hub as reports, its notices as cards
+-- its notes and defects go to Omsi-Hub as reports, its notices as notifications
 local strip = require("duty_strip")
 strip.setup(tr, company_duty() and assignment.crew or nil, function(kind, fields) report(kind, fields) end, function(icon, title, text)
   notes.say(text, { title = title, icon = icon, seconds = 8 })
 end)
 
--- what the company's board says now (company.lua's facts; the panel and the on-board computer
--- both read them): nil without a company's duty
+-- what the company's board says now (company.lua's facts, for the on-board computer): nil
+-- without a company's duty
 local function board_facts()
   if not company_duty() then return nil end
   local d = duty_now()
@@ -230,51 +226,6 @@ local function board_facts()
     boarded = { trip.boarded_on_trip(), trip.boarded_total(), passengers },
     signed = signon.signed(), can_start = signon.at_work() and not d and has["duty.start"] == true and line ~= "",
   })
-end
-
-local function panel()
-  if not (company_duty() and has["ui.set"]) then return end
-  local d = duty_now()
-  local f = board_facts()
-  local status = f.status
-  local work = signon.at_work()
-  local can_start = f.can_start
-  local children = {
-    { type = "row", children = {
-      { type = "icon", name = "business", color = "#F58620" },
-      { type = "text", text = assignment.company ~= "" and assignment.company or "Omsi-Hub", weight = "bold", grow = true, wrap = false },
-    } },
-    signon.heading(assignment),
-  }
-  if work then
-    children[#children + 1] = { type = "text", id = "status", text = status, size = 13 }
-    children[#children + 1] = { type = "button", id = "start", text = tr("Start duty"), icon = "play_arrow", visible = can_start }
-    children[#children + 1] = { type = "button", id = "signoff", text = tr("Sign off"), icon = "logout", visible = signon.signed() }
-  else
-    for _, c in ipairs(signon.children(assignment)) do children[#children + 1] = c end
-  end
-  -- (in the navigator its buttons take a click without the mouse: only a field asks for F10)
-  local docks = navigator.docks()
-  children[#children + 1] = { type = "text", text = tr("F10: use the panel with the mouse"), size = 11.5, color = "#959DB0", visible = signon.stage == "signon" or (not docks and (not work or can_start)) }
-  -- (in the navigator while the duty runs: the company and the sign-off alone, the board under
-  -- it has the line, the tour and the trip)
-  if docks and work and d then
-    children = { { type = "row", children = {
-      children[1].children[1], children[1].children[2],
-      { type = "button", id = "signoff", icon = "logout", text = "", visible = signon.signed() },
-    } } }
-  end
-  -- (while the panels have the mouse: the board's company parts, to switch on and off)
-  if work and fn("ui.focused") and omsi.ui.focused() then
-    local on = parts()
-    children[#children + 1] = { type = "divider" }
-    children[#children + 1] = { type = "text", text = tr("On the duty board"), size = 12, weight = "bold", color = "#9AA3AD" }
-    for _, p in ipairs(company.PARTS) do
-      children[#children + 1] = { type = "checkbox", id = "part_" .. p, text = tr(company.LABELS[p]), checked = on[p], color = "#F58620" }
-    end
-  end
-  if docks then return navigator.put("company", children) end
-  layout.set(PANEL, { anchor = "right", x = 16, y = 0, width = 300, background = "#141A26F2", accent = "#F58620", draggable = true, children = children })
 end
 
 -- the IBIS: typed by the game as each trip begins, unless Omsi-Hub says the driver types it -
@@ -307,9 +258,7 @@ local function start_duty()
       local text = tr("The duty could not be started: %{reason}", { reason = why or "" })
       notes.say(text, { icon = "warning", color = "#FF5F57", seconds = 8 })
     end
-    panel()
   end)
-  panel()
   return true
 end
 
@@ -324,7 +273,6 @@ local function next_leg(what, line, tour, trip, stop)
       else
         say(tr("The duty could not be started: %{reason}", { reason = why or "" }), nil, "warning", 8)
       end
-      panel()
     end)
   elseif what == "done" then
     if has["duty.finish"] then omsi.duty.finish() end
@@ -369,7 +317,6 @@ local trip_events = fn("game.has") ~= nil
 local trip = require("trip")
 local card = require("card")
 local watch = require("watch")
-card.setup(tr)
 -- (the live dashboard in Omsi-Hub's window, on every drive: `dash.lua`)
 local dash = require("dash")
 dash.setup(trip, assignment, has)
@@ -388,7 +335,8 @@ local function standing()
   return not omsi.speed or omsi.speed() < 1
 end
 
--- a trip that ended: its record into the report (Omsi-Hub books it), its card on the screen
+-- a trip that ended: its record into the report (Omsi-Hub books it), its card to the on-board
+-- computer
 local function trip_ended(run, fields)
   local c = trip.current()
   fields = fields or {}
@@ -433,15 +381,13 @@ end })
 
 -- the phone and tablet companion (companion.lua): what the phone shows, what it may do
 local companion = require("companion")
--- (the duty order signed: further down, with the panel's clicks)
+-- (the duty order signed: further down)
 local accepted
 companion.setup({
   signon = signon, messages = messages, issued = issued,
   accept = function()
-    if not (assignment and signon.stage == "order") then return false end
-    signon.click("accept", accepted)
+    if not (assignment and signon.accept(accepted)) then return false end
     ibis_rule()
-    panel()
     return true
   end,
   drive_free = function()
@@ -449,14 +395,12 @@ companion.setup({
     signon.skip()
     if duty_now() and has["duty.finish"] then omsi.duty.finish() end
     ibis_rule()
-    panel()
   end,
-  changed = function() panel() end,
-  -- (the on-board computer's commands: the panels' own buttons do the same)
+  -- (the on-board computer's commands)
   start_duty = start_duty,
   sign_off = function()
-    -- (signed on, as far as the pass goes: not while the driver still has to enter it)
-    if signon.stage == "signon" then return false end
+    -- (only at work: not while the driver still signs on or has the duty order to accept)
+    if not signon.at_work() then return false end
     return strip.sign_off()
   end,
   part = function(id, on)
@@ -464,7 +408,6 @@ companion.setup({
     omsi.data.board_parts[id] = on == true
     -- (the duty strip is duty_strip.lua's, the only one: its switch is the board's "strip" part)
     if id == "strip" then strip.set_enabled(on == true) end
-    panel()
     return true
   end,
   strip = strip, notes = notes, card = card,
@@ -474,7 +417,7 @@ companion.setup({
 
 omsi.on("duty", function(line, tour)
   -- (a short-turn takes the same duty again at its next trip: no new duty)
-  if messages.turned(line, tour) then return panel() end
+  if messages.turned(line, tour) then return end
   if state.line then report("duty_end", { line = state.line, tour = state.tour }) end
   -- (the company's duty ended: the walk-around before the driver leaves the bus)
   if state.line and not line then strip.sign_off() end
@@ -486,7 +429,6 @@ omsi.on("duty", function(line, tour)
     local _, l = legs.current()
     start.duty(line, tour, l.first, from)
   end
-  panel()
 end)
 
 omsi.on("trip_done", function(n, how, driving, comfort, tickets)
@@ -495,7 +437,6 @@ omsi.on("trip_done", function(n, how, driving, comfort, tickets)
   local run = c and c.n == n and trip.finish(how == "arrived", delay(), watch) or nil
   trip_ended(run, fields)
   next_leg(legs.trip_done(n))
-  panel()
 end)
 
 omsi.on("stop_arrive", function(_, _, number, d)
@@ -509,7 +450,6 @@ omsi.on("stop_arrive", function(_, _, number, d)
     trip_ended(run, { trip = now.trip, how = "relieved", delay = delay() })
     say(tr("Your relief takes over here: your duty ends"), tr("Relief"), "group")
     next_leg(legs.advance())
-    panel()
   end
 end)
 omsi.on("stop_depart", function(_, _, number, d)
@@ -602,11 +542,10 @@ omsi.on("vehicle", function(name)
     state.started = true
     start_duty()
   end
-  panel()
 end)
 
--- signed on and the duty accepted (in the panel, or on the phone): taken now where it was to
--- start by itself
+-- signed on and the duty accepted (on the on-board computer, or on the phone): taken now where
+-- it was to start by itself
 accepted = function()
   if assignment.auto_start and not state.started then
     state.started = true
@@ -618,59 +557,7 @@ accepted = function()
   if has["duty.type_ibis"] and assignment.ibis ~= false then omsi.duty.type_ibis() end
 end
 
--- (the parts in the navigator share its panel: each one's own ids tell them apart)
-local function company_panel(p)
-  return p == PANEL or navigator.is(p)
-end
-
-omsi.on("ui_click", function(p, element)
-  if navigator.is(p) and notes.click(element) then return navigator.flush() end
-  if layout.click(p, element) then return end
-  if card.click(p, element) then return end
-  if messages.click(p, element) then return end
-  if strip.click(p, element) then return end
-  if company_panel(p) and element == "signoff" and signon.signed() then strip.sign_off() end
-  if ontime.click(p, element) then return navigator.flush() end
-  if company_panel(p) and element == "start" then start_duty() end
-  if company_panel(p) and signon.click(element, accepted) then
-    ibis_rule()
-    panel()
-  end
-  navigator.flush()
-end)
-
-omsi.on("ui_change", function(p, element, value)
-  if card.change(p, element, value) then return end
-  if strip.change(p, element, value) then return end
-  local part = company_panel(p) and type(element) == "string" and element:match("^part_(%w+)$")
-  if part and company.LABELS[part] then
-    companion.part(part, value == true)
-    return navigator.flush()
-  end
-  if company_panel(p) and signon.change(element, value) then panel() end
-  navigator.flush()
-end)
-
--- (Ctrl, Alt and Shift held: a key with them is another one's - Ctrl+Enter the IBIS's)
-local modifiers = {}
-omsi.on("key", function(key, down)
-  if type(key) == "string" and (key:match("^Control") or key:match("^Alt") or key:match("^Shift")) then modifiers[key] = down or nil end
-  if card.key(key, down, next(modifiers) ~= nil) then return end
-  if messages.key(key, down) then return end
-  if key == "F10" and down and (company_duty() or duty_now()) and fn("ui.focus") then
-    omsi.ui.focus(not omsi.ui.focused())
-    panel()
-    layout.refresh()
-    navigator.flush()
-  end
-end)
-
 omsi.on("stop", function()
-  layout.keep()
-  if has["ui.remove"] then layout.remove(PANEL) end
-  strip.stop()
-  ontime.stop()
-  navigator.stop()
   fleet.stop()
 end)
 
@@ -692,11 +579,9 @@ local function dispatch()
   end
 end
 
--- (the duty board: wanted unless Omsi-Hub says not, and not before the driver signed on)
+-- (the board's second: the control room's holds and instructions, the duty strip's relief, service
+-- control's messages, the notifications' time)
 omsi.every(1, function()
-  -- (the panels gave the mouse back without F10 - Esc, a menu: their size rows go)
-  layout.watch()
-  board.update((not assignment or assignment.board ~= false) and signon.at_work(), company_duty() and parts() or {}, assignment, { trip.boarded_on_trip(), trip.boarded_total(), fn("bus.passengers") and omsi.bus.passengers() or nil })
   messages.tick()
   strip.update(company_duty() and signon.at_work())
   dispatch()
@@ -710,10 +595,7 @@ omsi.every(0.5, function()
   if not fn("has_vehicle") or omsi.has_vehicle() then dash.tick(0.5) end
 end, "dash")
 
-omsi.every(2, function()
-  watch_trips()
-  panel()
-end, "panel")
+omsi.every(2, watch_trips, "trips")
 -- (in a company's duty only the company's own buses on the road, where its fleet map has them;
 -- not held back while the game loads: the other buses are kept off before they are seen)
 fleet.setup(has)
@@ -734,8 +616,6 @@ omsi.every(0.25, function() if calm() then companion.look() end end, "companion 
 omsi.every(0.25, function() if calm() then companion.tick(0.25) end end, "companion")
 omsi.every(0.1, function() if calm() then companion.screen() end end, "companion screen")
 omsi.every(2, messages.read, "messages")
--- (the navigator set again once for what its parts changed meanwhile)
-omsi.every(0.2, navigator.flush, "navigator")
 omsi.every(5, messages.status, "status")
 
 -- Omsi-Hub's look for openOMSI's own screens (theme.json beside this file: the pause menu's
@@ -747,10 +627,9 @@ local function offer_theme()
   if omsi.data.theme_offered or not (fn("ui.set_theme") and fn("ui.theme")) then return end
   omsi.data.theme_offered = true
   if omsi.ui.theme() ~= "" then return end
-  local ok, why = omsi.ui.set_theme(PANEL)
+  local ok, why = omsi.ui.set_theme("omsihub")
   if not ok then omsi.log("[omsihub] the Omsi-Hub look is not there: " .. tostring(why)) end
 end
 
 hello()
 offer_theme()
-panel()

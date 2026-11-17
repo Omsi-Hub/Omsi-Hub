@@ -4,8 +4,8 @@
 -- than 50 ms ("ran longer than 50 ms and was stopped"), and the time the game spends inside the
 -- API counts too: `duty.start` makes the duty's route on the map and the driver's timetable
 -- paper, which on a large map takes about that long by itself. So the duty is taken in a timer
--- of its own with nothing else in it, and what follows (the answer, the panel, a card) runs in
--- the next one, with a budget of its own.
+-- of its own with nothing else in it, and what follows (the answer, a notification) runs in the
+-- next one, with a budget of its own.
 
 local M = {}
 
