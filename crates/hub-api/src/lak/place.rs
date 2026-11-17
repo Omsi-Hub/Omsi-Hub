@@ -43,7 +43,8 @@ fn in_game() -> bool {
 fn company_cost(id: &str, vehicle: Option<u32>, name: &str) -> Option<(String, i64, i64)> {
     company::with(|s| {
         let c = s.company.as_ref().filter(|c| c.id == id)?;
-        let paint = vehicle.and_then(|v| c.vehicle(v)).map(|v| co_livery::paint_cost(c, v)).unwrap_or(0);
+        // (a bus that wears the livery already - saved again under its name - is not painted again)
+        let paint = vehicle.and_then(|v| c.vehicle(v)).filter(|v| !co_livery::wears(v, name)).map(|v| co_livery::paint_cost(c, v)).unwrap_or(0);
         Some((c.name.clone(), (co_livery::save_cost(c, name) + paint) as i64, c.cash as i64))
     })
 }
@@ -244,6 +245,7 @@ fn saved(s: Saving, files: Vec<String>) -> Value {
     crate::content::bus3d::photo::forget(&project.bus);
     let mut text = tr("'%{name}' is in the game: choose it on the bus step.").replace("%{name}", &name);
     let mut changed = None;
+    let mut popup = Value::Null;
     if let Some((id, vehicle)) = company {
         let bus = project.bus.clone();
         let booked = company::with(|s| {
@@ -252,21 +254,38 @@ fn saved(s: Saving, files: Vec<String>) -> Value {
             }
             let cost = company::act(s, |c| co_livery::save_design(c, &name, &bus)).ok()?;
             let mut t = tr("'%{name}' is the company's livery: %{amount} for its design.").replace("%{name}", &name).replace("%{amount}", &eur(cost));
+            let mut painted = false;
             if let Some(v) = vehicle {
-                if company::act(s, |c| co_livery::paint(c, v, &name)).is_ok() {
-                    let number = s.company.as_ref().and_then(|c| c.vehicle(v)).map(|x| x.number.clone()).unwrap_or_default();
-                    t = format!("{t} {}", tr("Bus %{n} is painted in it in the workshop.").replace("%{n}", &number));
-                }
+                let number = s.company.as_ref().and_then(|c| c.vehicle(v)).map(|x| x.number.clone()).unwrap_or_default();
+                let wore = s.company.as_ref().and_then(|c| c.vehicle(v)).is_some_and(|x| co_livery::wears(x, &name));
+                // (the bus painted at once; a refusal's popup is not wanted here, only its reason)
+                let r = s.company.as_mut().map(|c| co_livery::paint(c, v, &name));
+                let line = match r {
+                    Some(Ok(cost)) => {
+                        company::changed(s);
+                        painted = true;
+                        words::trf("Bus %{n} wears it now (%{amount} for the painting).", &[("n", &number), ("amount", &eur(cost))])
+                    }
+                    _ if wore => {
+                        painted = true;
+                        words::trf("Bus %{n} wears it already: it has the changes at once.", &[("n", &number)])
+                    }
+                    Some(Err(why)) => words::trf("Bus %{n} was not painted: %{why}", &[("n", &number), ("why", &tr(why))]),
+                    None => String::new(),
+                };
+                t = format!("{t} {line}").trim().to_string();
             }
-            Some(t)
+            let c = s.company.as_ref()?;
+            Some((t.clone(), crate::company::fleet::livery_popup(c, t, &name, painted)))
         });
-        if let Some(t) = booked {
+        if let Some((t, p)) = booked {
             text = t;
+            popup = p;
             changed = Some(id);
         }
     }
     crate::launcher::log_to_file(&format!("livery studio: '{name}' saved into the game for {}", project.bus));
-    json!({ "done": { "project": project, "name": name, "text": text, "company": changed } })
+    json!({ "done": { "project": project, "name": name, "text": text, "company": changed, "popup": popup } })
 }
 
 /// Take the livery out of the game again: the files its last save wrote - only the studio's own,

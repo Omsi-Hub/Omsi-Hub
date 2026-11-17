@@ -442,6 +442,10 @@ function vehicle(a) {
     title: `Bus ${b.number}  ·  ${b.name}`, file: b.file, name: b.name, bus_kind: b.kind,
     livery: { label: 'Livery', value: b.livery, options: [['Grundorf', 'Grundorf'], ['Weiss', 'White'], ['BVG', 'BVG']] },
     design: 'Design a livery', design_tip: 'Open the livery studio on this bus',
+    // (`fleet::paint_all_json`: the bus in the company's own livery, the others of its type not yet)
+    paint_all: b.livery === 'Grundorf' && BUSES.some((x) => x !== b && x.file === b.file && x.livery !== 'Grundorf')
+      ? { label: `Paint the ${BUSES.filter((x) => x !== b && x.file === b.file && x.livery !== 'Grundorf').length} other buses of this type too (€8,000)`, icon: 'livery_fill', act: 'paint_type', args: { livery: 'Grundorf' }, enough: true, tip: "Every bus of this type in 'Grundorf' at once: €8,000; the company has €1,234,567." }
+      : null,
     rows: [
       { a: 'Plate', b: b.plate }, { a: 'First registered', b: String(b.year) }, { a: 'Kilometres', b: `${grouped(b.km)} km` },
       { a: 'Condition', b: `${Math.round(b.cond * 100)} %`, tone: condTone(b.cond) }, { a: 'How it is held', b: b.how }, { a: 'Worth now', b: eur(Math.round((1 - (2026 - b.year) / 45) * 28000000)), strong: true },
@@ -1907,6 +1911,13 @@ function doAct(a) {
       return { joined: 5 };
     case 'design_livery':
       return { hand_over: 'livery=' + (BUSES.find((b) => b.id === Number(a.id))?.file || '') + '|' };
+    case 'paint_type': {
+      // (`livery::paint_all`: every bus of the livery's type in it at once)
+      const first = BUSES.find((b) => b.livery === a.livery);
+      for (const b of BUSES) if (first && b.file === first.file) b.livery = a.livery;
+      bump();
+      return {};
+    }
     case 'next_day':
       runClock(1440 - c.minute + 6 * 60);
       return {};

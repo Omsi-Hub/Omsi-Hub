@@ -1000,6 +1000,13 @@ async function pollSave(me) {
     if (v && !(v.paints || []).some((x) => x.toLowerCase() === r.done.name.toLowerCase())) set({ vehicles: S.vehicles.map((x) => (x === v ? { ...v, paints: [...(v.paints || []), r.done.name] } : x)) });
     if (S.choice?.bus === d.bus && !me.company) choose({ paint: r.done.name });
     if (r.done.company) o?.onCompanyChanged?.(r.done.company);
+    // (saved and paid for the bus company: back to its page, where a popup says what was paid
+    // and painted - not a note in the studio's corner that goes in six seconds)
+    if (r.done.company && r.done.popup && o?.onSaved) {
+      o.onSaved(r.done);
+      leave(me);
+      return;
+    }
     cost(me);
   }
   me.tick();

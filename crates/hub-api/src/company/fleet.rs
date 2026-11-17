@@ -159,7 +159,9 @@ pub fn vehicle_view(s: &mut Session, args: &Value) -> Value {
         "title": format!("{}  ·  {}", v.number, v.name), "id": id, "file": v.bus, "name": v.name, "bus_kind": tr(v.kind.label()),
         "livery": livery_choice(s, &v.bus, &v.livery),
         "design": trf("Design a livery (%{amount})", &[("amount", &eur(fee))]),
-        "design_tip": tr("Paint the company's own livery for this bus in the livery studio: its design is paid when it is saved, a bus's painting when the bus is painted."),
+        "design_tip": tr("Paint the company's own livery for this bus in the livery studio: its design and this bus's painting are paid when it is saved, and the bus wears it at once."),
+        // (the bus in a livery of the company's: the others of its model in it too)
+        "paint_all": v.house_livery.as_deref().filter(|h| co::livery::wears(&v, h)).and_then(|h| paint_all_json(&c, h)),
         "rows": rows, "status": status, "tone": tone,
         "crew": crew_json(&c, id),
         "age": super::age::age_switch(v.age_from == co::registrations::AgeFrom::Manual, &v.built),
@@ -232,6 +234,35 @@ pub fn new_view(s: &mut Session, args: &Value) -> Value {
     })
 }
 
+/// The way to paint the buses of a livery's model that do not wear it yet, all at once
+/// (`paint_type`): its words, what it costs and whether the cash is enough; None when every
+/// bus of the model wears it.
+fn paint_all_json(c: &Company, name: &str) -> Option<Value> {
+    let n = co::livery::unpainted(c, name).len();
+    if n == 0 {
+        return None;
+    }
+    let cost = co::livery::paint_all_cost(c, name);
+    let amount = eur(cost);
+    let label = if n == 1 {
+        trf("Paint the other bus of this type too (%{amount})", &[("amount", &amount)])
+    } else {
+        trf("Paint the %{n} other buses of this type too (%{amount})", &[("n", &n.to_string()), ("amount", &amount)])
+    };
+    Some(json!({
+        "label": label, "icon": "livery_fill", "act": "paint_type", "args": { "livery": name }, "enough": c.can_pay(cost),
+        "tip": trf("Every bus of this type in '%{name}' at once: %{amount}; the company has %{cash}.", &[("name", name), ("amount", &amount), ("cash", &eur(c.cash))]),
+    }))
+}
+
+/// The popup that says a livery of the company's is saved (and on its bus, `painted`), with the
+/// way to paint the other buses of its model in it too.
+pub fn livery_popup(c: &Company, text: String, name: &str, painted: bool) -> Value {
+    let action = paint_all_json(c, name);
+    let unlock = action.as_ref().filter(|a| a["enough"] == json!(false)).map(|a| a["tip"].as_str().unwrap_or("").to_string()).unwrap_or_default();
+    json!({ "icon": "livery_fill", "title": tr(if painted { "Livery saved and applied" } else { "Livery saved" }), "text": text, "unlock": unlock, "go": null, "action": action })
+}
+
 /// A bus joined the fleet: say so (`fleet::joined`).
 fn joined(s: &mut Session, id: u32) {
     let number = s.company.as_ref().and_then(|c| c.vehicle(id)).map(|v| v.number.clone()).unwrap_or_default();
@@ -253,10 +284,9 @@ pub fn act(s: &mut Session, what: &str, args: &Value) -> Option<Result<Value, St
             let paint = str_of("livery");
             let Some(v) = c.vehicle(id).cloned() else { return Some(Ok(json!({}))) };
             if co::livery::design(&c, &paint).is_some() {
-                let cost = co::livery::paint_cost(&c, &v);
                 match apply(s, |c| co::livery::paint(c, id, &paint)) {
-                    Ok(_) => {
-                        let t = trf("Bus %{n} is painted in '%{name}' in the workshop (%{amount}).", &[("n", &v.number), ("name", &paint), ("amount", &eur(cost))]);
+                    Ok(cost) => {
+                        let t = trf("Bus %{n} is painted in '%{name}' (%{amount}).", &[("n", &v.number), ("name", &paint), ("amount", &eur(cost))]);
                         s.say(t, false);
                         Ok(json!({}))
                     }
@@ -281,6 +311,18 @@ pub fn act(s: &mut Session, what: &str, args: &Value) -> Option<Result<Value, St
             }
             Err(p) => popup(p),
         },
+        "paint_type" => {
+            // (every bus of a livery's model that does not wear it yet, at once)
+            let name = str_of("livery");
+            match apply(s, |c| co::livery::paint_all(c, &name)) {
+                Ok((n, cost)) => {
+                    let t = trf("%{n} buses are painted in '%{name}' (%{amount}).", &[("n", &n.to_string()), ("name", &name), ("amount", &eur(cost))]);
+                    s.say(t, false);
+                    Ok(json!({}))
+                }
+                Err(p) => popup(p),
+            }
+        }
         "design_livery" => {
             // (the livery studio is an editor of our game-drawn launcher: the company pays when it
             // is saved there)

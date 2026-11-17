@@ -39,7 +39,8 @@ mod dialogs;
 pub(crate) mod dutycard;
 // (an own line's change taking effect on its day, Trello "Tauri 6/6")
 mod due;
-mod fleet;
+// (the livery studio's save says what it painted with the fleet's popup: `lak::place`)
+pub(crate) mod fleet;
 pub mod fleetgame;
 mod home;
 mod inbox;

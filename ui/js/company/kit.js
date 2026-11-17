@@ -280,6 +280,9 @@ async function inEditor(page, opts) {
       await cmd('co_reread', { id: id || company }).catch(() => null);
       refresh();
     },
+    // (the livery saved for the company: the studio comes back here, and the popup says what was
+    // paid and painted - with the way to paint the other buses of its type too)
+    onSaved: (done) => done?.popup && setCo({ popup: done.popup }),
   };
   if (what === 'livery') {
     const [bus, paint, vehicle] = arg.split('|');
@@ -587,7 +590,9 @@ export function Dialog({ icon, title, w = 560, h, onClose, foot, children, bodyS
   </div>`;
 }
 
-/** The popup that says why something cannot be done and what opens it (`kit::draw_popup`). */
+/** The popup that says why something cannot be done and what opens it (`kit::draw_popup`) - or
+ * what was done, with what can be done next (`action`: an action of the company's, as the livery
+ * studio's "paint the other buses of this type too" - `fleet::livery_popup`). */
 export function Popup({ p, onClose }) {
   const close = onClose || (() => setCo({ popup: null }));
   useEffect(() => {
@@ -602,9 +607,12 @@ export function Popup({ p, onClose }) {
     addEventListener('keydown', k, true);
     return () => removeEventListener('keydown', k, true);
   }, []);
-  const foot = p.go
-    ? html`<span class="rest"></span><${Btn} label=${tr('OK')} onClick=${close} /><${Btn} kind="primary" icon=${p.go.icon} label=${p.go.label} onClick=${() => goKey(p.go.to)} />`
-    : html`<span class="rest"></span><${Btn} kind="primary" label=${tr('OK')} onClick=${close} />`;
+  const a = p.action;
+  const foot = a
+    ? html`<span class="rest"></span><${Btn} label=${tr('OK')} onClick=${close} /><${Btn} kind="primary" icon=${a.icon} label=${a.label} title=${a.tip} disabled=${a.enough === false} onClick=${() => (close(), act(a.act, a.args || {}))} />`
+    : p.go
+      ? html`<span class="rest"></span><${Btn} label=${tr('OK')} onClick=${close} /><${Btn} kind="primary" icon=${p.go.icon} label=${p.go.label} onClick=${() => goKey(p.go.to)} />`
+      : html`<span class="rest"></span><${Btn} kind="primary" label=${tr('OK')} onClick=${close} />`;
   return html`<${Dialog} icon=${p.icon} title=${p.title} w=${560} onClose=${close} foot=${foot} over=${true}>
     <p class="co-para">${p.text}</p>
     ${p.unlock && html`<div class="co-unlock" style="margin-top:16px"><${Icon} name="key" size=${18} />${p.unlock}</div>`}

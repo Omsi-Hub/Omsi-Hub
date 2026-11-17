@@ -156,8 +156,9 @@ function Adverts({ a }) {
 
 // --- the dialogs ----------------------------------------------------------------------------
 
-/** The photo's place and the livery on a dialog's left (`fleet::bus_side`). */
-function BusSide({ file, name, kind, livery, onLivery, design, designTip, onDesign, note }) {
+/** The photo's place and the livery on a dialog's left (`fleet::bus_side`); `paintAll`: the bus
+ * in a livery of the company's, the other buses of its type in it too (`fleet::paint_all_json`). */
+function BusSide({ file, name, kind, livery, onLivery, design, designTip, onDesign, note, paintAll }) {
   const k = Math.max(0, livery.options.findIndex(([p]) => p === livery.value));
   return html`<div class="co-busside">
     <${Photo} file=${file} paint=${livery.value} name=${name} />
@@ -165,6 +166,7 @@ function BusSide({ file, name, kind, livery, onLivery, design, designTip, onDesi
     <label class="co-label" style="margin-top:10px">${livery.label}</label>
     <${Select} value=${k} options=${livery.options.map(([, l]) => l)} onChange=${(i) => onLivery(livery.options[i][0])} style="margin-top:4px" />
     ${design ? html`<${Btn} kind="ghost" icon="livery_fill" label=${design} title=${designTip} style="width:100%;margin-top:10px" onClick=${onDesign} />` : html`<p class="co-note" style="margin-top:12px">${note}</p>`}
+    ${paintAll && html`<${Btn} kind="ghost" icon=${paintAll.icon} label=${paintAll.label} title=${paintAll.tip} disabled=${paintAll.enough === false} style="width:100%;margin-top:8px" onClick=${() => act(paintAll.act, paintAll.args)} />`}
   </div>`;
 }
 
@@ -206,7 +208,7 @@ export function VehicleDialog({ d }) {
     <${Btn} kind="primary" label=${v.close} onClick=${close} />`;
   return html`<${Dialog} icon="directions_bus" title=${v.title} w=${920} h=${640} onClose=${close} foot=${foot}>
     <div class="co-busdialog">
-      <${BusSide} file=${v.file} name=${v.name} kind=${v.bus_kind} livery=${v.livery} onLivery=${(p) => act('bus_livery', { id: d.id, livery: p })} design=${v.design} designTip=${v.design_tip} onDesign=${() => act('design_livery', { id: d.id })} />
+      <${BusSide} file=${v.file} name=${v.name} kind=${v.bus_kind} livery=${v.livery} onLivery=${(p) => act('bus_livery', { id: d.id, livery: p })} design=${v.design} designTip=${v.design_tip} onDesign=${() => act('design_livery', { id: d.id })} paintAll=${v.paint_all} />
       <div class="right">${v.rows.map((r) => html`<${PriceRow} r=${r} />`)}
         ${v.age && html`<${AgeSet} a=${v.age} onSet=${(y) => act('bus_age', { id: d.id, year: y })} />`}
         <div class=${'co-para t-' + v.tone} style="font-weight:700;margin-top:10px;line-height:26px">${v.status}</div>
