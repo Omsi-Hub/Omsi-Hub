@@ -7,6 +7,18 @@ merged but in no build yet is under Unreleased.
 
 ### Fixed
 
+- **In a company's duty only your company's buses and lines are in the game**: before, the map's
+  own buses and the lines of your other companies kept driving, and the company's own buses could
+  even be taken off the road. Omsi-Hub now gives the game the company's day before it starts:
+  every tour your planning runs is driven by the bus you gave it - its fleet number, its plate and
+  its livery from the paint studio - and every other bus line of the map is not in the game, not
+  on the road and not on the game's map. Trains, planes and ships run as ever. When the game ends,
+  or you drive on your own, the map's whole timetable is back. Nothing of your OMSI 2 folder is
+  changed: it is a Chrono folder in openOMSI's copy of the map (`Chrono/zz_omsihub_company`).
+- **Omsi-Hub reads a map's Chrono events again when openOMSI's copy of the map has a Chrono
+  folder of its own**: the map's road works and events on that day count for the timetable as they
+  do in the game.
+
 - **The plugin no longer stops with "ran longer than 50 ms" right after the map loads or after
   a few minutes of driving**: openOMSI switches the plugin off for the rest of the game when one
   of its moments in the game takes longer than 50 ms, the game's own work inside counted. On a

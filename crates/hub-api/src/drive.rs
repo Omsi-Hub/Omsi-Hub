@@ -19,11 +19,11 @@
 //! 4. **the bridge's loop** on a thread of its own, every [`EVERY`] while the game runs: the
 //!    plugin's reports booked (`addon::book`), the company told (`company::after_booking`), its
 //!    own work done (the replies, the status, the inbox for the plugin: `messages::tick`), the
-//!    on-time brief written (`company::ontime::refresh`), the company's buses for the game's AI
-//!    (`company::fleetgame::refresh`), the live dashboard sampled
+//!    on-time brief written (`company::ontime::refresh`), the live dashboard sampled
 //!    (`live::sample`); the notices go to the plugin as they come (`addon::notify_game`);
-//! 5. the game ended: the reports booked once more, then the page told (`game-ended`, with what
-//!    was booked).
+//! 5. the game ended: the reports booked once more, the company's AI list taken out of the
+//!    game's folders (`company::fleetgame::game_over`), then the page told (`game-ended`, with
+//!    what was booked).
 
 use crate::{to_json, Answer, Platform};
 use hub_core::Duty;
@@ -179,11 +179,15 @@ pub fn start(d: &Duty, p: &dyn Platform) -> Answer {
         hub_core::log_line(&done);
     }
     // (the company's buses for the game's AI only in a company's duty, written for it just now:
-    // `company::fleetgame`; a drive of the player's own runs the map's whole timetable)
+    // `company::fleetgame`; a drive of the player's own runs the map's whole timetable, no
+    // company's AI list left in the game's folders)
     if let Some(dir) = plugin.as_deref().filter(|_| assignment.as_ref().is_none_or(|a| a.company.trim().is_empty())) {
         if let Err(e) = hub_game::bridge::clear_fleet(dir) {
             hub_core::log_line(&format!("drive: the company's buses for the game: {e}"));
         }
+    }
+    if d.company.as_deref().is_none_or(|c| c.trim().is_empty()) {
+        crate::company::fleetgame::game_over();
     }
     let spec = launch_spec(d, Path::new(&s.omsi2_folder));
     let g = process::start(&checked.install.exe, &spec).map_err(|e| match e {
@@ -212,7 +216,6 @@ pub fn look() -> crate::addon::Booked {
     let b = crate::addon::book();
     crate::company::after_booking(&b);
     crate::company::ontime::refresh();
-    crate::company::fleetgame::refresh();
     crate::live::sample();
     b
 }
@@ -266,6 +269,8 @@ fn watch(emit: Option<crate::Emitter>) {
                 // (what the player drove of a company's duty and what the AI drives of it now:
                 // the game's reports decide, `company::game_ended`)
                 crate::company::game_ended(ended.code);
+                // (the company's AI list out of the game's folders: `company::fleetgame`)
+                crate::company::fleetgame::game_over();
                 WATCHING.store(false, std::sync::atomic::Ordering::SeqCst);
                 hub_core::log_line(&format!("drive: openOMSI ended ({:?}) after {:.0} s; {} reports, {} trips booked", ended.code, ended.seconds, booked.reports, booked.trips));
                 if let Some(e) = &emit {
