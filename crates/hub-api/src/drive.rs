@@ -132,6 +132,8 @@ pub fn args(d: &Duty) -> Answer {
 
 /// The note when openOMSI runs in full screen (the setting is left alone).
 pub const FULL_SCREEN_NOTE: &str = "openOMSI runs in full screen: if the on-board computer does not show over the game, switch full screen off in openOMSI's settings.";
+/// The note when Omsi-Hub just switched the game's own navigator or corner notes off.
+pub const SWITCHED_OFF_NOTE: &str = "Omsi-Hub switched off openOMSI's own navigator and corner notes: the on-board computer shows them now.";
 /// The note on Linux under Wayland, where no window can be put over the game.
 pub const WAYLAND_NOTE: &str = "The on-board computer cannot be shown over the game here: use the Omsi-Hub Companion on your phone or tablet.";
 
@@ -157,12 +159,17 @@ fn prepare_settings_for(home: &Path, wayland: bool) -> Vec<String> {
     let path = gs::path(home);
     match std::fs::read(&path).map(String::from_utf8) {
         Ok(Ok(text)) => {
+            let mut changed = false;
             for key in ["navigator", "notes"] {
                 if gs::value(&text, key) != Some("0") {
-                    if let Err(e) = gs::set(&path, key, Some("0")) {
-                        hub_core::log_line(&format!("drive: openOMSI's {key} not switched off: {e}"));
+                    match gs::set(&path, key, Some("0")) {
+                        Ok(_) => changed = true,
+                        Err(e) => hub_core::log_line(&format!("drive: openOMSI's {key} not switched off: {e}")),
                     }
                 }
+            }
+            if changed {
+                notes.push(say(SWITCHED_OFF_NOTE));
             }
             if gs::value(&text, "fullscreen") == Some("1") {
                 notes.push(say(FULL_SCREEN_NOTE));
@@ -373,8 +380,10 @@ mod tests {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, "vsync=1\r\nnavigator=1\r\n# kept\r\nnotes=1\r\nfullscreen=0\r\n").unwrap();
         let n = prepare_settings_for(&home, false);
-        assert!(n.is_empty());
+        assert_eq!(n, vec![say(SWITCHED_OFF_NOTE)]);
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "vsync=1\r\nnavigator=0\r\n# kept\r\nnotes=0\r\nfullscreen=0\r\n");
+        // (already off: nothing changed, nothing said)
+        assert!(prepare_settings_for(&home, false).is_empty());
         let _ = std::fs::remove_dir_all(&home);
     }
 
@@ -383,7 +392,7 @@ mod tests {
         let home = std::env::temp_dir().join(format!("omsihub-prep-{}-b", std::process::id()));
         let path = hub_game::gamesettings::path(&home);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(&path, "fullscreen=1\n").unwrap();
+        std::fs::write(&path, "fullscreen=1\nnavigator=0\nnotes=0\n").unwrap();
         let n = prepare_settings_for(&home, false);
         assert_eq!(n, vec![say(FULL_SCREEN_NOTE)]);
         let text = std::fs::read_to_string(&path).unwrap();

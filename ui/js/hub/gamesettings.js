@@ -92,6 +92,7 @@ export function GameSettingsPanel({ controllers = false, hide = [], onChange } =
       <a href="#" class="hub-path small" style="word-break:break-all" onClick=${(e) => (e.preventDefault(), s.exists && openPath(s.path))}>${s.path}</a>
       ${!s.exists && html`<span class="muted small">${tr('Not there yet: it is made with the first change.')}</span>`}
     </div>
+    ${hide.includes('navigator') && html`<p class="muted small" style="margin:8px 0 0">${tr("openOMSI's navigator and corner notes are off: Omsi-Hub's on-board computer shows them.")}</p>`}
     ${s.running && html`<p class="small warn" id="oo-running" style="margin:8px 0 0">${tr('openOMSI is running: change its settings once it has ended')}</p>`}
     ${err && html`<p class="small bad" style="margin:8px 0 0">${tr(err)}</p>`}
     ${groups.map((g) => html`<section class="hub-game-group" style="margin-top:14px">
