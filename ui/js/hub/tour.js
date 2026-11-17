@@ -59,7 +59,7 @@ const STOPS = [
   ['buses', 'The bus', 'Choose your bus', 'First the maker, then the model and the version, each with a photo. Up here you see where you are: click it to go back up. The bus that fits your duty best says so on its tile.', 'bus-grid', ['bus']],
   ['look', 'The bus', 'View in 3D', 'Your bus in the showroom: turn it with the mouse, zoom with the wheel, and choose its livery, fleet number and plate.', 'bus-look', ['bus']],
   ['navigator', 'In the game', 'Your duty on the navigator', 'Shift+N switches the navigator between the map, the map with your duty board, and off. The board shows the trip you are on, the stops ahead and whether you are on time.', { card: 'navigator' }, 'keep'],
-  ['cityMap', 'In the game', 'The city map and signing on', "Shift+M, or a click on the navigator, opens the city map with your route. Beside it you sign on for your duty with your personnel number and code: they are on your driver's pass, right there.", { card: 'citymap' }, 'keep'],
+  ['cityMap', 'In the game', 'Signing on at the on-board computer', "On a company's duty you sign on at the on-board computer that Omsi-Hub shows beside the game, with your personnel number and code: the on-board computer shows them too, as your driver's pass has them.", { card: 'citymap' }, 'keep'],
   ['companion', 'In the game', 'Phone & tablet', "Signing on, the duty menu and the bus's screens can also be on a phone or tablet in your network. Turn it on under Settings › General › Phone & tablet; the game shows the address and the code when you drive.", { card: 'companion' }, 'keep'],
   ['done', 'Guided tour', 'Ready to go', 'This question mark shows the tour again. Have a good ride!', 'bar-help', 'home'],
 ];
