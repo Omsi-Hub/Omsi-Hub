@@ -242,24 +242,39 @@ end
 
 -- the shown card as plain data: the trip's record (`run`, each stop with how far off it counted),
 -- how it is judged (`career.evaluate`: grade, stars, score, parts, experience) and `open`; nil
--- when no card is shown. The stops are cut at the most a datagram holds.
+-- when no card is shown. Numbers are whole; the stops are cut to the first 60 (`run.more.visits`
+-- counts the rest), and companion.lua cuts a card still too long for a datagram the same way.
 local MOST_STOPS = 60
+
+-- (whole seconds, metres and the like: a float would take 20 bytes a number in the datagram)
+local function whole(x)
+  if type(x) ~= "number" or x ~= x or x == math.huge or x == -math.huge then return x end
+  return math.tointeger(math.floor(x + 0.5)) or x
+end
 
 function M.facts()
   if not shown then return nil end
   local run = {}
   for k, v in pairs(shown.run) do
-    if k ~= "visits" and k ~= "offences" then run[k] = v end
+    if k ~= "visits" and k ~= "offences" then run[k] = whole(v) end
   end
   local visits = shown.run.visits or {}
   if #visits > 0 then
     run.visits = {}
     for k = 1, math.min(#visits, MOST_STOPS) do
       local v = visits[k]
-      run.visits[k] = { name = v.name, arr = v.arr, dep = v.dep, arrived = v.arrived, left = v.left, delay = visit_delay(visits, k) }
+      run.visits[k] = { name = v.name, arr = whole(v.arr), dep = whole(v.dep), arrived = whole(v.arrived), left = whole(v.left), delay = whole(visit_delay(visits, k)) }
+    end
+    if #visits > MOST_STOPS then run.more = { visits = #visits - MOST_STOPS } end
+  end
+  local offences = shown.run.offences
+  if type(offences) == "table" and #offences > 0 then
+    run.offences = {}
+    for k, o in ipairs(offences) do
+      -- (the seconds a light had been red keep their tenths)
+      run.offences[k] = { kind = o.kind, at = whole(o.at), speed = whole(o.speed), limit = whole(o.limit), red_for = o.red_for, fine = whole(o.fine) }
     end
   end
-  if type(shown.run.offences) == "table" and #shown.run.offences > 0 then run.offences = shown.run.offences end
   local out = { open = true, run = run, saved = shown.saved == true }
   for k, v in pairs(shown.judged) do out[k] = v end
   return out

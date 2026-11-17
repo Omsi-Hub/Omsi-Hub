@@ -486,10 +486,7 @@ fn the_trip_card_is_sent_when_it_opens() {
     // (the card stays 15 s: it is sent within the first seconds)
     frames(&mut h, 8);
     let c = sent(&h, "card");
-    let c = c
-        .iter()
-        .find(|c| c["open"] == true)
-        .unwrap_or_else(|| panic!("a card datagram: {c:?} {:?}", h.state.borrow().sent.iter().map(|x| x.1.chars().take(40).collect::<String>()).collect::<Vec<_>>()));
+    let c = c.iter().find(|c| c["open"] == true).expect("a card datagram");
     assert_eq!(c["open"], true);
     assert_eq!(c["run"]["line"], "29");
     assert!(c["grade"].is_string() && c["score"].is_number() && c["stars"].is_number(), "{c}");
@@ -519,4 +516,57 @@ fn a_part_is_sent_again_every_five_seconds_and_never_two_in_a_tick() {
     assert_eq!(most, 1, "one part at most in a tick");
     let again = sent(&h, "strip").len() - strips;
     assert!((3..=5).contains(&again), "the strip, unchanged, every 5 s: {again} times in 20 s");
+}
+
+#[test]
+fn a_walk_around_of_200_checks_still_arrives() {
+    let dir = installed("long-strip");
+    let mut a = company_assignment();
+    {
+        let crew = a.crew.as_mut().unwrap();
+        crew.checks = (0..200).map(|i| (format!("check{i}"), format!("Walk-around check number {i}: look at the whole of it, twice"))).collect();
+        crew.templates = (0..5).map(|i| (format!("t{i}"), format!("Template {i}"))).collect();
+        crew.notes = (0..5).map(|i| format!("Handover note {i}")).collect();
+    }
+    bridge::write_assignment(&dir, &a).unwrap();
+    queue(&dir, 5, json!([]));
+    let mut h = Harness::load(&dir, game()).unwrap();
+    on_duty(&h, 0.0);
+    frames(&mut h, 40);
+    let texts: Vec<String> = h.state.borrow().sent.iter().filter(|(p, t)| *p == PORT && t.contains("\"t\":\"strip\"")).map(|(_, t)| t.clone()).collect();
+    let text = texts.last().expect("a strip datagram");
+    assert!(text.len() <= 8000, "{} bytes", text.len());
+    let s: Value = serde_json::from_str(text).unwrap();
+    let checks = s["checks"].as_array().expect("checks are there");
+    assert!(!checks.is_empty() && checks.len() < 200);
+    assert_eq!(s["more"]["checks"].as_i64(), Some(200 - checks.len() as i64));
+    assert_eq!(checks[0]["id"], "check0", "the order kept");
+    assert_eq!(s["templates"].as_array().unwrap().len(), 5, "the short lists whole");
+    assert!(h.log_text().contains("the strip is too long"), "said in the log once");
+    assert_eq!(h.log_text().matches("the strip is too long").count(), 1);
+}
+
+#[test]
+fn a_card_of_60_stops_keeps_its_stops() {
+    let dir = installed("card-60");
+    bridge::write_assignment(&dir, &company_assignment()).unwrap();
+    queue(&dir, 5, json!([]));
+    let mut h = Harness::load(&dir, game()).unwrap();
+    on_duty(&h, 0.0);
+    frames(&mut h, 25);
+    // (a trip as the game measures it: every time with its fractions, each stop served)
+    h.lua
+        .load(
+            "local visits = {} for i = 1, 60 do local arr = 28800.3333333 + 60 * i local dep = arr + 30.7777777 visits[i] = { index = i - 1, name = 'Stop number ' .. i .. ' of the long line', arr = arr, dep = dep, arrived = arr + 12.3456789, left = dep + 14.1234567 } end              require('card').hold({ line = '29', tour = '1', terminus = 'Hbf', trip = 1, trips = 2, departure = 28800.5, arrival = 32400.25, free = false, completed = true, planned = 60, stops = 60, early = 0, late = 2, worst = 301.123456, average = 40.5678901, seconds = 3600.123456, metres = 18000.987654, jolts = 1, crashes = 0, passengers = 40, visits = visits }, true, true)",
+        )
+        .exec()
+        .unwrap();
+    frames(&mut h, 8);
+    let texts: Vec<String> = h.state.borrow().sent.iter().filter(|(p, t)| *p == PORT && t.contains("\"t\":\"card\"") && t.contains("open")).map(|(_, t)| t.clone()).collect();
+    let text = texts.last().expect("a card datagram");
+    assert!(text.len() <= 8000, "{} bytes", text.len());
+    let c: Value = serde_json::from_str(text).unwrap();
+    let visits = c["run"]["visits"].as_array().expect("the stops are there");
+    assert_eq!(visits.len(), 60);
+    assert!(visits[1]["arr"].as_i64().is_some() && visits[1]["arrived"].as_i64().is_some(), "whole seconds: {}", visits[1]);
 }

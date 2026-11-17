@@ -392,19 +392,72 @@ local function part_text(kind, facts)
   return json.encode(facts)
 end
 
--- a part's datagram: its facts' fields next to `t` (a card too long for one is sent without
--- its stops, then without its offences)
+-- the lists of a part that may be cut when its datagram is too long: where they are, their
+-- names, and whether their texts may be shortened
+local CUTTABLE = {
+  strip = function(f) return f, { "checks", "templates", "notes_in", "changes" }, true end,
+  card = function(f) return type(f.run) == "table" and f.run or nil, { "visits", "offences" }, false end,
+}
+-- (the longest text a cut list keeps, characters)
+local CUT_TEXT = 80
+local told_cut = {}
+
+local function shorten(list)
+  for i, it in ipairs(list) do
+    if type(it) == "string" then
+      list[i] = it:sub(1, CUT_TEXT)
+    elseif type(it) == "table" and type(it.text) == "string" then
+      it.text = it.text:sub(1, CUT_TEXT)
+    end
+  end
+end
+
+-- a part's datagram body that is over 8000 bytes made to fit: the texts of its lists shortened,
+-- then its longest list cut to its first half again and again (the order kept), and what was cut
+-- counted in `more` (a list name and how many items went); said once in the log
+local function trim_part(kind, facts, head)
+  local where = CUTTABLE[kind]
+  local box, names, texts = nil, nil, nil
+  if where then box, names, texts = where(facts) end
+  if not box then return nil end
+  if texts then
+    for _, n in ipairs(names) do
+      if type(box[n]) == "table" then shorten(box[n]) end
+    end
+  end
+  local more = box.more or {}
+  local body = head .. json.encode(facts):sub(2)
+  while #body > 8000 do
+    local longest, size = nil, 0
+    for _, n in ipairs(names) do
+      local list = box[n]
+      if type(list) == "table" and #list > 0 then
+        local len = #json.encode(list)
+        if len > size then longest, size = n, len end
+      end
+    end
+    if not longest then return nil end
+    local list = box[longest]
+    local keep = #list // 2
+    more[longest] = (more[longest] or 0) + #list - keep
+    for i = #list, keep + 1, -1 do list[i] = nil end
+    if keep == 0 then box[longest] = nil end
+    box.more = more
+    body = head .. json.encode(facts):sub(2)
+  end
+  if not told_cut[kind] then
+    told_cut[kind] = true
+    if fn("log") then omsi.log("[omsihub] the " .. kind .. " is too long for one datagram: its lists are cut") end
+  end
+  return body
+end
+
+-- a part's datagram: its facts' fields next to `t`
 local function send_part(kind, facts, text)
   local head = '{"t":' .. json.encode(kind) .. ","
   local body = head .. text:sub(2)
-  if #body > 8000 and type(facts.run) == "table" then
-    for _, drop in ipairs({ "visits", "offences" }) do
-      facts.run[drop] = nil
-      body = head .. json.encode(facts):sub(2)
-      if #body <= 8000 then break end
-    end
-  end
-  if #body > 8000 or not (on and fn("send")) then return false end
+  if #body > 8000 then body = trim_part(kind, facts, head) end
+  if not body or not (on and fn("send")) then return false end
   return omsi.send(port, body) == true
 end
 
