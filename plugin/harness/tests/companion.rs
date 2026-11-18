@@ -198,7 +198,6 @@ fn commands_in_the_file_when_the_game_starts_are_old_and_a_new_session_starts_ag
 }
 
 #[test]
-#[ignore = "signing on is out for now (main.lua's SIGN_ON)"]
 fn the_driver_signs_on_and_accepts_the_duty_on_the_phone() {
     let dir = installed("signon");
     let a = Assignment {
@@ -318,4 +317,611 @@ fn the_devices_screens_are_read_ten_times_a_second_and_only_their_triggers_press
     // (the game names its triggers in lower case, the model files as written: the same keys)
     let held = |n: &str, d: bool| (n.to_string(), d);
     assert_eq!(st.held, [held("IBIS_menu", true), held("IBIS_7", true), held("IBIS_7", false), held("IBIS_menu", false)]);
+}
+
+// --- the driving parts: the duty strip, on time, the board, the notes and the trip card ---------
+
+/// A company's duty with a crew sheet: sign on at the depot, a trip, a break, a relief at the
+/// terminus; the clock is at 08:00 (minute 480).
+fn company_assignment() -> Assignment {
+    let row = |kind: &str, at: &str, from: i32, to: i32, relief: bool| bridge::StripRow { kind: kind.into(), at: at.into(), from, to, relief, ..bridge::StripRow::default() };
+    let crew = bridge::Crew {
+        rows: vec![
+            row("sign_on", "Depot", 470, 480, false),
+            bridge::StripRow { kind: "trip".into(), line: "29".into(), at: "Zoo".into(), to_place: "Hbf".into(), from: 480, to: 500, ..bridge::StripRow::default() },
+            row("break", "Hbf", 500, 515, false),
+            row("sign_off", "Hbf", 520, 520, true),
+        ],
+        changes: vec!["Overtime today".into()],
+        bus: 12,
+        bus_number: "4711".into(),
+        notes: vec!["Door 2 sticks".into()],
+        templates: vec![("clean".into(), "Please clean the bus".into())],
+        checks: vec![("lights".into(), "Lights".into())],
+        text_max: 140,
+        low_fuel: 0.15,
+        ..bridge::Crew::default()
+    };
+    Assignment { issued: issued(), company: "Stadtbus".into(), duty: "14".into(), line: "29".into(), tour: "1".into(), crew: Some(crew), ..Assignment::default() }
+}
+
+fn on_duty(h: &Harness, delay: f64) {
+    h.state.borrow_mut().duty = Some(hub_plugin_harness::Duty { line: "29".into(), tour: "1".into(), trip: 1, trips: 2, delay });
+}
+
+fn frames(h: &mut Harness, n: usize) {
+    for _ in 0..n {
+        h.frame().unwrap();
+    }
+}
+
+#[test]
+fn the_duty_strip_is_sent() {
+    let dir = installed("strip");
+    bridge::write_assignment(&dir, &company_assignment()).unwrap();
+    queue(&dir, 5, json!([]));
+    let mut h = Harness::load(&dir, game()).unwrap();
+    on_duty(&h, 0.0);
+    frames(&mut h, 40);
+    let strip = sent(&h, "strip");
+    let s = strip.last().expect("a strip datagram");
+    assert_eq!(s["next_relief"]["at"], "Hbf");
+    assert_eq!(s["next_relief"]["from"], "08:40");
+    assert_eq!(s["next_relief"]["left"], 40);
+    assert_eq!(s["next_break"]["at"], "Hbf");
+    assert_eq!(s["piece"]["text"], "Line 29 to Hbf until 08:20");
+    assert_eq!(s["notes_in"], json!(["Door 2 sticks"]));
+    assert_eq!(s["templates"], json!([{ "id": "clean", "text": "Please clean the bus" }]));
+    assert_eq!(s["checks"], json!([{ "id": "lights", "text": "Lights" }]));
+    assert_eq!((s["text_max"].as_i64(), s["can_note"].as_bool(), s["can_check"].as_bool(), s["signed_on"].as_bool()), (Some(140), Some(true), Some(true), Some(true)));
+    assert_eq!(s["relief_warning"], false);
+}
+
+#[test]
+fn without_a_company_duty_the_strip_is_not_sent_and_a_switched_off_one_is_cleared() {
+    let dir = installed("strip-none");
+    queue(&dir, 5, json!([]));
+    let mut h = Harness::load(&dir, game()).unwrap();
+    on_duty(&h, 0.0);
+    frames(&mut h, 40);
+    assert_eq!(sent(&h, "strip"), [json!({ "t": "strip" })], "no company duty: nothing to say, cleared once as the drive begins");
+    // (the strip's own switch on the board: off clears it)
+    let dir = installed("strip-off");
+    bridge::write_assignment(&dir, &company_assignment()).unwrap();
+    queue(&dir, 5, json!([]));
+    let mut h = Harness::load(&dir, game()).unwrap();
+    on_duty(&h, 0.0);
+    frames(&mut h, 40);
+    assert!(sent(&h, "strip").last().unwrap().get("piece").is_some());
+    h.lua.load("omsi.data.board_parts.strip = false; require('duty_strip').set_enabled(false)").exec().unwrap();
+    frames(&mut h, 40);
+    let last = sent(&h, "strip").pop().unwrap();
+    assert_eq!(last, json!({ "t": "strip" }), "a datagram with nothing but t clears the part");
+}
+
+#[test]
+fn on_time_is_sent() {
+    let dir = installed("ontime");
+    bridge::write_assignment(&dir, &company_assignment()).unwrap();
+    queue(&dir, 5, json!([]));
+    let mut h = Harness::load(&dir, game()).unwrap();
+    on_duty(&h, 400.0);
+    frames(&mut h, 40);
+    let o = sent(&h, "ontime");
+    let o = o.last().expect("an ontime datagram");
+    assert_eq!((o["delay"].as_f64(), o["tone"].as_str()), (Some(400.0), Some("late")));
+    // (the duty over: cleared)
+    h.state.borrow_mut().duty = None;
+    frames(&mut h, 40);
+    assert_eq!(sent(&h, "ontime").pop().unwrap(), json!({ "t": "ontime" }));
+}
+
+/// The game's delay is a float that changes every frame: on time sends whole seconds, so it is
+/// not a new part every tick.
+#[test]
+fn on_time_is_sent_in_whole_seconds() {
+    let dir = installed("ontime-whole");
+    bridge::write_assignment(&dir, &company_assignment()).unwrap();
+    queue(&dir, 5, json!([]));
+    let mut h = Harness::load(&dir, game()).unwrap();
+    on_duty(&h, 400.4);
+    frames(&mut h, 40);
+    let o = sent(&h, "ontime");
+    assert_eq!(o.last().expect("an ontime datagram")["delay"].as_i64(), Some(400), "{o:?}");
+    let before = sent(&h, "ontime").len();
+    for i in 0..8 {
+        h.state.borrow_mut().duty.as_mut().unwrap().delay = 400.1 + f64::from(i) * 0.04;
+        h.frame().unwrap();
+    }
+    assert_eq!(sent(&h, "ontime").len(), before, "a delay that moves within its second is not sent again");
+}
+
+#[test]
+fn the_board_parts_are_sent() {
+    let dir = installed("board");
+    let mut a = company_assignment();
+    a.fare = Some(bridge::Fare { per_boarding: 2.0, symbol: "€".into(), after: false, places: 2 });
+    a.contract = Some(bridge::ContractNote { kind: "gross".into(), rag: "green".into(), early: 1, late: 5 });
+    bridge::write_assignment(&dir, &a).unwrap();
+    queue(&dir, 5, json!([]));
+    let mut h = Harness::load(&dir, game()).unwrap();
+    on_duty(&h, 0.0);
+    h.lua.load("omsi.data.board_parts.strip = true").exec().unwrap();
+    frames(&mut h, 40);
+    let b = sent(&h, "board");
+    let b = b.last().expect("a board datagram");
+    assert_eq!(b["parts"]["strip"], true);
+    let parts = &b["parts"];
+    assert_eq!((parts["coach"].as_bool(), parts["fares"].as_bool(), parts["contract"].as_bool(), parts["dispatch"].as_bool()), (Some(true), Some(true), Some(true), Some(true)));
+    assert_eq!(b["status"], "On duty: trip 1 of 2");
+    assert_eq!(b["contract"]["rag"], "green");
+    assert!(b["fares"]["text"].as_str().unwrap().starts_with("Fare box €0.00"), "{b}");
+    // (a part the driver switched off: said so, and its facts gone)
+    h.lua.load("omsi.data.board_parts.contract = false").exec().unwrap();
+    frames(&mut h, 40);
+    let b = sent(&h, "board").pop().unwrap();
+    assert_eq!(b["parts"]["contract"], false);
+    assert!(b.get("contract").is_none());
+}
+
+#[test]
+fn thirty_notes_arrive_paged_and_whole() {
+    let dir = installed("notes");
+    queue(&dir, 5, json!([]));
+    let mut h = Harness::load(&dir, game()).unwrap();
+    h.frame().unwrap();
+    // (each long enough that the kept ones do not go in one datagram)
+    h.lua.load("local notes = require('notes'); for i = 1, 30 do notes.say(('n%02d '):format(i) .. ('x'):rep(1500), { title = 'T' .. i, sticky = true }) end").exec().unwrap();
+    frames(&mut h, 40);
+    let pages = sent(&h, "notes");
+    let v = pages.iter().map(|p| p["v"].as_i64().unwrap()).max().unwrap();
+    let mut last: Vec<&Value> = pages.iter().filter(|p| p["v"].as_i64() == Some(v)).collect();
+    last.sort_by_key(|p| p["page"].as_i64().unwrap());
+    // (sent again every 5 s: the same pages again)
+    last.dedup_by_key(|p| p["page"].as_i64().unwrap());
+    assert!(last.len() > 1, "more than a page");
+    assert_eq!(last.len() as i64, last[0]["pages"].as_i64().unwrap());
+    let all: Vec<&Value> = last.iter().flat_map(|p| p["notes"].as_array().unwrap()).collect();
+    // (8 are kept, the newest first: 30 down to 23)
+    let titles: Vec<&str> = all.iter().map(|x| x["title"].as_str().unwrap()).collect();
+    assert_eq!(titles, ["T30", "T29", "T28", "T27", "T26", "T25", "T24", "T23"]);
+    assert_eq!(all[0]["sticky"], true);
+    assert!(all[0]["n"].is_number() && all[0]["icon"].is_string() && all[0]["color"].is_string());
+    for (_, text) in h.state.borrow().sent.iter().filter(|(p, t)| *p == PORT && t.contains("\"t\":\"notes\"")) {
+        assert!(text.len() <= 8000, "a page of {} bytes", text.len());
+    }
+}
+
+#[test]
+fn the_trip_card_is_sent_when_it_opens() {
+    let dir = installed("card");
+    bridge::write_assignment(&dir, &company_assignment()).unwrap();
+    queue(&dir, 5, json!([]));
+    let mut h = Harness::load(&dir, game()).unwrap();
+    on_duty(&h, 0.0);
+    frames(&mut h, 25);
+    assert!(sent(&h, "card").iter().all(|c| *c == json!({ "t": "card" })), "no card yet (cleared once as the drive begins)");
+    h.fire("trip_done", &[json!(1), json!("arrived"), json!(95.0), json!(88.0), json!(100.0)]).unwrap();
+    // (the card stays 15 s: it is sent within the first seconds)
+    frames(&mut h, 8);
+    let c = sent(&h, "card");
+    let c = c.iter().find(|c| c["open"] == true).expect("a card datagram");
+    assert_eq!(c["open"], true);
+    assert_eq!(c["run"]["line"], "29");
+    assert!(c["grade"].is_string() && c["score"].is_number() && c["stars"].is_number(), "{c}");
+    // (the driver closed it on the on-board computer: cleared)
+    command(&dir, &mut h, json!([{ "seq": 1, "do": "card_close" }]));
+    frames(&mut h, 40);
+    assert_eq!(sent(&h, "card").pop().unwrap(), json!({ "t": "card" }));
+}
+
+#[test]
+fn a_part_is_sent_again_every_five_seconds_and_never_two_in_a_tick() {
+    let dir = installed("every");
+    bridge::write_assignment(&dir, &company_assignment()).unwrap();
+    queue(&dir, 5, json!([]));
+    let mut h = Harness::load(&dir, game()).unwrap();
+    on_duty(&h, 0.0);
+    frames(&mut h, 30);
+    let count = |h: &Harness| ["strip", "ontime", "board", "card"].iter().map(|k| sent(h, k).len()).sum::<usize>();
+    let strips = sent(&h, "strip").len();
+    let mut most = 0;
+    for _ in 0..80 {
+        let before = count(&h);
+        h.frame().unwrap();
+        most = most.max(count(&h) - before);
+    }
+    // (a frame is a tick of a quarter of a second here: 80 of them are 20 s of the game)
+    assert_eq!(most, 1, "one part at most in a tick");
+    let again = sent(&h, "strip").len() - strips;
+    assert!((3..=5).contains(&again), "the strip, unchanged, every 5 s: {again} times in 20 s");
+}
+
+/// A part that changes every tick (on time, the delay a second more each frame) does not keep
+/// the others' repeats from going: they are how the server gets the parts back after it forgot
+/// them (a new game) or started again on another port. The strip and an open card are sent
+/// again within about twice PART_EVERY (5 s).
+#[test]
+fn a_part_that_changes_every_tick_does_not_starve_the_repeats() {
+    let dir = installed("starve");
+    bridge::write_assignment(&dir, &company_assignment()).unwrap();
+    queue(&dir, 5, json!([]));
+    let mut h = Harness::load(&dir, game()).unwrap();
+    on_duty(&h, 0.0);
+    frames(&mut h, 30);
+    // (the card held open while the driver reads it: the harness's frame is a second of the
+    // card's 15 but a quarter of a second of the parts')
+    h.lua.load("local c = require('card'); local f = c.frame; c.frame = function(_, s) return f(0, s) end").exec().unwrap();
+    h.fire("trip_done", &[json!(1), json!("arrived"), json!(95.0), json!(88.0), json!(100.0)]).unwrap();
+    let (mut strips, mut cards) = (Vec::new(), Vec::new());
+    let (mut strip_n, mut card_n) = (sent(&h, "strip").len(), sent(&h, "card").len());
+    for f in 0..64 {
+        h.state.borrow_mut().duty.as_mut().unwrap().delay += 1.0;
+        h.frame().unwrap();
+        let (s, c) = (sent(&h, "strip"), sent(&h, "card"));
+        if s.len() > strip_n {
+            strips.push(f);
+        }
+        if c.len() > card_n && c.last().unwrap()["open"] == true {
+            cards.push(f);
+        }
+        (strip_n, card_n) = (s.len(), c.len());
+    }
+    assert!(sent(&h, "ontime").len() > 15, "on time changed and was sent in most slots: {}", sent(&h, "ontime").len());
+    // (10 s are 40 frames; a slot of the parts within a few frames more)
+    let gaps = |sends: &[i32]| sends.windows(2).map(|w| w[1] - w[0]).max().unwrap_or(i32::MAX);
+    assert!(!strips.is_empty() && strips[0] <= 44, "the strip sent again at frames {strips:?}");
+    assert!(cards.len() >= 2 && gaps(&cards) <= 44, "the open card sent again at frames {cards:?}");
+}
+
+#[test]
+fn a_walk_around_of_200_checks_still_arrives() {
+    let dir = installed("long-strip");
+    let mut a = company_assignment();
+    {
+        let crew = a.crew.as_mut().unwrap();
+        crew.checks = (0..200).map(|i| (format!("check{i}"), format!("Walk-around check number {i}: look at the whole of it, twice"))).collect();
+        crew.templates = (0..5).map(|i| (format!("t{i}"), format!("Template {i}"))).collect();
+        crew.notes = (0..5).map(|i| format!("Handover note {i}")).collect();
+    }
+    bridge::write_assignment(&dir, &a).unwrap();
+    queue(&dir, 5, json!([]));
+    let mut h = Harness::load(&dir, game()).unwrap();
+    on_duty(&h, 0.0);
+    frames(&mut h, 40);
+    let texts: Vec<String> = h.state.borrow().sent.iter().filter(|(p, t)| *p == PORT && t.contains("\"t\":\"strip\"")).map(|(_, t)| t.clone()).collect();
+    let text = texts.last().expect("a strip datagram");
+    assert!(text.len() <= 8000, "{} bytes", text.len());
+    let s: Value = serde_json::from_str(text).unwrap();
+    let checks = s["checks"].as_array().expect("checks are there");
+    assert!(!checks.is_empty() && checks.len() < 200);
+    assert_eq!(s["more"]["checks"].as_i64(), Some(200 - checks.len() as i64));
+    assert_eq!(checks[0]["id"], "check0", "the order kept");
+    assert_eq!(s["templates"].as_array().unwrap().len(), 5, "the short lists whole");
+    assert!(h.log_text().contains("the strip is too long"), "said in the log once");
+    assert_eq!(h.log_text().matches("the strip is too long").count(), 1);
+}
+
+#[test]
+fn a_card_of_60_stops_keeps_its_stops() {
+    let dir = installed("card-60");
+    bridge::write_assignment(&dir, &company_assignment()).unwrap();
+    queue(&dir, 5, json!([]));
+    let mut h = Harness::load(&dir, game()).unwrap();
+    on_duty(&h, 0.0);
+    frames(&mut h, 25);
+    // (a trip as the game measures it: every time with its fractions, each stop served)
+    h.lua
+        .load(
+            "local visits = {} for i = 1, 60 do local arr = 28800.3333333 + 60 * i local dep = arr + 30.7777777 visits[i] = { index = i - 1, name = 'Stop number ' .. i .. ' of the long line', arr = arr, dep = dep, arrived = arr + 12.3456789, left = dep + 14.1234567 } end              require('card').hold({ line = '29', tour = '1', terminus = 'Hbf', trip = 1, trips = 2, departure = 28800.5, arrival = 32400.25, free = false, completed = true, planned = 60, stops = 60, early = 0, late = 2, worst = 301.123456, average = 40.5678901, seconds = 3600.123456, metres = 18000.987654, jolts = 1, crashes = 0, passengers = 40, visits = visits }, true, true)",
+        )
+        .exec()
+        .unwrap();
+    frames(&mut h, 8);
+    let texts: Vec<String> = h.state.borrow().sent.iter().filter(|(p, t)| *p == PORT && t.contains("\"t\":\"card\"") && t.contains("open")).map(|(_, t)| t.clone()).collect();
+    let text = texts.last().expect("a card datagram");
+    assert!(text.len() <= 8000, "{} bytes", text.len());
+    let c: Value = serde_json::from_str(text).unwrap();
+    let visits = c["run"]["visits"].as_array().expect("the stops are there");
+    assert_eq!(visits.len(), 60);
+    assert!(visits[1]["arr"].as_i64().is_some() && visits[1]["arrived"].as_i64().is_some(), "whole seconds: {}", visits[1]);
+}
+
+#[test]
+fn a_cut_text_stays_whole_characters() {
+    let dir = installed("cut-utf8");
+    let mut a = company_assignment();
+    a.crew.as_mut().unwrap().checks = (0..200).map(|i| (format!("check{i}"), format!("x{}", "ä".repeat(100)))).collect();
+    bridge::write_assignment(&dir, &a).unwrap();
+    queue(&dir, 5, json!([]));
+    let mut h = Harness::load(&dir, game()).unwrap();
+    on_duty(&h, 0.0);
+    frames(&mut h, 40);
+    let texts: Vec<String> = h.state.borrow().sent.iter().filter(|(p, t)| *p == PORT && t.contains("\"t\":\"strip\"")).map(|(_, t)| t.clone()).collect();
+    let s: Value = serde_json::from_str(texts.last().expect("a strip datagram")).expect("valid JSON");
+    let text = s["checks"][0]["text"].as_str().unwrap();
+    assert!(text.len() < 200 && !text.is_empty() && text.chars().skip(1).all(|c| c == 'ä'), "cut on a whole character: {text}");
+}
+
+// --- the on-board computer's commands ---------------------------------------------------------------
+
+/// Commands queued as the session's next, numbered from `from`; each of them acked.
+fn command(dir: &Path, h: &mut Harness, cmds: Value) {
+    queue(dir, 5, cmds);
+    frames(h, 3);
+}
+
+#[test]
+fn the_computer_starts_the_duty_and_signs_off() {
+    let dir = installed("cmd-duty");
+    bridge::write_assignment(&dir, &company_assignment()).unwrap();
+    queue(&dir, 5, json!([]));
+    let mut h = Harness::load(&dir, game()).unwrap();
+    frames(&mut h, 3);
+    command(&dir, &mut h, json!([{ "seq": 1, "do": "duty_start" }]));
+    assert_eq!(h.state.borrow().started.len(), 1, "the duty started as the panel's button does");
+    assert_eq!(acks(&h).last().unwrap(), &(1, true, String::new()));
+    // (signed off: the walk-around opens; a second time there is nothing to sign off)
+    command(&dir, &mut h, json!([{ "seq": 2, "do": "sign_off" }]));
+    assert_eq!(acks(&h).last().unwrap(), &(2, true, String::new()));
+    on_duty(&h, 0.0);
+    frames(&mut h, 40);
+    assert_eq!(sent(&h, "strip").last().unwrap()["open"], "check");
+    command(&dir, &mut h, json!([{ "seq": 3, "do": "sign_off" }]));
+    assert_eq!(acks(&h).last().unwrap(), &(3, true, String::new()), "already open: still fine");
+}
+
+#[test]
+fn each_empty_part_is_cleared_once_as_the_drive_begins() {
+    let dir = installed("parts-first");
+    queue(&dir, 5, json!([]));
+    let mut h = Harness::load(&dir, game()).unwrap();
+    frames(&mut h, 40);
+    // (Omsi-Hub may still have the last drive's: each is said to be empty, once)
+    for k in ["strip", "ontime", "board", "card"] {
+        assert_eq!(sent(&h, k), [json!({ "t": k })], "{k}");
+    }
+    let notes = sent(&h, "notes");
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert_eq!((notes[0]["v"].as_i64(), &notes[0]["notes"]), (Some(1), &json!([])));
+}
+
+#[test]
+fn a_note_left_while_the_walk_around_is_open_leaves_it_open() {
+    let dir = installed("note-check");
+    bridge::write_assignment(&dir, &company_assignment()).unwrap();
+    queue(&dir, 5, json!([]));
+    let mut h = Harness::load(&dir, game()).unwrap();
+    on_duty(&h, 0.0);
+    frames(&mut h, 3);
+    command(&dir, &mut h, json!([{ "seq": 1, "do": "sign_off" }]));
+    frames(&mut h, 40);
+    assert_eq!(sent(&h, "strip").last().unwrap()["open"], "check");
+    command(&dir, &mut h, json!([{ "seq": 2, "do": "strip_note", "text": "Door 2 sticks again" }]));
+    assert_eq!(acks(&h).last().unwrap(), &(2, true, String::new()));
+    frames(&mut h, 40);
+    assert_eq!(sent(&h, "strip").last().unwrap()["open"], "check", "the walk-around stays open");
+}
+
+#[test]
+fn a_long_title_of_many_bytes_keeps_the_notes_valid_json() {
+    let dir = installed("notes-utf8");
+    queue(&dir, 5, json!([]));
+    let mut h = Harness::load(&dir, game()).unwrap();
+    frames(&mut h, 3);
+    // (199 bytes, then a character of two: the 200th byte is half of it)
+    let title = format!("{}{}", "x".repeat(199), "ä".repeat(20));
+    let text = "€".repeat(1000);
+    h.lua.load(format!("require('notes').say('{text}', {{ title = '{title}', sticky = true }})")).exec().unwrap();
+    frames(&mut h, 40);
+    let texts: Vec<String> = h.state.borrow().sent.iter().filter(|(p, t)| *p == PORT && t.contains("\"t\":\"notes\"")).map(|(_, t)| t.clone()).collect();
+    let n: Value = serde_json::from_str(texts.last().expect("a notes datagram")).expect("valid JSON");
+    let note = &n["notes"][0];
+    assert_eq!(note["title"], "x".repeat(199), "cut before the character it would split");
+    let t = note["text"].as_str().unwrap();
+    assert!(t.len() <= 2000 && t.chars().all(|c| c == '€') && t.chars().count() == 666, "{}", t.len());
+}
+
+/// Omsi-Hub's queue, saying whether its own on-board computer asks for the state.
+fn queue_with_device(dir: &Path, device: bool) {
+    std::fs::create_dir_all(dir.join("data")).unwrap();
+    std::fs::write(dir.join("data/companion.json"), json!({ "sid": 5, "port": PORT, "seq": 0, "cmds": [], "device": device }).to_string()).unwrap();
+}
+
+fn stage(h: &Harness) -> String {
+    h.lua.load("return require('signon').stage").eval::<String>().unwrap()
+}
+
+#[test]
+fn a_duty_without_a_device_skips_sign_on_after_20_s() {
+    let dir = installed("no-device");
+    bridge::write_assignment(&dir, &passed_assignment()).unwrap();
+    queue_with_device(&dir, false);
+    let mut h = Harness::load(&dir, game()).unwrap();
+    frames(&mut h, 15);
+    assert_eq!(stage(&h), "signon", "a while to wait for the on-board computer");
+    assert!(h.state.borrow().started.is_empty());
+    frames(&mut h, 8);
+    assert_eq!(stage(&h), "work", "nobody could sign on: at work, as with sign-on off");
+    assert_eq!(h.state.borrow().started.len(), 1, "the duty starts as when the order is accepted");
+    assert!(h.log_text().contains("no on-board computer seen in 20 s"), "{}", h.log_text());
+    frames(&mut h, 2);
+    assert_eq!(sent(&h, "live").last().unwrap()["signon"], "work");
+    // (Omsi-Hub not running at all: no file, no device)
+    let dir = installed("no-hub");
+    bridge::write_assignment(&dir, &passed_assignment()).unwrap();
+    let mut h = Harness::load(&dir, game()).unwrap();
+    frames(&mut h, 23);
+    assert_eq!(stage(&h), "work");
+}
+
+#[test]
+fn a_duty_with_a_device_waits_at_sign_on() {
+    let dir = installed("with-device");
+    bridge::write_assignment(&dir, &passed_assignment()).unwrap();
+    queue_with_device(&dir, true);
+    let mut h = Harness::load(&dir, game()).unwrap();
+    frames(&mut h, 60);
+    assert_eq!(stage(&h), "signon", "the driver signs on at the on-board computer");
+    assert!(h.state.borrow().started.is_empty());
+    // (the device gone for a while before the driver signed on: then at work)
+    queue_with_device(&dir, false);
+    frames(&mut h, 23);
+    assert_eq!(stage(&h), "work");
+    // (signed off at the end of the duty, without a device: back at the sign-on, and it stays)
+    command(&dir, &mut h, json!([{ "seq": 1, "do": "sign_off" }]));
+    assert_eq!(acks(&h).last().unwrap(), &(1, true, String::new()));
+    frames(&mut h, 30);
+    assert_eq!(stage(&h), "signon");
+}
+
+fn passed_assignment() -> Assignment {
+    Assignment { personnel: Some(Personnel { number: "482913".into(), code: "5821".into() }), auto_start: true, ..company_assignment() }
+}
+
+#[test]
+fn a_company_duty_with_a_pass_starts_at_sign_on() {
+    let dir = installed("passed");
+    bridge::write_assignment(&dir, &passed_assignment()).unwrap();
+    queue(&dir, 5, json!([]));
+    let mut h = Harness::load(&dir, game()).unwrap();
+    frames(&mut h, 3);
+    assert_eq!(sent(&h, "live").last().unwrap()["signon"], "signon");
+    assert!(!h.state.borrow().ibis.contains(&"auto on".to_string()), "not at work: the IBIS' own codes wait");
+    assert!(h.state.borrow().started.is_empty());
+}
+
+#[test]
+fn a_regular_drive_is_at_work_at_once() {
+    let dir = installed("regular");
+    queue(&dir, 5, json!([]));
+    let mut h = Harness::load(&dir, game()).unwrap();
+    frames(&mut h, 3);
+    assert_eq!(sent(&h, "live").last().unwrap()["signon"], "work");
+}
+
+#[test]
+fn the_driver_signs_on_works_and_signs_off() {
+    let dir = installed("signoff-after-signon");
+    bridge::write_assignment(&dir, &passed_assignment()).unwrap();
+    queue(&dir, 5, json!([]));
+    let mut h = Harness::load(&dir, game()).unwrap();
+    frames(&mut h, 3);
+    command(&dir, &mut h, json!([{ "seq": 1, "do": "sign_off" }]));
+    assert_eq!(acks(&h).last().unwrap(), &(1, false, "not_now".to_string()), "not signed on yet");
+    command(&dir, &mut h, json!([{ "seq": 2, "do": "sign_on", "number": "482913", "code": "5821" }, { "seq": 3, "do": "accept_order" }]));
+    assert_eq!(sent(&h, "live").last().unwrap()["signon"], "work");
+    assert_eq!(h.state.borrow().started.len(), 1);
+    assert_eq!(h.state.borrow().ibis.last().map(String::as_str), Some("auto on"));
+    command(&dir, &mut h, json!([{ "seq": 4, "do": "sign_off" }]));
+    assert_eq!(acks(&h).last().unwrap(), &(4, true, String::new()));
+    // (signed off: back at the sign-on, the game no longer types the IBIS)
+    frames(&mut h, 2);
+    assert_eq!(sent(&h, "live").last().unwrap()["signon"], "signon");
+    assert_eq!(h.state.borrow().ibis.last().map(String::as_str), Some("auto off"));
+}
+
+#[test]
+fn signing_off_waits_until_the_duty_order_is_accepted() {
+    let dir = installed("signoff-order");
+    bridge::write_assignment(&dir, &passed_assignment()).unwrap();
+    queue(&dir, 5, json!([]));
+    let mut h = Harness::load(&dir, game()).unwrap();
+    frames(&mut h, 3);
+    command(&dir, &mut h, json!([{ "seq": 1, "do": "sign_on", "number": "482913", "code": "5821" }]));
+    assert_eq!(sent(&h, "live").last().unwrap()["signon"], "order");
+    command(&dir, &mut h, json!([{ "seq": 2, "do": "sign_off" }]));
+    assert_eq!(acks(&h).last().unwrap(), &(2, false, "not_now".to_string()), "signed on, the duty order not accepted yet");
+}
+
+#[test]
+fn duty_start_with_no_duty_is_not_now() {
+    let dir = installed("cmd-nostart");
+    queue(&dir, 5, json!([]));
+    let mut h = Harness::load(&dir, game()).unwrap();
+    frames(&mut h, 3);
+    command(&dir, &mut h, json!([{ "seq": 1, "do": "duty_start" }, { "seq": 2, "do": "sign_off" }]));
+    let a = acks(&h);
+    assert_eq!(a, [(1, false, "not_now".to_string()), (2, false, "not_now".to_string())]);
+}
+
+#[test]
+fn the_computer_switches_a_part_off() {
+    let dir = installed("cmd-part");
+    bridge::write_assignment(&dir, &company_assignment()).unwrap();
+    queue(&dir, 5, json!([]));
+    let mut h = Harness::load(&dir, game()).unwrap();
+    on_duty(&h, 0.0);
+    frames(&mut h, 40);
+    assert!(sent(&h, "strip").last().unwrap().get("piece").is_some());
+    command(
+        &dir,
+        &mut h,
+        json!([{ "seq": 1, "do": "part", "id": "strip", "on": false }, { "seq": 2, "do": "part", "id": "bogus", "on": false }, { "seq": 3, "do": "part", "id": "coach", "on": "yes" }]),
+    );
+    let a = acks(&h);
+    assert_eq!(a, [(1, true, String::new()), (2, false, "unknown_part".to_string()), (3, false, "bad_command".to_string())]);
+    frames(&mut h, 40);
+    assert_eq!(sent(&h, "strip").pop().unwrap(), json!({ "t": "strip" }));
+    assert_eq!(sent(&h, "board").pop().unwrap()["parts"]["strip"], false);
+    command(&dir, &mut h, json!([{ "seq": 4, "do": "part", "id": "strip", "on": true }]));
+    frames(&mut h, 40);
+    assert_eq!(sent(&h, "board").pop().unwrap()["parts"]["strip"], true);
+    assert!(sent(&h, "strip").pop().unwrap().get("piece").is_some());
+}
+
+#[test]
+fn the_computer_closes_a_note_and_the_card() {
+    let dir = installed("cmd-close");
+    bridge::write_assignment(&dir, &company_assignment()).unwrap();
+    queue(&dir, 5, json!([]));
+    let mut h = Harness::load(&dir, game()).unwrap();
+    on_duty(&h, 0.0);
+    frames(&mut h, 3);
+    h.lua.load("require('notes').say('hello', { title = 'T1', sticky = true })").exec().unwrap();
+    frames(&mut h, 40);
+    let n = sent(&h, "notes").last().unwrap()["notes"][0]["n"].as_i64().unwrap();
+    command(&dir, &mut h, json!([{ "seq": 1, "do": "note_close", "n": n }, { "seq": 2, "do": "note_close", "n": n }, { "seq": 3, "do": "card_close" }]));
+    let a = acks(&h);
+    assert_eq!(a, [(1, true, String::new()), (2, false, "no_note".to_string()), (3, false, "no_card".to_string())]);
+    frames(&mut h, 40);
+    let last = sent(&h, "notes").pop().unwrap();
+    assert!(last.get("notes").is_none_or(|x| x.as_array().unwrap().is_empty()), "{last}");
+    h.fire("trip_done", &[json!(1), json!("arrived"), json!(95.0), json!(88.0), json!(100.0)]).unwrap();
+    frames(&mut h, 8);
+    command(&dir, &mut h, json!([{ "seq": 4, "do": "card_close" }]));
+    assert_eq!(acks(&h).last().unwrap(), &(4, true, String::new()));
+    frames(&mut h, 40);
+    assert_eq!(sent(&h, "card").pop().unwrap(), json!({ "t": "card" }));
+}
+
+#[test]
+fn the_computer_reports_a_note_and_defects() {
+    let dir = installed("cmd-report");
+    bridge::write_assignment(&dir, &company_assignment()).unwrap();
+    queue(&dir, 5, json!([]));
+    let mut h = Harness::load(&dir, game()).unwrap();
+    on_duty(&h, 0.0);
+    frames(&mut h, 3);
+    let long = "x".repeat(150);
+    command(
+        &dir,
+        &mut h,
+        json!([
+            { "seq": 1, "do": "strip_note", "text": long },
+            { "seq": 2, "do": "strip_check", "ok": false, "items": ["lights"], "text": "left one dim" },
+            { "seq": 3, "do": "strip_check", "ok": true, "items": [], "text": "" },
+            { "seq": 4, "do": "strip_note", "text": 5 },
+        ]),
+    );
+    let a = acks(&h);
+    assert_eq!(a.iter().map(|x| x.1).collect::<Vec<_>>(), [true, true, true, false], "{a:?}");
+    assert_eq!(a[3].2, "bad_command");
+    let reports = bridge::ReportReader::default().read_new(&dir);
+    let notes: Vec<_> = reports.iter().filter(|r| r.kind == "note").collect();
+    assert_eq!(notes.len(), 1);
+    assert_eq!(notes[0].text.len(), 140, "cut to text_max");
+    let defects: Vec<_> = reports.iter().filter(|r| r.kind == "defect").collect();
+    assert_eq!(defects.len(), 1);
+    assert_eq!((defects[0].defect.as_str(), defects[0].text.as_str()), ("lights", "left one dim"));
 }

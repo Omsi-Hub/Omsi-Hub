@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "The main window: Tauri's core (events, the window), and the app's own commands (allowed by default)",
+  "description": "The main window: Tauri's core (events, the window), and the app's own commands (permissions/app.toml)",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": ["core:default", "allow-main-window"]
 }

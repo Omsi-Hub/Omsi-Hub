@@ -130,6 +130,63 @@ pub fn args(d: &Duty) -> Answer {
     Ok(json!({ "args": a }))
 }
 
+/// The note when openOMSI runs in full screen (the setting is left alone).
+pub const FULL_SCREEN_NOTE: &str = "openOMSI runs in full screen: if the on-board computer does not show over the game, switch full screen off in openOMSI's settings.";
+/// The note when Omsi-Hub just switched the game's own navigator or corner notes off.
+pub const SWITCHED_OFF_NOTE: &str = "Omsi-Hub switched off openOMSI's own navigator and corner notes: the on-board computer shows them now.";
+/// The note on Linux under Wayland, where no window can be put over the game.
+pub const WAYLAND_NOTE: &str = "The on-board computer cannot be shown over the game here: use the Omsi-Hub Companion on your phone or tablet.";
+
+fn say(text: &str) -> String {
+    #[cfg(feature = "native")]
+    return crate::online::tr(text);
+    #[cfg(not(feature = "native"))]
+    return crate::company::words::tr(text);
+}
+
+/// openOMSI's settings made ready for the drive: its own navigator and corner notes off (the
+/// on-board computer is the one device; the game shows no second map), full screen only told -
+/// but under Wayland, where no on-board computer shows over the game, they stay as they are.
+/// Returns the notes for the player. Never fails the launch: a settings file that cannot be
+/// read or written means no change (logged).
+pub fn prepare_settings(home: &Path) -> Vec<String> {
+    let wayland = cfg!(target_os = "linux") && std::env::var_os("WAYLAND_DISPLAY").is_some_and(|v| !v.is_empty());
+    prepare_settings_for(home, wayland)
+}
+
+fn prepare_settings_for(home: &Path, wayland: bool) -> Vec<String> {
+    use hub_game::gamesettings as gs;
+    let mut notes = Vec::new();
+    let path = gs::path(home);
+    match std::fs::read(&path).map(String::from_utf8) {
+        // (under Wayland no on-board computer shows over the game: openOMSI keeps its own)
+        Ok(Ok(_)) if wayland => {}
+        Ok(Ok(text)) => {
+            let mut changed = false;
+            for key in ["navigator", "notes"] {
+                if gs::value(&text, key) != Some("0") {
+                    match gs::set(&path, key, Some("0")) {
+                        Ok(_) => changed = true,
+                        Err(e) => hub_core::log_line(&format!("drive: openOMSI's {key} not switched off: {e}")),
+                    }
+                }
+            }
+            if changed {
+                notes.push(say(SWITCHED_OFF_NOTE));
+            }
+            if gs::value(&text, "fullscreen") == Some("1") {
+                notes.push(say(FULL_SCREEN_NOTE));
+            }
+        }
+        Ok(Err(_)) => hub_core::log_line(&format!("drive: {} is not plain text: left as it is", path.display())),
+        Err(e) => hub_core::log_line(&format!("drive: {}: {e}: left as it is", path.display())),
+    }
+    if wayland {
+        notes.push(say(WAYLAND_NOTE));
+    }
+    notes
+}
+
 /// The drive started.
 pub fn start(d: &Duty, p: &dyn Platform) -> Answer {
     let s = hub_core::settings::Settings::load();
@@ -190,6 +247,7 @@ pub fn start(d: &Duty, p: &dyn Platform) -> Answer {
         crate::company::fleetgame::game_over();
     }
     let spec = launch_spec(d, Path::new(&s.omsi2_folder));
+    let notes = prepare_settings(&hub_core::paths::home_dir());
     let g = process::start(&checked.install.exe, &spec).map_err(|e| match e {
         #[cfg(feature = "native")]
         process::StartError::Blocked => crate::online::tr(process::BLOCKED),
@@ -205,9 +263,9 @@ pub fn start(d: &Duty, p: &dyn Platform) -> Answer {
     // (the live dashboard of the drive: `live.rs`)
     crate::live::began(d, assignment.as_ref(), plugin.as_deref());
     let mode = crate::live::mode_of(d, assignment.as_ref());
-    p.emit("game-started", json!({ "pid": pid, "mode": mode }));
+    p.emit("game-started", json!({ "pid": pid, "mode": mode, "notes": notes }));
     watch(p.emitter());
-    Ok(json!({ "started": true, "pid": pid, "issued": issued, "mode": mode }))
+    Ok(json!({ "started": true, "pid": pid, "issued": issued, "mode": mode, "notes": notes }))
 }
 
 /// One look of the bridge: the reports booked, the company told, the on-time brief written.
@@ -316,6 +374,54 @@ mod tests {
         // (the tests' own data folder: never the settings of the driver on this computer)
         crate::online::test_data_dir();
         Duty { map: "maps/Grundorf/global.cfg".into(), bus: "Vehicles/X/a.bus".into(), time: "08:15".into(), line: Some("10".into()), tour: Some("2".into()), autostart: Some(true), ..Duty::default() }
+    }
+
+    #[test]
+    fn the_games_navigator_and_notes_are_switched_off() {
+        let home = std::env::temp_dir().join(format!("omsihub-prep-{}-a", std::process::id()));
+        let path = hub_game::gamesettings::path(&home);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "vsync=1\r\nnavigator=1\r\n# kept\r\nnotes=1\r\nfullscreen=0\r\n").unwrap();
+        let n = prepare_settings_for(&home, false);
+        assert_eq!(n, vec![say(SWITCHED_OFF_NOTE)]);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "vsync=1\r\nnavigator=0\r\n# kept\r\nnotes=0\r\nfullscreen=0\r\n");
+        // (already off: nothing changed, nothing said)
+        assert!(prepare_settings_for(&home, false).is_empty());
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn full_screen_is_left_alone_and_told() {
+        let home = std::env::temp_dir().join(format!("omsihub-prep-{}-b", std::process::id()));
+        let path = hub_game::gamesettings::path(&home);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "fullscreen=1\nnavigator=0\nnotes=0\n").unwrap();
+        let n = prepare_settings_for(&home, false);
+        assert_eq!(n, vec![say(FULL_SCREEN_NOTE)]);
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(hub_game::gamesettings::value(&text, "fullscreen"), Some("1"));
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn wayland_says_to_use_the_companion_and_a_missing_file_changes_nothing() {
+        let home = std::env::temp_dir().join(format!("omsihub-prep-{}-c", std::process::id()));
+        let n = prepare_settings_for(&home, true);
+        assert_eq!(n, vec![say(WAYLAND_NOTE)]);
+        assert!(!hub_game::gamesettings::path(&home).exists());
+    }
+
+    #[test]
+    fn under_wayland_the_games_navigator_and_notes_stay_on() {
+        let home = std::env::temp_dir().join(format!("omsihub-prep-{}-d", std::process::id()));
+        let path = hub_game::gamesettings::path(&home);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let before = "navigator=1\r\nnotes=1\r\nfullscreen=1\r\n";
+        std::fs::write(&path, before).unwrap();
+        // (no on-board computer shows there: openOMSI keeps its own, and only the companion is said)
+        assert_eq!(prepare_settings_for(&home, true), vec![say(WAYLAND_NOTE)]);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), before);
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     #[test]

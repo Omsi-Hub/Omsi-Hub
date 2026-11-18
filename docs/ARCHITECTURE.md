@@ -327,6 +327,37 @@ them) and the language; `launcher.json`'s profile becomes the settings' `driver`
      (`tests/support/fake_openomsi.rs`, Cargo's `fake-openomsi` program) that writes the
      plugin's files and ends.
 
+## The on-board computer
+
+While driving, the player sees and uses Omsi-Hub's **on-board computer**; the plugin draws nothing
+in openOMSI. Three parts make it (design: `docs/superpowers/specs/2026-11-17-boordcomputer-design.md`):
+
+```
+openOMSI ── plugin (Lua) ──UDP 127.0.0.1──▶ hub-companion's server ◀──HTTP 127.0.0.1── window
+          ◀── data/companion.json (commands) ──┘     (always on)      (app/src/boordcomputer.rs)
+```
+
+- **The plugin** reports each driving part as plain facts over the companion's channel
+  (`companion.lua`: `strip`, `ontime`, `board`, `notes`, `card`; their fields are in
+  docs/COMPANION.md, "The driving parts") and carries out the commands it gets back (starting the
+  duty, signing on and off, the messages' answers, the strip's note and walk-around, closing a
+  notification or the card). It needs an openOMSI with `omsi.send`; without it `compat` refuses the
+  drive. Before the drive, `hub-api` switches openOMSI's own navigator and corner notes off
+  (`hub_api::drive::prepare_settings`, through `gamesettings`) and tells the player once; they stay off.
+- **The companion server** always runs on this computer, on loopback only; phones and tablets
+  reach it only while Phone & tablet is on. It keeps the latest of each part (`heard`, `state`) and
+  serves the Companion web app embedded in the add-on (`assets/companion-web/`, made with
+  `tools/companion-web.mjs`). Omsi-Hub's own window is its one local client, with a local key
+  that needs no pairing.
+- **The window** (`app/src/boordcomputer.rs`) is a second Tauri window with the Companion app's
+  `/device` screen, opened when a drive's game starts and closed when it ends. It has no frame, stays
+  on top, is not in the task bar and does not take the keyboard from the game (Windows:
+  `WS_EX_NOACTIVATE`, `WS_EX_TOOLWINDOW`). A thread follows the game and shows the device only
+  while the game is in front, on the game's monitor. Only on Windows: on Linux (X11) and macOS
+  what is in front is not known, so the device stays on top of every program while the game runs
+  and is in the task bar (behind the game it could not be raised). It sits in a corner of the work area (dragged
+  and snapped), in size S, M or L; corner, offset and width are kept in the settings.
+
 ## How a feature port plugs in
 
 1. **Data and logic** go into `hub-core` (`company/…`). OMSI 2 files come from `hub-omsi`

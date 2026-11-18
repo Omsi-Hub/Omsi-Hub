@@ -5,6 +5,39 @@ merged but in no build yet is under Unreleased.
 
 ## Unreleased
 
+### Added
+
+- **An on-board computer replaces the panels in openOMSI's navigator**: while you drive, the duty
+  strip, the on-time display, the company's board, the notifications and the end-of-trip card
+  are on one screen that looks like a real on-board computer. It is a window of Omsi-Hub over
+  the game, in a corner of the monitor the game is on, in three sizes (S, M and L), and you
+  drag it to any corner of the screen. It does not take the keyboard from the game, and on
+  Windows it hides when you leave the game, so it is not in your way in other programs. Only on
+  Windows: on Linux and macOS it stays on top of every program while the game runs, and you find
+  it in the task bar. It speaks Omsi-Hub's language, and
+  Omsi-Hub remembers its corner and size.
+
+- **Signing on is back, on the on-board computer**: with the number pad of the device you type
+  your personnel number and code and sign the duty order, then sign off at the end, as before.
+  The on-board computer shows your pass (personnel number and code) while you sign on. Where it
+  cannot show - Linux under Wayland, or Omsi-Hub closed - you are at work without signing on
+  after 20 seconds, as with sign-on switched off.
+
+### Changed
+
+- **openOMSI's own navigator and corner notes are switched off for a drive**: the on-board
+  computer shows what they showed, so Omsi-Hub switches them off in openOMSI's settings before the
+  game starts and tells you once that it did. They stay off: Omsi-Hub does not switch them back
+  on after the drive. Under Wayland, where the on-board computer cannot show, they are left on.
+
+- **Omsi-Hub needs an openOMSI that can send data to it**: the on-board computer gets everything
+  from the game that way. An openOMSI without it (`send`) is refused when you start a drive,
+  with a message, instead of driving with nothing on the screen. Update openOMSI to drive.
+
+- **The phone & tablet companion's server now always runs on this computer only**: it is
+  needed for the on-board computer, and nothing on your network can reach it. Phones and tablets
+  can only connect while Phone & tablet is on in Settings, as before.
+
 ### Fixed
 
 - **A line's tours keep their buses and drivers when you move its departures**: before, changing

@@ -35,7 +35,8 @@ pub struct Feature {
     pub needs: &'static [&'static str],
     /// Without it the add-on is of no use in that game.
     pub essential: bool,
-    /// What happens without it (English, for the player).
+    /// What happens without it (English, for the player); for an essential one, why it is
+    /// needed (none: it says so by its label).
     pub fallback: &'static str,
 }
 
@@ -51,9 +52,10 @@ pub static FEATURES: &[Feature] = &[
         fallback: "Trip results are read from the game's log after the drive",
     },
     Feature { id: "duty_start", label: "Start the assigned duty from the game", needs: &["duty.start"], essential: false, fallback: "Choose the line and tour in the game's menu yourself" },
-    Feature { id: "overlay", label: "Company notices on the screen", needs: &["ui.set", "ui.toast", "ui.remove"], essential: false, fallback: "Notices are shown as plain lines of text" },
     Feature { id: "live_notices", label: "New notices while you drive", needs: &["files.read", "json.decode"], essential: false, fallback: "Notices are read when the game starts" },
-    Feature { id: "live_link", label: "Live link to Omsi-Hub", needs: &["send"], essential: false, fallback: "Omsi-Hub reads the results when the drive ends" },
+    // (the on-board computer shows everything while driving, sent with `omsi.send`: nothing is
+    // drawn in the game, so a game without it would show the driver nothing)
+    Feature { id: "live_link", label: "Live link to Omsi-Hub", needs: &["send"], essential: true, fallback: "Omsi-Hub's on-board computer needs it" },
     Feature { id: "display_font", label: "The display font chosen for the bus", needs: &["bus.set_display_font"], essential: false, fallback: "The bus's own display font" },
     Feature { id: "editor", label: "The map editor opened from the editors", needs: &["game.action"], essential: false, fallback: "Open the object editor in the game with Ctrl+Shift+E" },
     Feature {
@@ -66,7 +68,7 @@ pub static FEATURES: &[Feature] = &[
     Feature {
         id: "messages",
         label: "Messages from the control room, and your replies",
-        needs: &["files.read", "json.decode", "files.append", "ui.set"],
+        needs: &["files.read", "json.decode", "files.append"],
         essential: false,
         fallback: "Messages wait on the Operations page and the phone",
     },
@@ -93,8 +95,9 @@ pub const NOTE_UNKNOWN: &str = "The version was not found: the first drive check
 pub const NOTE_TOO_OLD: &str = "This openOMSI is older than 0.2.22: update it to use Omsi-Hub";
 pub const NOTE_OLD_API: &str = "This openOMSI's plugin interface is too old: update openOMSI";
 pub const NOTE_NO_DUTY: &str = "This openOMSI does not tell plugins about the duty: update openOMSI";
+pub const NOTE_NO_LINK: &str = "This openOMSI cannot send to Omsi-Hub's on-board computer: update openOMSI";
 pub const NOTE_NEWER_API: &str = "This openOMSI has a newer plugin interface: update Omsi-Hub for everything to work";
-pub const NOTES: &[&str] = &[NOTE_UNKNOWN, NOTE_TOO_OLD, NOTE_OLD_API, NOTE_NO_DUTY, NOTE_NEWER_API];
+pub const NOTES: &[&str] = &[NOTE_UNKNOWN, NOTE_TOO_OLD, NOTE_OLD_API, NOTE_NO_DUTY, NOTE_NO_LINK, NOTE_NEWER_API];
 
 /// How well the add-on works with a game.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -152,12 +155,15 @@ pub fn negotiate(hello: &Hello) -> Compat {
     let has = |name: &str| hello.functions.get(name).copied().unwrap_or(false);
     let features = all_features(|f| f.needs.iter().all(|n| has(n)));
     let mut notes = Vec::new();
-    let essential_missing = FEATURES.iter().zip(&features).any(|(f, s)| f.essential && !s.on);
+    // (each essential feature missing, with what it says to the player)
+    let missing: Vec<&str> = FEATURES.iter().zip(&features).filter(|(f, s)| f.essential && !s.on).map(|(f, _)| f.id).collect();
     let level = if hello.api < API_ABI {
         notes.push(NOTE_OLD_API.into());
         Level::Unsupported
-    } else if essential_missing {
-        notes.push(NOTE_NO_DUTY.into());
+    } else if !missing.is_empty() {
+        for id in missing {
+            notes.push(if id == "live_link" { NOTE_NO_LINK } else { NOTE_NO_DUTY }.into());
+        }
         Level::Unsupported
     } else if hello.api > API_ABI {
         // (an ABI raised: something the add-on uses may have changed; what the handshake found
@@ -213,12 +219,13 @@ mod tests {
         let full = negotiate(&hello(1, &[]));
         assert_eq!((full.level, full.confirmed, full.api), (Level::Supported, true, Some(1)));
         assert!(full.features.iter().all(|f| f.on));
-        // an older game without panels: limited, the overlay off, the rest on
-        let no_ui = negotiate(&hello(1, &["ui.toast"]));
-        assert_eq!(no_ui.level, Level::Limited);
-        assert!(no_ui.features.iter().all(|f| f.on == (f.id != "overlay")));
+        // an older game without a sound for messages: limited, that feature off, the rest on
+        let no_sound = negotiate(&hello(1, &["audio.play"]));
+        assert_eq!(no_sound.level, Level::Limited);
+        assert!(no_sound.features.iter().all(|f| f.on == (f.id != "message_sound")));
         // no duty for plugins: unsupported
-        assert_eq!(negotiate(&hello(1, &["duty.get"])).level, Level::Unsupported);
+        let no_duty = negotiate(&hello(1, &["duty.get"]));
+        assert_eq!((no_duty.level, no_duty.notes.as_slice()), (Level::Unsupported, [NOTE_NO_DUTY.to_string()].as_slice()));
         // an older or a newer ABI
         assert_eq!(negotiate(&hello(0, &[])).level, Level::Unsupported);
         let newer = negotiate(&hello(2, &[]));
@@ -226,13 +233,29 @@ mod tests {
         assert!(!newer.notes.is_empty());
         // a function the handshake does not mention counts as missing
         let mut h = hello(1, &[]);
-        h.functions.remove("send");
+        h.functions.remove("bus.set_display_font");
         assert_eq!(negotiate(&h).level, Level::Limited);
+        // (the plugin draws nothing while driving: no feature needs openOMSI's panels)
+        assert!(FEATURES.iter().all(|f| f.needs.iter().all(|n| !n.starts_with("ui."))));
+    }
+
+    #[test]
+    fn an_openomsi_without_send_is_refused() {
+        // (the on-board computer shows the drive: without `omsi.send` it would show nothing)
+        let c = negotiate(&hello(1, &["send"]));
+        assert_eq!(c.level, Level::Unsupported);
+        assert_eq!(c.notes, [NOTE_NO_LINK]);
+        let link = c.features.iter().find(|f| f.id == "live_link").unwrap();
+        assert!(!link.on);
+        assert_eq!(link.fallback, "Omsi-Hub's on-board computer needs it");
+        let mut h = hello(1, &[]);
+        h.functions.remove("send");
+        assert_eq!(negotiate(&h).level, Level::Unsupported);
     }
 
     #[test]
     fn a_handshake_of_another_version_is_not_believed() {
-        let h = hello(1, &["ui.set"]);
+        let h = hello(1, &["audio.play"]);
         assert!(check(Some(&GameVersion::new(0, 2, 1500)), Some(&h)).confirmed);
         // (the folder was updated since: the estimate of the new version)
         let after = check(Some(&GameVersion::new(0, 3, 2)), Some(&h));

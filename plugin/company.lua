@@ -1,8 +1,9 @@
--- Omsi-Hub's plugin: the bus company on the duty board while driving - what the company knows of
--- the duty besides its timetable, from the assignment Omsi-Hub wrote (the company's duty sheet,
--- service control's decisions, the fares, the line's contract) and from the duty as it runs.
--- Five parts, each switched on and off by the driver (the company's panel, F10) and kept for the
--- next drive:
+-- Omsi-Hub's plugin: the bus company on the on-board computer's board while driving - what the
+-- company knows of the duty besides its timetable, from the assignment Omsi-Hub wrote (the
+-- company's duty sheet, service control's decisions, the fares, the line's contract) and from the
+-- duty as it runs (`facts`; Omsi-Hub's window shows them, nothing is drawn in the game). Five
+-- parts, each switched on and off by the driver (the on-board computer's `part` command) and kept
+-- for the next drive:
 --
 -- * coach     - punctuality coaching: at a stop too early, how long to hold and until when;
 --               running late, whether the layover at the terminus brings the next trip back
@@ -30,7 +31,6 @@ M.LABELS = {
   fares = "Fare box", contract = "Contract",
 }
 
-local ORANGE, AMBER, GREEN, RED, BLUE, DIM, SOFT = "#F58620", "#E8AA46", "#37D67A", "#FF5F57", "#4DA3FF", "#959DB0", "#C4CAD6"
 -- (a message comes this long before what it is about)
 local AHEAD = 5 * 60
 -- (a stop's hold under this is not worth a word)
@@ -73,7 +73,7 @@ end
 -- --- the punctuality coach -------------------------------------------------------------------
 
 -- the coach's advice for the duty `d` (`duty.get`), its trips and the clock (s), the line's
--- contract (or none): a box's text, its colour and icon, or nil when there is nothing to say
+-- contract (or none): its text (and a note), its tone and kind, or nil when there is nothing to say
 function M.coach(d, trips, clock, contract)
   if not d or d.trip_done then return nil end
   local delay = d.delay or 0
@@ -90,27 +90,27 @@ function M.coach(d, trips, clock, contract)
       return {
         text = tr("Hold %{s} here · leave at %{time}", { s = mmss(hold), time = hhmm(s.departure) }),
         note = costly and tr("Leaving now counts as early") or nil,
-        color = costly and RED or BLUE, icon = "pan_tool",
+        tone = costly and "late" or "early", kind = "hold",
       }
     end
     return nil
   end
   if not d.at_stop and not first and delay < -60 then
-    return { text = tr("Running %{s} early · ease off", { s = mmss(delay) }), color = BLUE, icon = "speed" }
+    return { text = tr("Running %{s} early · ease off", { s = mmss(delay) }), tone = "early", kind = "early" }
   end
   -- late: what the layover at the terminus gives back for the next trip
   if delay > career.LATE_ARRIVAL then
     local this, after = trips[d.trip], trips[d.trip + 1]
     if not (this and after) then
-      return { text = tr("Late %{s} · last trip of the duty", { s = offset(delay) }), color = RED, icon = "schedule" }
+      return { text = tr("Late %{s} · last trip of the duty", { s = offset(delay) }), tone = "late", kind = "late" }
     end
     local layover = (after.departure or 0) - (this.arrival or 0)
     local left = delay - math.max(layover - MIN_LAYOVER, 0)
     local m = math.max(math.floor(layover / 60), 0)
     if left <= 60 then
-      return { text = tr("Late %{s} · the %{m} min layover brings the %{time} back on time", { s = offset(delay), m = m, time = hhmm(after.departure) }), color = AMBER, icon = "schedule" }
+      return { text = tr("Late %{s} · the %{m} min layover brings the %{time} back on time", { s = offset(delay), m = m, time = hhmm(after.departure) }), tone = "behind", kind = "late" }
     end
-    return { text = tr("Late %{s} · still %{left} late for the %{time} after the layover", { s = offset(delay), left = offset(left), time = hhmm(after.departure) }), color = RED, icon = "schedule" }
+    return { text = tr("Late %{s} · still %{left} late for the %{time} after the layover", { s = offset(delay), left = offset(left), time = hhmm(after.departure) }), tone = "late", kind = "late" }
   end
   return nil
 end
@@ -207,69 +207,63 @@ end
 
 -- --- the contract --------------------------------------------------------------------------------
 
-local RAG = { green = GREEN, orange = AMBER, red = RED }
 local RAG_WORD = { green = "Green", orange = "Amber", red = "Red" }
 
--- the contract's line and its colour
+-- the contract's line
 function M.contract(c)
   if type(c) ~= "table" or (c.kind or "") == "" then return nil end
   local kind = ({ gross = "Gross cost contract", net = "Net cost contract", hire = "Hire contract" })[c.kind] or "Contract"
   return tr("%{kind} · rated %{rag} · on time −%{early} to +%{late} min", {
     kind = tr(kind), rag = tr(RAG_WORD[c.rag] or "Green"), early = c.early or 1, late = c.late or 5,
-  }), RAG[c.rag] or GREEN
+  })
 end
 
--- --- on the board ---------------------------------------------------------------------------------
+-- --- on the on-board computer's board -------------------------------------------------------------
 
--- the board's elements of the parts switched on (`on`), for the duty `d` now (`clock`: s);
--- `boarded` the passengers of this trip and of the duty. `room`: the whole parts, else only the
--- coach (the most urgent).
-function M.elements(on, assignment, d, trips, clock, boarded, room)
-  local out = {}
+-- what the company says on the board, as plain data (a part switched off, or with nothing to
+-- say, is left out): `parts` the switches, `assignment` the duty Omsi-Hub gave, and `now` the
+-- game as it is - `duty` (`duty.get`), `trips`, `clock` (s), `boarded` (the passengers of this
+-- trip, of the duty and aboard now), `signed` (signed on) and
+-- `can_start` (the duty may be started now). Without `now`: the switches and the sheet alone.
+local function build(on, assignment, now)
   local a = type(assignment) == "table" and assignment or {}
-  local contract = type(a.contract) == "table" and a.contract or nil
-  if on.coach then
-    local c = M.coach(d, trips, clock, contract)
-    if c then
-      local children = { { type = "row", gap = 8, children = {
-        { type = "icon", name = c.icon, size = 16, color = c.color },
-        { type = "text", text = c.text, size = 12.5, weight = "bold", color = "#E8EBF2", grow = true },
-      } } }
-      if c.note then children[#children + 1] = { type = "text", text = c.note, size = 11.5, color = c.color } end
-      out[#out + 1] = { type = "box", color = c.color, children = children }
-    end
+  now = type(now) == "table" and now or {}
+  local out = { parts = on, can_start = now.can_start == true, can_sign_off = now.signed == true }
+  local d = now.duty
+  if d then
+    out.status = tr("On duty: trip %{trip} of %{trips}", { trip = d.trip, trips = d.trips })
+  else
+    out.status = tr("Not started yet")
   end
-  if not room then return out end
-  -- (duty_strip.lua's strip is the only one on the screen while it is on: docs/omsihub/CREW.md)
-  local own = package.loaded["duty_strip"]
-  if on.strip and not (own and own.enabled()) then
-    local lines = M.strip(a.sheet, math.floor(clock / 60))
-    if lines then
-      out[#out + 1] = { type = "row", gap = 8, children = {
-        { type = "icon", name = "badge", size = 15, color = ORANGE },
-        { type = "text", text = table.concat(lines, "  ·  "), size = 11.5, color = SOFT, grow = true },
-      } }
+  local contract = type(a.contract) == "table" and a.contract or nil
+  if on.coach and d then
+    local c = M.coach(d, now.trips or {}, now.clock or 0, contract)
+    if c then out.coach = { text = c.text, note = c.note, tone = c.tone, kind = c.kind } end
+  end
+  if on.strip then
+    -- (duty_strip.lua's strip is the only one while it is on: docs/omsihub/CREW.md)
+    local own = package.loaded["duty_strip"]
+    if not (own and own.enabled()) then
+      local lines = M.strip(a.sheet, math.floor((now.clock or 0) / 60))
+      if lines then out.strip = lines end
     end
   end
   if on.fares then
-    local text = M.fares(a.fare, boarded and boarded[1], boarded and boarded[2], boarded and boarded[3])
+    local boarded = now.boarded or {}
+    local text = M.fares(a.fare, boarded[1], boarded[2], boarded[3])
     if text then
-      out[#out + 1] = { type = "row", gap = 8, children = {
-        { type = "icon", name = "payments", size = 15, color = ORANGE },
-        { type = "text", text = text, size = 11.5, color = SOFT, grow = true },
-      } }
+      out.fares = { text = text, trip = boarded[1] or 0, duty = boarded[2] or 0, aboard = tonumber(boarded[3]) }
     end
   end
   if on.contract then
-    local text, color = M.contract(contract)
-    if text then
-      out[#out + 1] = { type = "row", gap = 8, children = {
-        { type = "icon", name = "description", size = 15, color = color },
-        { type = "text", text = text, size = 11.5, color = DIM, grow = true },
-      } }
-    end
+    local text = M.contract(contract)
+    if text then out.contract = { text = text, kind = contract.kind, rag = contract.rag or "green", early = contract.early or 1, late = contract.late or 5 } end
   end
   return out
+end
+
+function M.facts(parts, assignment, now)
+  return build(M.parts(parts), assignment, now)
 end
 
 return M

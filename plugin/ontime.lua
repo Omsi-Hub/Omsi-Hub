@@ -4,29 +4,24 @@
 -- bunch), the protected connections at the stops ahead, and the diversions and roadworks of
 -- the day - the closed stops struck through on the navigator, and a word before them.
 --
--- In the navigator under the duty board (navigator.lua; an older openOMSI: a card of its own
--- beside it), switched off by the assignment (`ontime = false`: the launcher's setting) and by
--- its own close button for the drive. It extends what the duty
--- board and the trip's card say rather than repeating it: the board shows the game's delay
--- chip, this the company's view of the same seconds (when the trip counts late, how far off
--- that is).
+-- Reported to the on-board computer (`facts`; Omsi-Hub's window shows it, nothing is drawn in
+-- the game), switched off by the assignment (`ontime = false`: the launcher's setting). It is the
+-- company's view of the delay (when the trip counts late, how far off that is), the headway, the
+-- connections and the diversions; its alerts are notifications (notes.lua).
 --
 -- The files it shares with Omsi-Hub (crates/omsi-launcher-api/src/omsihub/ontime.rs):
 --   data/live.json      plugin -> Omsi-Hub: where the bus is (the trip, its stops, the delay)
 --   data/ontime.json    Omsi-Hub -> plugin: the brief (headway, connections, diversions, alerts)
 
 local json = require("hubjson")
-local layout = require("layout")
-local navigator = require("navigator")
 local notes = require("notes")
 
 local M = {}
 
-local PANEL = "omsihub_ontime"
 local WRITE_EVERY, READ_EVERY = 3, 3
 -- a brief older than this (s) is of a game Omsi-Hub no longer looks after
 local STALE = 60
-local GREEN, AMBER, RED, BLUE, DIM, NOW = "#37D67A", "#F0B429", "#FF5F57", "#4DA3FF", "#9AA3AD", "#F0B429"
+local RED, NOW = "#FF5F57", "#F0B429"
 
 -- the texts Omsi-Hub's brief sends as its alerts' templates (`notify` in ontime.rs): here so
 -- that they are the plugin's texts, translated with the rest
@@ -46,7 +41,6 @@ local assignment, has = nil, {}
 local brief, closed_sent = nil, nil
 local write_wait, read_wait = 0, 0
 local off = false
-local shown = false
 
 local function fn(t, name)
   return type(t) == "table" and type(t[name]) == "function"
@@ -71,21 +65,6 @@ local function clock()
   return type(i) == "table" and i.clock or 0
 end
 
-local function hhmm(t)
-  local m = math.floor((t or 0) / 60)
-  return string.format("%02d:%02d", (m // 60) % 24, m % 60)
-end
-
-local function offset(d)
-  local s = math.floor(math.abs(d) + 0.5)
-  return string.format("%s%d:%02d", d < 0 and "−" or "+", s // 60, s % 60)
-end
-
-local function mmss(s)
-  s = math.max(math.floor(s + 0.5), 0)
-  return string.format("%d:%02d", s // 60, s % 60)
-end
-
 -- the company's view of a delay (`ontime::tone`): early from `early_from` s before, late from
 -- `late_from` s behind
 function M.tone(delay, early_from, late_from)
@@ -99,8 +78,7 @@ end
 
 omsi.data.ontime_seen = omsi.data.ontime_seen or {}
 
--- The ONE way this card tells the driver something once: a notification in the navigator
--- (notes.lua). When the company's messages come (r67-messages: `post(company, to, priority,
+-- The ONE way this card tells the driver something once: a notification (notes.lua). When the company's messages come (r67-messages: `post(company, to, priority,
 -- template, args, action)`), the launcher posts them (ontime.rs `notify`) and this stays the
 -- notification of a game that shows what it is sent - switch here to showing the posted message
 -- instead.
@@ -154,90 +132,58 @@ end
 
 -- --- the card ------------------------------------------------------------------------------
 
-local function line(text, color, size)
-  return { type = "text", text = text, size = size or 13, color = color }
-end
-
--- the card's elements for the duty `d` (`duty.get`) and the brief `b` (none yet: punctuality
--- alone, by the company's usual lines)
-function M.rows(d, b)
+-- the card's facts for the duty `d` (`duty.get`) and the brief `b` (none yet: punctuality
+-- alone, by the company's usual lines): plain data, a list with nothing in it left out
+local function facts_of(d, b)
   b = b or {}
   local early_from, late_from = tonumber(b.early_from) or 60, tonumber(b.late_from) or 360
-  local delay = d.delay or 0
-  local tone = M.tone(delay, early_from, late_from)
-  local word = ({ early = "early", on_time = "on time", behind = "late", late = "late" })[tone]
-  local color = ({ early = BLUE, on_time = GREEN, behind = AMBER, late = RED })[tone]
-  local children = {
-    { type = "row", children = {
-      { type = "icon", name = "schedule", color = NOW },
-      { type = "text", text = tr("On time"), weight = "bold", grow = true, wrap = false },
-      { type = "badge", text = offset(delay) .. " " .. tr(word), color = color },
-      { type = "button", id = "ontime_close", icon = "close", text = "" },
-    } },
-  }
-  local function add(x) children[#children + 1] = x end
-  -- how far off the company's late line (the board shows the game's own chip)
-  if tone == "late" then
-    add(line(tr("Counts as a late trip"), RED, 12))
-  elseif delay > 0 then
-    add(line(tr("Counts late from %{t}", { t = offset(late_from) }) .. "  ·  " .. tr("%{t} left", { t = mmss(late_from - delay) }), DIM, 12))
-  elseif tone == "early" then
-    add(line(tr("Running early: wait at the stop"), BLUE, 12))
-  end
+  -- (whole seconds: the game's delay is a float that moves every frame, and a part that changes
+  -- every tick would be sent in every slot of the parts)
+  local delay = tonumber(d.delay) or 0
+  if delay == delay and delay ~= math.huge and delay ~= -math.huge then delay = math.tointeger(math.floor(delay + 0.5)) or delay end
+  local out = { delay = delay, tone = M.tone(delay, early_from, late_from), early_from = early_from, late_from = late_from }
   -- the headway, where the line is frequent
   local h = b.headway
   if type(h) == "table" then
-    add({ type = "divider" })
-    local parts = {}
-    if type(h.ahead) == "table" then parts[#parts + 1] = tr("Ahead %{bus}: %{gap}", { bus = h.ahead.bus, gap = mmss(h.ahead.secs) }) end
-    if type(h.behind) == "table" then parts[#parts + 1] = tr("Behind %{bus}: %{gap}", { bus = h.behind.bus, gap = mmss(h.behind.secs) }) end
-    parts[#parts + 1] = tr("every %{m} min", { m = math.floor((h.planned or 0) / 60 + 0.5) })
-    add(line(table.concat(parts, "  ·  ")))
-    local a = h.advice or {}
-    if a.kind == "hold" then
-      add(line(tr("Hold %{secs} s at the next stop", { secs = math.floor(a.secs + 0.5) }), NOW))
-    elseif a.kind == "close_behind" then
-      add(line(tr("You are close behind %{bus}", { bus = a.bus }), AMBER))
-    end
+    local head = { planned = tonumber(h.planned) or 0 }
+    if type(h.ahead) == "table" then head.ahead = { bus = h.ahead.bus, secs = h.ahead.secs } end
+    if type(h.behind) == "table" then head.behind = { bus = h.behind.bus, secs = h.behind.secs } end
+    local a = h.advice
+    if type(a) == "table" and (a.kind == "hold" or a.kind == "close_behind") then head.advice = { kind = a.kind, secs = a.secs, bus = a.bus } end
+    out.headway = head
   end
   -- the connections at the stops ahead
+  local connections = {}
   for _, k in ipairs(type(b.connections) == "table" and b.connections or {}) do
-    add({ type = "divider" })
-    local st = k.status or {}
-    local due = k.time .. ((k.late or 0) > 0 and (" (+" .. k.late .. " min)") or "")
-    if k.onward then
-      add(line(tr("Connection at %{stop}: %{what} %{time}", { stop = k.stop, what = k.what, time = due }), nil))
-      if st.kind == "made" then add(line(tr("%{m} min to change", { m = st.m }), GREEN, 12))
-      elseif st.kind == "tight" then add(line(tr("Tight: keep the doors short"), AMBER, 12))
-      else add(line(tr("Missed at this delay"), RED, 12)) end
-    else
-      add(line(tr("Connection at %{stop}: wait max %{m} min", { stop = k.stop, m = k.max_hold }), NOW))
-      add(line(k.what .. "  " .. due, DIM, 12))
-      if st.kind == "wait" then add(line(tr("Hold until %{time}", { time = st["until"] }), NOW, 12))
-      elseif st.kind == "too_late" then add(line(tr("Too late to wait for: leave on time"), AMBER, 12))
-      else add(line(tr("No wait needed"), GREEN, 12)) end
-    end
+    local st = type(k.status) == "table" and k.status or {}
+    connections[#connections + 1] = {
+      stop = k.stop, what = k.what, time = k.time, late = k.late or 0, onward = k.onward == true, max_hold = k.max_hold,
+      status = { kind = st.kind, m = st.m, ["until"] = st["until"] },
+    }
   end
-  -- the diversion ahead, and the day's
-  if type(b.ahead) == "table" then
-    add({ type = "divider" })
-    add(line(tr("Diversion ahead: %{stop} closed", { stop = b.ahead.stop }), NOW))
-    if (b.ahead.via or "") ~= "" then add(line(tr("Via %{via}", { via = b.ahead.via }), DIM, 12)) end
-  elseif type(b.closed) == "table" and #b.closed > 0 then
-    add(line(tr("Closed today: %{stops}", { stops = table.concat(b.closed, ", ") }), DIM, 12))
-  end
-  return children
+  if #connections > 0 then out.connections = connections end
+  -- the diversion ahead, and the day's closed stops
+  if type(b.ahead) == "table" then out.ahead = { stop = b.ahead.stop, via = b.ahead.via or "" } end
+  if type(b.closed) == "table" and #b.closed > 0 then out.closed = { table.unpack(b.closed) } end
+  return out
 end
 
--- every second (main.lua): the files, the alerts, the card
+-- the card's facts now (nil: it is off, there is no company's duty or no duty running)
+function M.facts()
+  if not (M.on() and fn(omsi.duty, "get")) then return nil end
+  local d = omsi.duty.get()
+  if not d then return nil end
+  return facts_of(d, brief)
+end
+
+-- every second (main.lua): the files, the alerts, the closed stops
 function M.tick(dt)
   if not (M.on() and fn(omsi.duty, "get")) then return end
   local d = omsi.duty.get()
   if not d then
-    navigator.put("ontime", nil)
-    if shown and has["ui.remove"] then layout.remove(PANEL) end
-    if shown then to_navigator(nil) end
-    shown, brief = false, nil
+    -- (the duty over: the navigator's closed stops cleared, where some were set)
+    if closed_sent then to_navigator(nil) end
+    brief = nil
     return
   end
   write_wait, read_wait = write_wait - (dt or 1), read_wait - (dt or 1)
@@ -255,28 +201,6 @@ function M.tick(dt)
       end
     end
   end
-  if not has["ui.set"] then return end
-  shown = true
-  if navigator.docks() then return navigator.put("ontime", M.rows(d, brief)) end
-  layout.set(PANEL, { anchor = "top_left", x = 16, y = 330, width = 330, accent = NOW, draggable = true, children = M.rows(d, brief) })
-end
-
--- its close button: off for this drive
-function M.click(panel, element)
-  if panel ~= PANEL and not (navigator.is(panel) and element == "ontime_close") then return false end
-  if element == "ontime_close" then
-    off = true
-    navigator.put("ontime", nil)
-    if shown and has["ui.remove"] then layout.remove(PANEL) end
-    shown = false
-    to_navigator(nil)
-  end
-  return true
-end
-
-function M.stop()
-  if shown and has["ui.remove"] then layout.remove(PANEL) end
-  shown = false
 end
 
 return M

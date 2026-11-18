@@ -290,6 +290,14 @@ _version: 2
   es: "Este openOMSI no informa a los plugins sobre el servicio: actualiza openOMSI"
   ru: "Этот openOMSI не сообщает плагинам о смене: обновите openOMSI"
   uk: "Цей openOMSI не повідомляє плагінам про зміну: оновіть openOMSI"
+"This openOMSI cannot send to Omsi-Hub's on-board computer: update openOMSI":
+  de: "Dieses openOMSI kann nichts an den Bordcomputer von Omsi-Hub senden: Aktualisiere openOMSI"
+  fr: "Cet openOMSI ne peut rien envoyer à l'ordinateur de bord d'Omsi-Hub : mettez openOMSI à jour"
+  nl: "Deze openOMSI kan niets naar de boordcomputer van Omsi-Hub sturen: werk openOMSI bij"
+  pl: "Ten openOMSI nie może wysyłać danych do komputera pokładowego Omsi-Hub: zaktualizuj openOMSI"
+  es: "Este openOMSI no puede enviar datos al ordenador de a bordo de Omsi-Hub: actualiza openOMSI"
+  ru: "Этот openOMSI не может передавать данные бортовому компьютеру Omsi-Hub: обновите openOMSI"
+  uk: "Цей openOMSI не може передавати дані бортовому комп'ютеру Omsi-Hub: оновіть openOMSI"
 "This openOMSI has a newer plugin interface: update Omsi-Hub for everything to work":
   de: "Dieses openOMSI hat eine neuere Plugin-Schnittstelle: Aktualisiere Omsi-Hub, damit alles funktioniert"
   fr: "Cet openOMSI a une interface des plugins plus récente : mettez Omsi-Hub à jour pour que tout fonctionne"
@@ -322,14 +330,6 @@ _version: 2
   es: "Empezar el servicio asignado desde el juego"
   ru: "Начать назначенную смену из игры"
   uk: "Почати призначену зміну з гри"
-"Company notices on the screen":
-  de: "Mitteilungen des Unternehmens auf dem Bildschirm"
-  fr: "Avis de l'entreprise à l'écran"
-  nl: "Berichten van het bedrijf op het scherm"
-  pl: "Komunikaty firmy na ekranie"
-  es: "Avisos de la empresa en pantalla"
-  ru: "Уведомления компании на экране"
-  uk: "Повідомлення компанії на екрані"
 "New notices while you drive":
   de: "Neue Mitteilungen während der Fahrt"
   fr: "Nouveaux avis pendant la conduite"
@@ -362,14 +362,6 @@ _version: 2
   es: "Elige tú mismo la línea y el recorrido en el menú del juego"
   ru: "Выберите маршрут и выход сами в меню игры"
   uk: "Виберіть маршрут і випуск самі в меню гри"
-"Notices are shown as plain lines of text":
-  de: "Mitteilungen erscheinen als einfache Textzeilen"
-  fr: "Les avis s'affichent en simples lignes de texte"
-  nl: "Berichten verschijnen als gewone tekstregels"
-  pl: "Komunikaty są wyświetlane jako zwykłe wiersze tekstu"
-  es: "Los avisos se muestran como simples líneas de texto"
-  ru: "Уведомления показываются простыми строками текста"
-  uk: "Повідомлення показуються простими рядками тексту"
 "Notices are read when the game starts":
   de: "Mitteilungen werden beim Spielstart gelesen"
   fr: "Les avis sont lus au lancement du jeu"
@@ -378,14 +370,14 @@ _version: 2
   es: "Los avisos se leen al iniciar el juego"
   ru: "Уведомления читаются при запуске игры"
   uk: "Повідомлення читаються під час запуску гри"
-"Omsi-Hub reads the results when the drive ends":
-  de: "Omsi-Hub liest die Ergebnisse am Ende der Fahrt"
-  fr: "Omsi-Hub lit les résultats à la fin du trajet"
-  nl: "Omsi-Hub leest de resultaten aan het einde van de rit"
-  pl: "Omsi-Hub odczytuje wyniki po zakończeniu jazdy"
-  es: "Omsi-Hub lee los resultados al terminar la conducción"
-  ru: "Omsi-Hub читает результаты по окончании поездки"
-  uk: "Omsi-Hub читає результати після завершення поїздки"
+"Omsi-Hub's on-board computer needs it":
+  de: "Der Bordcomputer von Omsi-Hub braucht das"
+  fr: "L'ordinateur de bord d'Omsi-Hub en a besoin"
+  nl: "De boordcomputer van Omsi-Hub heeft dit nodig"
+  pl: "Komputer pokładowy Omsi-Hub tego potrzebuje"
+  es: "El ordenador de a bordo de Omsi-Hub lo necesita"
+  ru: "Это нужно бортовому компьютеру Omsi-Hub"
+  uk: "Це потрібно бортовому комп'ютеру Omsi-Hub"
 "This folder does not exist":
   de: "Dieser Ordner existiert nicht"
   fr: "Ce dossier n'existe pas"

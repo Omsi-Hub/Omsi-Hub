@@ -86,6 +86,11 @@ pub struct Config {
     pub version: String,
     /// Where the paired devices are kept.
     pub devices_file: PathBuf,
+    /// Whether the devices on the home network may reach it (every address of this computer);
+    /// else it listens on this computer only, for Omsi-Hub's own window.
+    pub lan: bool,
+    /// A key that is let in without pairing: the one Omsi-Hub's own window carries.
+    pub local_key: String,
 }
 
 /// The companion running; dropping it stops it.
@@ -94,13 +99,26 @@ pub struct Companion {
 }
 
 impl Companion {
-    /// Start listening (the devices on every network address, the plugin on this computer's).
+    /// Start listening (the devices on every network address when `cfg.lan`, else this computer
+    /// only; the plugin on this computer's). Without `lan` a port that is taken is not an error:
+    /// any free one is used, the window finds it by `port`.
     pub fn start(cfg: Config, source: Arc<dyn Source>) -> std::io::Result<Companion> {
-        let listen = SocketAddr::from((Ipv4Addr::UNSPECIFIED, cfg.port));
+        let ip = if cfg.lan { Ipv4Addr::UNSPECIFIED } else { Ipv4Addr::LOCALHOST };
+        let listen = SocketAddr::from((ip, cfg.port));
+        let (lan, port) = (cfg.lan, cfg.port);
         let udp = SocketAddr::from((Ipv4Addr::LOCALHOST, cfg.udp_port));
         let sid = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(1);
         let shared = Arc::new(server::Shared::new(cfg, source, random_code(), sid));
-        Ok(Companion { server: server::Server::start(listen, udp, shared)? })
+        let server = match server::Server::start(listen, udp, shared.clone()) {
+            Err(_) if !lan && port != 0 => server::Server::start(SocketAddr::from((ip, 0)), udp, shared)?,
+            started => started?,
+        };
+        Ok(Companion { server })
+    }
+
+    /// Whether the devices on the home network may reach it.
+    pub fn lan(&self) -> bool {
+        self.server.shared.cfg.lan
     }
 
     /// The port it listens on.
@@ -128,7 +146,7 @@ impl Companion {
             .collect();
         let game = i.heard.fresh(sh.now(), state::GAME_FRESH);
         json!({
-            "on": true,
+            "on": sh.cfg.lan,
             "host": host, "port": port,
             "address": format!("http://{host}:{port}"),
             "code": code,
@@ -232,6 +250,48 @@ mod tests {
         assert_eq!(pair_url("fd00::20", 47811, "482913"), "http://[fd00::20]:47811/pair?code=482913");
     }
 
+    fn config(tag: &str, lan: bool, port: u16) -> Config {
+        let dir = std::env::temp_dir().join(format!("hub-companion-{tag}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // (the plugin's port: a free one)
+        let udp = UdpSocket::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+        Config { port, udp_port: udp, name: "PC".into(), version: "0.1.0".into(), devices_file: dir.join(DEVICES_FILE), lan, local_key: random_key() }
+    }
+
+    #[test]
+    fn without_lan_only_loopback_listens() {
+        let c = Companion::start(config("loopback", false, 0), Arc::new(Nothing)).unwrap();
+        assert_eq!(c.server.addr.ip(), std::net::IpAddr::V4(Ipv4Addr::LOCALHOST));
+        assert!(!c.lan());
+        assert_eq!(c.status()["on"], false);
+        let c = Companion::start(config("lan", true, 0), Arc::new(Nothing)).unwrap();
+        assert_eq!(c.server.addr.ip(), std::net::IpAddr::V4(Ipv4Addr::UNSPECIFIED));
+        assert!(c.lan());
+    }
+
+    #[test]
+    fn a_taken_port_falls_back_to_a_free_one() {
+        let held = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let p = held.local_addr().unwrap().port();
+        let c = Companion::start(config("taken", false, p), Arc::new(Nothing)).unwrap();
+        assert_ne!(c.port(), p);
+        // (with the network, the error stays)
+        let held = std::net::TcpListener::bind("0.0.0.0:0").unwrap();
+        let p = held.local_addr().unwrap().port();
+        assert!(Companion::start(config("taken-lan", true, p), Arc::new(Nothing)).is_err());
+    }
+
+    #[test]
+    fn a_taken_plugin_port_falls_back_to_a_free_one_the_plugin_is_told() {
+        let held = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let mut cfg = config("udp-taken", false, 0);
+        cfg.udp_port = held.local_addr().unwrap().port();
+        let c = Companion::start(cfg, Arc::new(Nothing)).unwrap();
+        let told = c.server.shared.lock().queue.port;
+        assert_ne!(told, held.local_addr().unwrap().port());
+        assert_ne!(told, 0);
+    }
+
     #[test]
     fn the_server_answers_on_the_network_and_hears_the_plugin() {
         use std::io::{Read, Write};
@@ -239,7 +299,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         // (the plugin's port: a free one)
         let udp = UdpSocket::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
-        let cfg = Config { port: 0, udp_port: udp, name: "PC".into(), version: "0.1.0".into(), devices_file: dir.join(DEVICES_FILE) };
+        let cfg = Config { port: 0, udp_port: udp, name: "PC".into(), version: "0.1.0".into(), devices_file: dir.join(DEVICES_FILE), lan: true, local_key: random_key() };
         let c = Companion::start(cfg, Arc::new(Nothing)).unwrap();
         let ask = |path: &str| {
             let mut s = std::net::TcpStream::connect(("127.0.0.1", c.port())).unwrap();

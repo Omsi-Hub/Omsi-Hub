@@ -8,6 +8,10 @@
 //! The file also says where the plugin sends its datagrams (`port`), and asks it for the name of
 //! the street at a place (`probe`: the road after the next turn, `crate::nav`). While the file is
 //! there the plugin talks to the companion; the server takes it away when it stops.
+//!
+//! `device` says whether Omsi-Hub's own on-board computer (the local key) asked for the state
+//! within [`crate::server::DEVICE_FRESH`]: without one the plugin does not keep the driver at the
+//! sign-on, where nobody could sign on (`plugin/companion.lua`).
 
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
@@ -29,6 +33,8 @@ pub struct Queue {
     /// the triggers of the bus's devices it may press: nothing else.
     pub want: Value,
     pub press: Vec<String>,
+    /// Omsi-Hub's own on-board computer asks for the state now.
+    pub device: bool,
 }
 
 impl Queue {
@@ -48,7 +54,7 @@ impl Queue {
 
     /// The file's text.
     pub fn text(&self) -> String {
-        json!({ "sid": self.sid, "port": self.port, "seq": self.seq, "cmds": self.cmds, "probe": self.probe, "want": self.want, "press": self.press }).to_string()
+        json!({ "sid": self.sid, "port": self.port, "seq": self.seq, "cmds": self.cmds, "probe": self.probe, "want": self.want, "press": self.press, "device": self.device }).to_string()
     }
 
     /// Written into the plugin's folder (through a temporary file: the game never reads half).
@@ -85,6 +91,9 @@ mod tests {
         let v: Value = serde_json::from_str(&q.text()).unwrap();
         assert_eq!((v["sid"].as_u64(), v["seq"].as_u64()), (Some(77), Some(KEPT as u64 + 5)));
         assert_eq!(v["probe"], json!([1.5, -2.0]));
+        assert_eq!(v["device"], false);
+        q.device = true;
+        assert_eq!(serde_json::from_str::<Value>(&q.text()).unwrap()["device"], true);
         let dir = std::env::temp_dir().join(format!("hub-companion-queue-{}", std::process::id()));
         q.write(&dir).unwrap();
         assert_eq!(std::fs::read_to_string(file_of(&dir)).unwrap(), q.text());

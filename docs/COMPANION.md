@@ -27,7 +27,22 @@ game's (x east, y north).
 
 ## Finding and pairing
 
-The server is off by default. The player turns it on in the add-on under
+The server itself always runs as long as Omsi-Hub does, but without the setting it listens on
+**127.0.0.1 only**: nothing on the network reaches it, and `POST /api/pair` is refused there. Omsi-Hub's own
+window (the on-board computer, `/device`) is the one client of that: it carries a **local
+key** made once as the app runs (`#key=…` in its address, sent as the bearer key like a
+device's), which the server lets in without pairing. The local key is not a device: it is not
+listed, not kept and not revoked. Its address also carries Omsi-Hub's language
+(`/device#key=…&lang=nl`): the device speaks it for that run, English where the app has no such
+language. Only the local key's state has the driver's pass (`signon.pass`, below): the driver
+reads it on Omsi-Hub's own window, and a paired phone never gets more than `number_hint`. While
+the local key waits for the state, and for 10 s after it last asked, the queue file says
+`device: true`: without it the plugin does not keep the driver at the sign-on (after 20 s of a
+running game with no device seen, the driver is at work, as with sign-on switched off). When the
+server starts again on another port, Omsi-Hub points its window at the new address. A taken
+network port falls back to any free loopback port,
+and a taken plugin port to a free one that the plugin is told through the queue file. The
+phones and tablets on the home network are off by default: the player turns them on in the add-on under
 **Settings › General › Phone & tablet**; the launcher then shows the address, a six-digit
 **pairing code** and a QR code. The QR code holds the web app's pairing page
 
@@ -99,7 +114,9 @@ once after every answer (and backs off 2 s → 10 s after errors). `after` omitt
   "signon": {                      // signing on (the driver's pass is the add-on's)
     "stage": "signon",             // "signon" | "order" | "work" | "none" (no sign-on needed)
     "number_hint": "48…",          // never the full number or the code
-    "error": null                  // "wrong" after a wrong number/code
+    "error": null,                 // "wrong" after a wrong number/code
+    "pass": { "number": "482913", "code": "5821" }   // Omsi-Hub's own window (the local key)
+                                   // only, while stage = "signon": the driver reads the pass there
   },
   "duty": {                        // null: no duty at all
     "kind": "company",             // "company" | "shift" | "tour" | "free" | "game"
@@ -180,12 +197,131 @@ once after every answer (and backs off 2 s → 10 s after errors). `after` omitt
     "keys": ["ticketprinter_button_ticket_1", "…"],
     "change_keys": []              // the change dispenser's triggers, where the bus has one
   },
+  // The driving parts, each as the plugin last sent it (its datagram without `t`; their fields
+  // are under "The driving parts" below). Each is absent when the plugin has not sent it yet or
+  // was not heard for 5 s.
+  "strip": { },                    // the duty strip: the next break or relief, the checks, notes
+  "ontime": { },                   // the on-time / delay display
+  "board": { },                    // the company's board: parts, status, coach, fares, contract
+  "notes": [ ],                    // the notifications, all pages put together in order
+  "card": { },                     // the trip card; absent when none is open
   "features": { "ibis": true, "printer": true, "nav": true, "messages": true, "signon": true }
 }
 ```
 
 Every key may be missing or `null` where the game, the bus or the add-on does not know it; the
 app shows what it has and hides the rest.
+
+## The driving parts
+
+What the plugin reports while a drive runs, for the on-board computer (and any app that wants it).
+Each part is sent whole, and a list with nothing in it is left out. Times are the game's clock:
+`"hh:mm"` text for `from`, `to` and `time`, seconds where a field says so; `left` is whole minutes
+(seconds in `hold`). A part is absent when the plugin has nothing to say for it (no company's
+duty, or switched off). A game heard again after it was gone for 5 s is a new drive: the server
+forgets the last drive's parts, and the plugin says each part it has nothing for empty once as
+the drive begins.
+
+**`strip`** (`duty_strip.lua`)
+
+```jsonc
+{
+  "signed_on": true,               // the driver is at work on the company's duty
+  "piece": { "kind": "trip", "tone": "good", "text": "Line 29 to Hbf until 08:20" },
+                                   // what the driver does now: kind "sign_on" | "empty" | "trip" |
+                                   // "break" | "finished" | "duty", its tone and its text
+  "relief_warning": false,         // a relief is due within the warning time
+  "can_note": true, "can_check": true,   // the driver may write a note / do the walk-around
+  "text_max": 140,                 // the longest note, characters
+  "next_break": { "at": "Bismarckplatz", "from": "10:15", "to": "10:30", "under_way": false, "left": 42 },
+  "next_relief": { "kind": "relief", "at": "Rathaus", "from": "11:02", "left": 90, "soon": false },
+  "ends": { "at": "Depot", "from": "16:40" },    // where and when the duty ends
+  "changes": ["…"],                // what changed on the duty (texts)
+  "fuel": { "level": 0.31, "kind": "diesel", "low": false, "to_depot": false },
+  "notes_in": ["…"],               // the relief's handover notes (texts)
+  "templates": [ { "id": "t1", "text": "…" } ],  // the note templates
+  "checks": [ { "id": "c1", "text": "…" } ],     // the walk-around's checks
+  "open": "note",                  // "note" | "check" | absent: what the driver has open
+  "note": { "template": "t1", "text": "…" },     // with open = "note": what is chosen and typed
+  "check": { "ticked": ["c1"], "text": "…" },    // with open = "check"
+  "more": { "checks": 3 }          // lists cut to fit a datagram: how many items went
+}
+```
+
+`more.<list>` names a list of `checks`, `templates`, `notes_in` or `changes`: the plugin cuts the
+longest list to its first half (and the texts to 80 characters) until the datagram fits in 8000
+bytes, and counts the items that went.
+
+**`ontime`** (`ontime.lua`)
+
+```jsonc
+{
+  "delay": 120,                    // seconds late, early negative
+  "tone": "early",                 // "early" | "on_time" | "behind" | "late"
+  "early_from": 60, "late_from": 360,   // the seconds where the tone changes
+  "headway": {                     // where the line is frequent
+    "planned": 600,                // s
+    "ahead": { "bus": "2604", "secs": 240 },
+    "behind": { "bus": "2611", "secs": 360 },
+    "advice": { "kind": "hold", "secs": 30, "bus": "2604" }   // "hold" | "close_behind"
+  },
+  "connections": [ { "stop": "Rathaus", "what": "Tram 4", "time": "10:42", "late": 0,
+                     "onward": false, "max_hold": 120,
+                     "status": { "kind": "ok", "m": 3, "until": "10:41" } } ],
+  "ahead": { "stop": "Rathaus", "via": "Ringstraße" },   // the diversion ahead
+  "closed": ["Kunsthalle"]         // the day's closed stops
+}
+```
+
+**`board`** (`company.lua` `build`, with `hold` from `main.lua`)
+
+```jsonc
+{
+  "parts": { "coach": true, "strip": true, "dispatch": true, "fares": true, "contract": true },
+  "can_start": false,              // the duty may be started now (signed on, no duty, a line)
+  "can_sign_off": true,
+  "status": "On duty: trip 3 of 13",   // or "Not started yet"
+  "coach": { "text": "Hold 0:42 here · leave at 10:15", "note": "…", "tone": "early", "kind": "hold" },
+  "strip": ["Break 10:15–10:30 · Bismarckplatz", "Sign off 16:40 · Depot"],  // only when the
+                                   // plugin's own duty strip is off
+  "fares": { "text": "Fare box …", "trip": 12, "duty": 80, "aboard": 23 },
+  "contract": { "text": "…", "kind": "gross", "rag": "green", "early": 1, "late": 5 },
+  "hold": { "until": 29100, "left": 42 }   // while the control room's hold runs (game clock, s
+                                   // of the day; `left` whole seconds); absent otherwise
+}
+```
+
+A part that is switched off or has nothing to say (`coach`, `strip`, `fares`, `contract`) is left
+out.
+
+**`notes`** (`notes.lua` `list`): the notifications now, newest first.
+
+```jsonc
+[ { "n": 41, "title": "Control", "text": "…", "icon": "campaign", "color": "#F58620", "sticky": false } ]
+```
+
+`n` is the notification's number (`note_close` takes it); title ≤ 200 and text ≤ 2000 bytes of
+UTF-8, cut at the edge of a character.
+
+**`card`** (`card.lua` `facts`): the end-of-trip card; the datagram `{"t":"card"}` alone says it
+was closed.
+
+```jsonc
+{
+  "open": true, "saved": true,
+  "run": {                         // the trip's record, numbers whole
+    "visits": [ { "name": "…", "arr": 30240, "dep": 30240, "arrived": 30251, "left": 30262, "delay": 11 } ],
+    "offences": [ { "kind": "speeding", "at": 31020, "speed": 62, "limit": 50, "red_for": 1.4, "fine": 40 } ],
+    "more": { "visits": 12 }       // the stops cut after the first 60: how many went
+    // … and the trip's other counters (the plugin's `trip.finish`)
+  }
+  // … and what `career.evaluate` judged: grade, stars, score, parts, experience
+}
+```
+
+`run.more.visits` counts the stops left off the card: the plugin keeps the first 60. When the
+datagram is still over 8000 bytes it cuts as for `strip`: each round the longer of `visits` and
+`offences` to its first half, counted in `run.more.visits` or `run.more.offences`.
 
 ## Map
 
@@ -335,6 +471,13 @@ bus's devices' taps and keys are pressed; anything else is `unknown_key`.
 | `msg_answer` | `id`, `key` | Answers a message with one of its `answers` (`read`, `accept`, `decline` or a canned reply's key) |
 | `msg_quick` | `key` | A quick button to control |
 | `pause_end` | | Ends the break early |
+| `duty_start` | | Starts the duty at the depot (the on-board computer's "Start duty"; not the launcher's `start_duty`) |
+| `sign_off` | | Signs the driver off at the end of the duty |
+| `part` | `id`, `on` | Shows (`on: true`) or hides one of the driving parts |
+| `note_close` | `n` | Closes note `n` of `notes` |
+| `strip_note` | `text` | Puts a note on the duty strip |
+| `strip_check` | `ok`, `items`, `text` | Answers the strip's check: `ok`, its `items` (strings) and a `text` |
+| `card_close` | | Closes the trip card |
 | `press` | `trigger`, `down?` | Presses a tap or key of one of `devices` (above) |
 
 Only the keys the state lists can be pressed: the plugin refuses any other trigger. The game
@@ -357,6 +500,11 @@ To `127.0.0.1:47812` (`companion_udp_port`), each one JSON object with `t`:
 | `alive` | 1 s | nothing: the game is there, also while it is busy and the others wait until its frames run smoothly again |
 | `trip` | on change | the trip's stops (paged: `page`, `pages`, ≤ 25 stops a page) |
 | `trips` | on change | the duty's trips |
+| `strip` | on change | the duty strip (sent whole; the latest one counts). For `strip`, `ontime`, `board` and `card` a datagram with nothing but `t` clears that part: the state omits it |
+| `ontime` | on change | the on-time display (sent whole) |
+| `board` | on change | the company's board, with the control room's `hold` while one runs (sent whole) |
+| `notes` | on change | the trip's notes (paged like `trip`: `v`, `page`, `pages`, items in `notes`) |
+| `card` | on change | the trip card (sent whole); `{"t":"card"}` alone: the card was closed |
 | `dev` | 0.5 s | the IBIS and printer variables and strings, `ticket_request`, `sales` |
 | `keys` | 5 s | the bus's triggers that belong to the IBIS, the printer and the change dispenser, and the map's tickets |
 | `lines` | 10 s | the map's lines and tours (paged) |
@@ -366,7 +514,8 @@ To `127.0.0.1:47812` (`companion_udp_port`), each one JSON object with `t`:
 And the add-on writes `data/companion.json` in the plugin's data folder:
 `{sid, port, seq: 12, cmds: [{seq: 11, do: "key", key: "IBIS_7"}, …], probe: [x, y]}` (the
 last 20 commands of the server's session `sid`, the port for the datagrams, and the place whose
-street name the plugin reports in `live.probe`), and for the bus's devices `want: {nums, strs}`
+street name the plugin reports in `live.probe`), `device` (Omsi-Hub's own on-board computer asks
+for the state now: see the local key above), and for the bus's devices `want: {nums, strs}`
 (the variables `scr` reads) and `press: [trigger, …]` (the taps and keys of the devices: a
 `{do: "press", key, down}` command presses only one of these that the bus really has). The
 plugin carries out each `seq` of the session it has not done yet and acks it. Commands already

@@ -42,6 +42,9 @@ pub const SEEN_FOR: u64 = 45;
 const SIGN_ON_TRIES: usize = 10;
 /// The bus moved this far (m) from where the street was last asked for: asked again.
 const PROBE_MOVE: f64 = 5.0;
+/// Omsi-Hub's own on-board computer counts as there while it waits for the state, and this long
+/// after it last asked (the queue's `device`).
+pub const DEVICE_FRESH: Duration = Duration::from_secs(10);
 
 /// The route of the trip under way, in the game's coordinates.
 #[derive(Default)]
@@ -76,6 +79,31 @@ pub struct Inner {
     /// The devices of the bus the player drives.
     pub board: Board,
     pub stopped: bool,
+    /// The driver's pass while the sign-on asks for it (`state::pass`): served to the local key
+    /// only, in `signon.pass`.
+    pub pass: Value,
+    /// The local key's state requests waiting now, and when it last asked ([`DEVICE_FRESH`]).
+    local_polls: usize,
+    local_at: Option<Instant>,
+}
+
+impl Inner {
+    /// Whether Omsi-Hub's own on-board computer is there: it waits for the state now, or asked
+    /// within [`DEVICE_FRESH`].
+    fn device_there(&self) -> bool {
+        self.local_polls > 0 || self.local_at.is_some_and(|t| t.elapsed() <= DEVICE_FRESH)
+    }
+
+    /// The queue's `device` set to what is so, the file written when it changed.
+    fn tell_device(&mut self) {
+        let there = self.device_there();
+        if there != self.queue.device {
+            self.queue.device = there;
+            if let Some(d) = &self.plugin_dir {
+                let _ = self.queue.write(d);
+            }
+        }
+    }
 }
 
 pub struct Shared {
@@ -112,6 +140,9 @@ impl Shared {
             sign_ons: Vec::new(),
             board: Board::default(),
             stopped: false,
+            pass: Value::Null,
+            local_polls: 0,
+            local_at: None,
         };
         Shared { inner: Mutex::new(inner), news: Condvar::new(), pos: Mutex::default(), pos_news: Condvar::new(), source, cfg, start: Instant::now(), finder: Finder::default() }
     }
@@ -207,11 +238,14 @@ impl Shared {
             devices: if game { i.board.json() } else { json!([]) },
         };
         let s = state::build(&i.heard, &facts, now);
-        if s != i.state {
+        let pass = state::pass(&i.heard, &facts, now);
+        if s != i.state || pass != i.pass {
             i.state = s;
+            i.pass = pass;
             i.version += 1;
             self.news.notify_all();
         }
+        i.tell_device();
     }
 
     /// The next turn, with the route of the trip under way read (on a thread of its own) when
@@ -398,7 +432,12 @@ impl Server {
         let listener = TcpListener::bind(listen)?;
         let addr = listener.local_addr()?;
         listener.set_nonblocking(true)?;
-        let socket = UdpSocket::bind(udp)?;
+        // (the plugin reads the port from the queue file: another free one will do)
+        let socket = match UdpSocket::bind(udp) {
+            Err(_) if udp.port() != 0 => UdpSocket::bind(SocketAddr::new(udp.ip(), 0))?,
+            bound => bound?,
+        };
+        shared.lock().queue.port = socket.local_addr()?.port();
         socket.set_read_timeout(Some(Duration::from_millis(250)))?;
         let stop = Arc::new(AtomicBool::new(false));
         if let Some(d) = shared.source.plugin_dir() {
@@ -521,11 +560,15 @@ pub fn unix_now() -> u64 {
 /// The answer to one request.
 pub fn handle(req: &Request, shared: &Arc<Shared>) -> Response {
     let route = http::route(req);
+    // (Omsi-Hub's own window: no pairing, and not among the devices)
+    let local = route.needs_key() && !shared.cfg.local_key.is_empty() && req.key() == shared.cfg.local_key;
     if route.needs_key() {
         let mut i = shared.lock();
-        let Some(d) = i.pairing.device_of(req.key()) else { return Response::error(401, "not_paired") };
-        let hash = i.pairing.devices[d].hash.clone();
-        i.seen.insert(hash, unix_now());
+        if !local {
+            let Some(d) = i.pairing.device_of(req.key()) else { return Response::error(401, "not_paired") };
+            let hash = i.pairing.devices[d].hash.clone();
+            i.seen.insert(hash, unix_now());
+        }
     }
     match route {
         Route::Preflight => Response::new(204, "text/plain; charset=utf-8", ""),
@@ -535,7 +578,10 @@ pub fn handle(req: &Request, shared: &Arc<Shared>) -> Response {
             let gzip = req.header("accept-encoding").is_some_and(|v| v.split(',').any(|e| e.trim().starts_with("gzip")));
             crate::web::answer(&path, gzip).unwrap_or_else(|| Response::error(404, "not_found"))
         }
-        Route::Hello => Response::json(&json!({ "app": "omsi-hub", "api": crate::API, "version": shared.cfg.version, "name": shared.cfg.name, "pairing": true })),
+        Route::Hello => Response::json(&json!({ "app": "omsi-hub", "api": crate::API, "version": shared.cfg.version, "name": shared.cfg.name, "pairing": shared.cfg.lan })),
+        // (Omsi-Hub's own window needs no pairing: nobody pairs with a server that listens on this
+        // computer only)
+        Route::Pair if !shared.cfg.lan => Response::error(403, "pairing_off"),
         Route::Pair => {
             let body = req.json();
             let code = body.get("code").and_then(Value::as_str).unwrap_or("");
@@ -555,6 +601,12 @@ pub fn handle(req: &Request, shared: &Arc<Shared>) -> Response {
         Route::State(after) => {
             let deadline = Instant::now() + STATE_WAIT;
             let mut i = shared.lock();
+            // (Omsi-Hub's own on-board computer is there while it waits: the plugin is told)
+            if local {
+                i.local_polls += 1;
+                i.local_at = Some(Instant::now());
+                i.tell_device();
+            }
             while after.is_some_and(|a| a >= i.version) && !i.stopped {
                 let left = deadline.saturating_duration_since(Instant::now());
                 if left.is_zero() {
@@ -564,6 +616,14 @@ pub fn handle(req: &Request, shared: &Arc<Shared>) -> Response {
             }
             let mut v = i.state.clone();
             v["v"] = json!(i.version);
+            if local {
+                i.local_polls = i.local_polls.saturating_sub(1);
+                i.local_at = Some(Instant::now());
+                // (the driver's pass, for the on-board computer only)
+                if !i.pass.is_null() && v["signon"].is_object() {
+                    v["signon"]["pass"] = i.pass.clone();
+                }
+            }
             Response::json(&v)
         }
         Route::Pos(after) => {
@@ -742,6 +802,7 @@ mod tests {
     struct Fake {
         dir: PathBuf,
         omsi: Option<PathBuf>,
+        assignment: Option<Assignment>,
     }
 
     impl Source for Fake {
@@ -749,7 +810,7 @@ mod tests {
             Some(self.dir.clone())
         }
         fn assignment(&self) -> Option<Assignment> {
-            None
+            self.assignment.clone()
         }
         fn route(&self, _map: &str, _date: &str, _trip: &str) -> Option<Vec<[f64; 2]>> {
             // (the add-on's map metres: the game's are 1000 m further east)
@@ -768,20 +829,26 @@ mod tests {
         }
     }
 
+    const LOCAL: &str = "0123456789abcdef0123456789abcdef";
+
     fn shared(tag: &str) -> (Arc<Shared>, PathBuf) {
         shared_with(tag, false)
     }
 
     fn shared_with(tag: &str, bus: bool) -> (Arc<Shared>, PathBuf) {
+        shared_of(tag, bus, None)
+    }
+
+    fn shared_of(tag: &str, bus: bool, assignment: Option<Assignment>) -> (Arc<Shared>, PathBuf) {
         let dir = std::env::temp_dir().join(format!("hub-companion-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("data")).unwrap();
-        let cfg = Config { port: 0, udp_port: 0, name: "Test-PC".into(), version: "0.1.0".into(), devices_file: dir.join("devices.json") };
+        let cfg = Config { port: 0, udp_port: 0, name: "Test-PC".into(), version: "0.1.0".into(), devices_file: dir.join("devices.json"), lan: true, local_key: LOCAL.into() };
         let omsi = bus.then(|| dir.join("OMSI 2"));
         if let Some(o) = &omsi {
             hub_devices::testbus::write(o).unwrap();
         }
-        (Arc::new(Shared::new(cfg, Arc::new(Fake { dir: dir.clone(), omsi }), "123456".into(), 9)), dir)
+        (Arc::new(Shared::new(cfg, Arc::new(Fake { dir: dir.clone(), omsi, assignment }), "123456".into(), 9)), dir)
     }
 
     fn req(method: &str, path: &str, key: Option<&str>, body: &str) -> Request {
@@ -820,6 +887,85 @@ mod tests {
         assert!(kept.contains("Pixel") && !kept.contains(&key));
         assert!(sh.lock().seen.contains_key(&pairing::hash_key(&key)));
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn the_local_key_is_let_in_without_pairing() {
+        let (sh, _) = shared("local-key");
+        assert_eq!(handle(&req("GET", "/api/state?after=0", Some(LOCAL), ""), &sh).status, 200);
+        assert_eq!(handle(&req("GET", "/api/state?after=0", Some(&crate::random_key()), ""), &sh).status, 401);
+        assert_eq!(handle(&req("GET", "/api/state?after=0", None, ""), &sh).status, 401);
+        // (it is no device: not seen, not kept)
+        assert!(sh.lock().seen.is_empty());
+        assert!(sh.lock().pairing.devices.is_empty());
+    }
+
+    #[test]
+    fn the_pass_goes_to_the_local_key_only() {
+        let a = Assignment {
+            issued: 100,
+            company: "Stadtbus".into(),
+            duty: "14".into(),
+            personnel: Some(hub_game::bridge::Personnel { number: "482913".into(), code: "5821".into() }),
+            ..Assignment::default()
+        };
+        let (sh, dir) = shared_of("pass", false, Some(a));
+        let key = pair(&sh);
+        live(&sh, json!({ "clock": 30_000.0, "issued": 100, "signon": "signon" }));
+        let mine = state_of(&sh, LOCAL);
+        assert_eq!(mine["signon"]["pass"], json!({ "number": "482913", "code": "5821" }));
+        assert_eq!(mine["signon"]["number_hint"], "48…");
+        let phone = state_of(&sh, &key);
+        assert_eq!(phone["signon"]["stage"], "signon");
+        assert!(phone["signon"].get("pass").is_none() && !phone.to_string().contains("5821"), "a paired phone never gets the pass: {phone}");
+        // signed on: the pass is not shown any more
+        live(&sh, json!({ "clock": 30_001.0, "issued": 100, "signon": "order" }));
+        assert!(state_of(&sh, LOCAL)["signon"].get("pass").is_none());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn the_plugin_is_told_whether_the_on_board_computer_asks() {
+        let (sh, dir) = shared("device");
+        let key = pair(&sh);
+        let device = || serde_json::from_str::<Value>(&std::fs::read_to_string(crate::queue::file_of(&dir)).unwrap()).unwrap()["device"].clone();
+        sh.refresh(&mut sh.lock());
+        assert_eq!(device(), false, "nobody asked yet");
+        // a paired phone is not the on-board computer
+        state_of(&sh, &key);
+        sh.refresh(&mut sh.lock());
+        assert_eq!(device(), false);
+        state_of(&sh, LOCAL);
+        assert_eq!(device(), true, "the local key asked");
+        sh.refresh(&mut sh.lock());
+        assert_eq!(device(), true, "and is there for a while after");
+        // waiting for news: there all along
+        let (sh2, started) = (sh.clone(), Instant::now());
+        let v = sh.lock().version;
+        let waiting = std::thread::spawn(move || json_of(&handle(&req("GET", &format!("/api/state?after={v}"), Some(LOCAL), ""), &sh2)));
+        while sh.lock().local_polls == 0 && started.elapsed() < Duration::from_secs(5) {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        sh.lock().local_at = Instant::now().checked_sub(DEVICE_FRESH * 2);
+        sh.refresh(&mut sh.lock());
+        assert_eq!(device(), true, "a request waiting");
+        live(&sh, json!({ "clock": 30_000.0 }));
+        waiting.join().unwrap();
+        // not asked for longer than DEVICE_FRESH: gone
+        sh.lock().local_at = Instant::now().checked_sub(DEVICE_FRESH + Duration::from_secs(1));
+        sh.refresh(&mut sh.lock());
+        assert_eq!(device(), false);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn nobody_pairs_with_a_server_that_listens_on_this_computer_only() {
+        let (sh, _) = shared("pair-off");
+        let shared_off = Arc::new(Shared::new(Config { lan: false, ..sh.cfg.clone() }, sh.source.clone(), "123456".into(), 9));
+        let r = handle(&req("POST", "/api/pair", None, r#"{"code":"123456","device":"Pixel"}"#), &shared_off);
+        assert_eq!(r.status, 403);
+        assert!(shared_off.lock().pairing.devices.is_empty());
+        assert_eq!(handle(&req("POST", "/api/pair", None, r#"{"code":"123456","device":"Pixel"}"#), &sh).status, 200);
     }
 
     #[test]
@@ -908,6 +1054,114 @@ mod tests {
         plugin.join().unwrap();
         assert_eq!(r, json!({ "ok": true }));
         assert_eq!(handle(&req("POST", "/api/do", Some(&key), r#"{"do":"rm"}"#), &sh).status, 400);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    fn state_of(sh: &Arc<Shared>, key: &str) -> Value {
+        json_of(&handle(&req("GET", "/api/state", Some(key), ""), sh))
+    }
+
+    #[test]
+    fn the_strip_is_heard_and_served() {
+        let (sh, dir) = shared("parts");
+        let key = pair(&sh);
+        live(&sh, json!({ "clock": 30_000.0 }));
+        let s = state_of(&sh, &key);
+        for k in ["strip", "ontime", "board", "notes", "card"] {
+            assert!(s.get(k).is_none(), "{k} absent until heard");
+        }
+        let parts = [
+            ("strip", json!({ "rows": [{ "kind": "sign_on", "from": 400 }], "checks": [] })),
+            ("ontime", json!({ "delay": 90, "text": "+1:30" })),
+            ("board", json!({ "stops": ["A", "B"], "next": 1 })),
+            ("card", json!({ "title": "Trip 2", "lines": ["29", "Hbf"] })),
+        ];
+        for (k, p) in &parts {
+            let mut d = p.clone();
+            d["t"] = json!(k);
+            sh.hear(d.to_string().as_bytes());
+        }
+        let s = state_of(&sh, &key);
+        for (k, p) in &parts {
+            assert_eq!(&s[*k], p, "{k} served as heard, without t");
+        }
+        // a newer datagram replaces the older
+        sh.hear(json!({ "t": "ontime", "delay": 0, "text": "0:00" }).to_string().as_bytes());
+        assert_eq!(state_of(&sh, &key)["ontime"], json!({ "delay": 0, "text": "0:00" }));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_closed_card_is_no_longer_served() {
+        let (sh, dir) = shared("card");
+        let key = pair(&sh);
+        live(&sh, json!({ "clock": 30_000.0 }));
+        sh.hear(json!({ "t": "card", "title": "Trip 2" }).to_string().as_bytes());
+        assert_eq!(state_of(&sh, &key)["card"], json!({ "title": "Trip 2" }));
+        sh.hear(json!({ "t": "card" }).to_string().as_bytes());
+        assert!(state_of(&sh, &key).get("card").is_none(), "nothing but t clears the part");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn notes_come_paged() {
+        let (sh, dir) = shared("notes");
+        let key = pair(&sh);
+        live(&sh, json!({ "clock": 30_000.0 }));
+        sh.hear(json!({ "t": "notes", "v": 1, "page": 2, "pages": 2, "notes": [{ "n": 3 }] }).to_string().as_bytes());
+        assert!(state_of(&sh, &key).get("notes").is_none(), "half a list is not shown");
+        sh.hear(json!({ "t": "notes", "v": 1, "page": 1, "pages": 2, "notes": [{ "n": 1 }, { "n": 2 }] }).to_string().as_bytes());
+        assert_eq!(state_of(&sh, &key)["notes"], json!([{ "n": 1 }, { "n": 2 }, { "n": 3 }]));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn the_new_commands_reach_the_plugin_under_their_names() {
+        let (sh, dir) = shared("newcmds");
+        let key = pair(&sh);
+        live(&sh, json!({ "clock": 30_000.0 }));
+        let cases = [
+            (r#"{"do":"sign_off"}"#, json!({ "do": "sign_off" })),
+            (r#"{"do":"duty_start"}"#, json!({ "do": "duty_start" })),
+            (r#"{"do":"card_close"}"#, json!({ "do": "card_close" })),
+            (r#"{"do":"part","id":"strip","on":true}"#, json!({ "do": "part", "id": "strip", "on": true })),
+            (r#"{"do":"note_close","n":3}"#, json!({ "do": "note_close", "n": 3 })),
+            (r#"{"do":"strip_note","text":"call depot"}"#, json!({ "do": "strip_note", "text": "call depot" })),
+            (r#"{"do":"strip_check","ok":true,"items":["a","b"],"text":"fine"}"#, json!({ "do": "strip_check", "ok": true, "items": ["a", "b"], "text": "fine" })),
+        ];
+        let mut last = 0u64;
+        for (body, want) in cases {
+            let (sh2, dir2, after) = (sh.clone(), dir.clone(), last);
+            // (the plugin waits for a command newer than the one before: the queue keeps the old)
+            let plugin = std::thread::spawn(move || {
+                for _ in 0..300 {
+                    std::thread::sleep(Duration::from_millis(20));
+                    let Ok(text) = std::fs::read_to_string(crate::queue::file_of(&dir2)) else { continue };
+                    let q: Value = serde_json::from_str(&text).unwrap();
+                    if let Some(c) = q["cmds"].as_array().and_then(|c| c.last()).filter(|c| c["seq"].as_u64().unwrap_or(0) > after) {
+                        sh2.hear(json!({ "t": "ack", "seq": c["seq"], "ok": true }).to_string().as_bytes());
+                        return c.clone();
+                    }
+                }
+                panic!("no command");
+            });
+            let r = json_of(&handle(&req("POST", "/api/do", Some(&key), body), &sh));
+            let mut got = plugin.join().unwrap();
+            assert_eq!(r, json!({ "ok": true }), "{body}");
+            last = got["seq"].as_u64().expect("a seq");
+            got.as_object_mut().unwrap().remove("seq");
+            assert_eq!(got, want, "{body}");
+        }
+        // malformed ones are refused
+        for body in [
+            r#"{"do":"part","id":"strip"}"#,
+            r#"{"do":"part","id":"strip","on":"yes"}"#,
+            r#"{"do":"note_close"}"#,
+            r#"{"do":"strip_note"}"#,
+            r#"{"do":"strip_check","ok":true,"items":"x","text":"t"}"#,
+        ] {
+            assert_eq!(handle(&req("POST", "/api/do", Some(&key), body), &sh).status, 400, "{body}");
+        }
         let _ = std::fs::remove_dir_all(dir);
     }
 

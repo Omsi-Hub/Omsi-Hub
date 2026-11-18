@@ -55,6 +55,8 @@ local lists = {}
 local left_at = {}
 local left_trip = nil
 local probe = nil
+-- Omsi-Hub's own on-board computer asks for the state now (the file's `device`)
+local device = false
 local wait = { live = 0, trips = 0, lines = 0, keys = 0 }
 -- what the devices' screens show ({nums, strs}), and the devices' triggers that may be pressed
 local want = nil
@@ -82,7 +84,8 @@ local function num(v)
 end
 
 -- `hooks`: signon and messages (the modules), accept() (the duty order signed), drive_free()
--- (the driver drives without the duty) and issued() of main.lua
+-- (the driver drives without the duty), issued() of main.lua and `facts`: the driving parts'
+-- facts by kind (strip, ontime, board, card, notes)
 function M.setup(hooks)
   hook = hooks or {}
 end
@@ -365,6 +368,156 @@ local function set_press(list)
   end
 end
 
+-- --- the driving parts ---------------------------------------------------------------------------
+
+-- What the on-board computer shows of the driving parts, each as the facts the part itself
+-- reports (`hook.facts[kind]()`: the duty strip, on time, the company's board, the trip's card -
+-- a table, or nil when the part has nothing to show - and the notes, a list): the datagram of
+-- the part is its facts' fields next to `t`, and `{"t": kind}` alone clears it (said once for
+-- each part with nothing to show as the drive begins: Omsi-Hub may still have the last drive's,
+-- and an empty `notes` list starts its versions). Each is sent when
+-- its content changed and at least every PART_EVERY seconds while it has something, and in a
+-- tick of its own: one part at most each tick. A part that changed goes before one that is only
+-- sent again, except one not sent for twice PART_EVERY: that goes first, so a part that changes
+-- every tick does not keep the others' repeats away for good (they bring the parts back to a
+-- server that forgot them for a new game, or started again on another port).
+local PARTS = { "strip", "ontime", "board", "card", "notes" }
+local PART_EVERY = 5
+-- what each part last sent (its text, false for nothing, and when) and the part to look at next
+local sent_part = {}
+local parts_clock, part_next = 0, 1
+
+-- the part's facts as text: false when it has nothing to show
+local function part_text(kind, facts)
+  if kind == "notes" then
+    if type(facts) ~= "table" or #facts == 0 then return false end
+    local out = {}
+    for i, it in ipairs(facts) do out[i] = json.fast(it) end
+    return table.concat(out, ",")
+  end
+  if type(facts) ~= "table" or next(facts) == nil then return false end
+  return json.encode(facts)
+end
+
+-- the lists of a part that may be cut when its datagram is too long: where they are, their
+-- names, and whether their texts may be shortened
+local CUTTABLE = {
+  strip = function(f) return f, { "checks", "templates", "notes_in", "changes" }, true end,
+  card = function(f) return type(f.run) == "table" and f.run or nil, { "visits", "offences" }, false end,
+}
+-- (the longest text a cut list keeps, bytes)
+local CUT_TEXT = 80
+local told_cut = {}
+
+-- a text cut to at most `n` bytes, at the edge of a character (UTF-8: not inside one)
+local cut_text = json.cut
+
+local function shorten(list)
+  for i, it in ipairs(list) do
+    if type(it) == "string" then
+      list[i] = cut_text(it, CUT_TEXT)
+    elseif type(it) == "table" and type(it.text) == "string" then
+      it.text = cut_text(it.text, CUT_TEXT)
+    end
+  end
+end
+
+-- a part's datagram body that is over 8000 bytes made to fit: the texts of its lists shortened,
+-- then its longest list cut to its first half again and again (the order kept), and what was cut
+-- counted in `more` (a list name and how many items went); said once in the log
+local function trim_part(kind, facts, head)
+  local where = CUTTABLE[kind]
+  local box, names, texts = nil, nil, nil
+  if where then box, names, texts = where(facts) end
+  if not box then return nil end
+  if texts then
+    for _, n in ipairs(names) do
+      if type(box[n]) == "table" then shorten(box[n]) end
+    end
+  end
+  local more = box.more or {}
+  local body = head .. json.encode(facts):sub(2)
+  while #body > 8000 do
+    local longest, size = nil, 0
+    for _, n in ipairs(names) do
+      local list = box[n]
+      if type(list) == "table" and #list > 0 then
+        local len = #json.encode(list)
+        if len > size then longest, size = n, len end
+      end
+    end
+    if not longest then return nil end
+    local list = box[longest]
+    local keep = #list // 2
+    more[longest] = (more[longest] or 0) + #list - keep
+    for i = #list, keep + 1, -1 do list[i] = nil end
+    if keep == 0 then box[longest] = nil end
+    box.more = more
+    body = head .. json.encode(facts):sub(2)
+  end
+  if not told_cut[kind] then
+    told_cut[kind] = true
+    if fn("log") then omsi.log("[omsihub] the " .. kind .. " is too long for one datagram: its lists are cut") end
+  end
+  return body
+end
+
+-- a part's datagram: its facts' fields next to `t`
+local function send_part(kind, facts, text)
+  local head = '{"t":' .. json.encode(kind) .. ","
+  local body = head .. text:sub(2)
+  if #body > 8000 then body = trim_part(kind, facts, head) end
+  if not body or not (on and fn("send")) then return false end
+  return omsi.send(port, body) == true
+end
+
+local function send_parts()
+  if not (on and fn("send") and hook.facts) then return end
+  -- (a part that changed goes before one that is only sent again: a card that opens is not kept
+  -- waiting behind the others' repeats - unless that repeat is overdue)
+  local overdue, due, again, texts, got = nil, nil, nil, {}, {}
+  for step = 0, #PARTS - 1 do
+    local i = (part_next - 1 + step) % #PARTS + 1
+    local kind = PARTS[i]
+    local get = hook.facts[kind]
+    local ok, f = false, nil
+    if get then ok, f = pcall(get) end
+    if ok then
+      local text = part_text(kind, f)
+      local was = sent_part[kind]
+      local stale = was and parts_clock - was.at >= PART_EVERY
+      -- (nothing to show is said once: on the first look - the server may still have the last
+      -- drive's part - and after something was)
+      local changed = was == nil or was.text ~= text
+      if changed and not due then
+        due, texts[kind], got[kind] = i, text, f
+      elseif text ~= false and stale and not again then
+        again, texts[kind], got[kind] = i, text, f
+      end
+      if text ~= false and was and parts_clock - was.at >= 2 * PART_EVERY and not overdue then
+        overdue, texts[kind], got[kind] = i, text, f
+      end
+    end
+  end
+  due = overdue or due or again
+  if not due then return end
+  local kind = PARTS[due]
+  part_next = due % #PARTS + 1
+  local text, f = texts[kind], got[kind]
+  local sent
+  if kind == "notes" then
+    send_list("notes", "notes", text == false and {} or f, false)
+    sent = true
+  elseif text == false then
+    sent = send({ t = kind })
+  else
+    sent = send_part(kind, f, text)
+  end
+  -- (one too long to send is tried again in a while)
+  sent_part[kind] = { text = text, at = parts_clock }
+  return sent
+end
+
 -- --- the commands -------------------------------------------------------------------------------
 
 -- a key pressed and let go a moment later (openOMSI's triggers know no case)
@@ -443,6 +596,30 @@ local function carry_out(c)
   elseif what == "accept_order" then
     if not (hook.accept and hook.accept()) then return false, "not_now" end
     return true
+  elseif what == "duty_start" then
+    if not (hook.duty_start and hook.duty_start()) then return false, "not_now" end
+    return true
+  elseif what == "sign_off" then
+    if not (hook.sign_off and hook.sign_off()) then return false, "not_now" end
+    return true
+  elseif what == "part" then
+    if type(c.id) ~= "string" or type(c.on) ~= "boolean" then return false, "bad_command" end
+    if not (hook.part and hook.part(c.id, c.on)) then return false, "unknown_part" end
+    return true
+  elseif what == "note_close" then
+    local n = math.tointeger(tonumber(c.n))
+    if not n then return false, "bad_command" end
+    if not (hook.notes and hook.notes.close(n)) then return false, "no_note" end
+    return true
+  elseif what == "strip_note" then
+    if not hook.strip then return false, "not_now" end
+    return hook.strip.note(c.text)
+  elseif what == "strip_check" then
+    if not hook.strip then return false, "not_now" end
+    return hook.strip.check(c.ok, c.items, c.text)
+  elseif what == "card_close" then
+    if not (hook.card and hook.card.close()) then return false, "no_card" end
+    return true
   elseif what == "msg" then
     local m = hook.messages
     if not (m and m.answer) then return false, "no_messages" end
@@ -469,6 +646,7 @@ local function look()
   want = type(q.want) == "table" and q.want or nil
   set_press(q.press)
   probe = type(q.probe) == "table" and num(q.probe[1]) and num(q.probe[2]) and { num(q.probe[1]), num(q.probe[2]) } or nil
+  device = q.device == true
   -- (a session seen the first time, when the plugin starts: what is in the file is old)
   if sid == nil then
     sid, done = q.sid, math.tointeger(tonumber(q.seq)) or 0
@@ -539,6 +717,12 @@ local function map_lines()
   return out
 end
 
+-- whether Omsi-Hub's own on-board computer is there: Omsi-Hub runs (its file is there) and says
+-- the device asked for the state within the last seconds (the file's `device`)
+function M.device()
+  return on and device
+end
+
 -- every second, also while the game is busy and the tick waits (main.lua): that the game is
 -- there, in one small datagram, so the phone does not take a hitch for a game that stopped
 function M.alive()
@@ -556,6 +740,7 @@ end
 -- them at once - as on the first tick, while the game is still busy loading - came near that.
 function M.tick(dt)
   for k, v in pairs(wait) do wait[k] = v - (dt or 0.25) end
+  parts_clock = parts_clock + (dt or 0.25)
   if not on then return end
   if wait.live <= 0 then
     wait.live = 0.5
@@ -586,7 +771,10 @@ function M.tick(dt)
     if not read_lines() then return end
     wait.lines = 10
     send_list("lines", "lines", map_lines())
+    return
   end
+  -- (the driving parts: a tick of their own when nothing else was due)
+  send_parts()
 end
 
 return M

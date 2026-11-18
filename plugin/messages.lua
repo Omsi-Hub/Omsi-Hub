@@ -2,47 +2,36 @@
 -- CAD/AVL as real operators have it (docs/omsihub/MESSAGES.md).
 --
 -- Omsi-Hub writes the driver's inbox into the data folder (`data/messages.json`, in the player's
--- language); this module reads it every few seconds and shows what is new as a notification
--- with a sound - louder for an urgent message, which stays until it is clicked away -, and the
--- inbox in the navigator (navigator.lua; an older openOMSI: a panel of its own): the messages
--- with Accept and Decline for an instruction and the canned replies, and the quick buttons to
--- control (a delay in traffic, a breakdown, ...). What the driver does goes back as one line
--- each (`data/replies.jsonl`); how the duty stands goes back every few seconds
--- (`data/status.json`) for the dispatcher.
+-- language); this module reads it every few seconds and tells what is new as a notification
+-- (notes.lua) with a sound - louder for an urgent message, which stays until it is closed. The
+-- on-board computer (Omsi-Hub's window) shows the inbox itself, from Omsi-Hub's own copy, with
+-- Accept and Decline for an instruction, the canned replies and the quick buttons to control (a
+-- delay in traffic, a breakdown, ...); its answers come here as the companion's `msg` commands
+-- (`answer`). What the driver does goes back as one line each (`data/replies.jsonl`); how the
+-- duty stands goes back every few seconds (`data/status.json`) for the dispatcher.
 --
 -- An accepted instruction is carried out in the game, so the route, the IBIS and the navigator
 -- follow: a short-turn turns the duty back at the stop it names (the next trip from there), out
 -- of service skips the trip's stops to its terminus, a hold counts its minutes down at the next
--- stop, a relief or a spare bus taking over ends the duty where it says.
---
--- The inbox opens by itself while an instruction waits for an answer, and with F9; the panels
--- take the mouse with F10 (main.lua).
+-- stop, a relief or a spare bus taking over ends the duty where it says. Nothing is drawn in the
+-- game.
 
 local json = require("hubjson")
-local layout = require("layout")
-local navigator = require("navigator")
 local notes = require("notes")
 local start = require("start")
 
 local M = {}
 
-local PANEL = "omsihub_msgs"
--- (the messages the panel shows, the newest first)
-local SHOWN = 5
 local COLOR = { info = "#4DA3FF", instruction = "#F0B429", urgent = "#FF5F57" }
 local ICON = { info = "chat", instruction = "campaign", urgent = "warning" }
 -- the sound of a message (a file of the plugin's folder, Omsi-Hub puts them there) and how loud
 local SOUND = { info = { "msg_info.wav", 0.45 }, instruction = { "msg_instruction.wav", 0.75 }, urgent = { "msg_urgent.wav", 1.0 } }
-local DIM = "#9AA3AD"
 
 local tr = function(t) return t end
 local hook = {}
 local inbox = nil
-local open = false
-local quick = false
-local shown = false
 local seq = 0
--- (answered here, until Omsi-Hub's inbox says so)
+-- (answered here, until Omsi-Hub's inbox says so: an instruction is not answered twice)
 local answered = {}
 -- what an accepted instruction still asks of the game, and a hold under way
 local todo = {}
@@ -82,9 +71,9 @@ local function hhmm(t)
   return string.format("%02d:%02d", (m // 60) % 24, m % 60)
 end
 
--- a notification for a while (notes.lua; `sticky`: until it is clicked away)
-local function toast(text, title, icon, color, seconds, sticky)
-  notes.say(text, { title = title, icon = icon, color = color, seconds = seconds or 8, sticky = sticky })
+-- a notification for a while (notes.lua; `sticky`: until it is closed); its number
+local function tell(text, title, icon, color, seconds, sticky)
+  return notes.say(text, { title = title, icon = icon, color = color, seconds = seconds or 8, sticky = sticky })
 end
 
 local function sound(priority)
@@ -117,13 +106,6 @@ end
 local function waiting(m)
   if m.mine or not m.action or answered[m.id] then return false end
   return m.state ~= "accepted" and m.state ~= "declined"
-end
-
-local function any_waiting()
-  for _, m in ipairs(inbox and inbox.messages or {}) do
-    if waiting(m) then return true end
-  end
-  return false
 end
 
 -- --- carrying an instruction out ---------------------------------------------------------------
@@ -165,7 +147,7 @@ local function turn_back(t)
   start.duty(d.line, d.tour, t.trip + 1, at, function(ok)
     if ok and fn("duty.type_ibis") then omsi.duty.type_ibis() end
   end)
-  toast(tr("Turned back: the next trip goes on from %{stop}", { stop = next_stops[at].name or "" }), tr("Short-turn"), "u_turn_left", COLOR.instruction)
+  tell(tr("Turned back: the next trip goes on from %{stop}", { stop = next_stops[at].name or "" }), tr("Short-turn"), "u_turn_left", COLOR.instruction)
 end
 
 -- what an accepted action asks of the game, now or when the bus gets there
@@ -183,7 +165,7 @@ local function carry(a)
       end
       local s = stops[k]
       todo[#todo + 1] = { kind = "turn", trip = n, number = s.number, name = s.name, part = a.part or 0.2 }
-      toast(tr("Turn back at %{stop}", { stop = s.name or "" }), tr("Short-turn"), "u_turn_left", COLOR.instruction, 12)
+      tell(tr("Turn back at %{stop}", { stop = s.name or "" }), tr("Short-turn"), "u_turn_left", COLOR.instruction, 12)
     end
   elseif kind == "out_of_service" and n then
     todo[#todo + 1] = { kind = "express", trip = n }
@@ -207,13 +189,13 @@ local function on_trip()
       local stops = fn("duty.stops") and omsi.duty.stops() or {}
       if #stops > 0 then
         omsi.duty.skip_to(#stops)
-        toast(tr("Out of service to %{stop}: no more stops on this trip", { stop = stops[#stops].name or "" }), tr("Out of service"), "bolt", COLOR.instruction)
+        tell(tr("Out of service to %{stop}: no more stops on this trip", { stop = stops[#stops].name or "" }), tr("Out of service"), "bolt", COLOR.instruction)
       end
       table.remove(todo, i)
     elseif t.kind == "hand_over" and d.trip >= t.trip then
       table.remove(todo, i)
       if fn("duty.finish") then omsi.duty.finish() end
-      toast(tr("A spare bus takes over: take your bus back to the depot"), tr("Spare bus"), "sync_alt", COLOR.instruction, 12)
+      tell(tr("A spare bus takes over: take your bus back to the depot"), tr("Spare bus"), "sync_alt", COLOR.instruction, 12)
     end
   end
 end
@@ -233,14 +215,15 @@ function M.arrive(number)
       table.remove(todo, i)
       local now = clock()
       if now then
+        -- (its note stays until the hold is over)
         hold = { until_ = now + t.minutes * 60 }
-        toast(tr("Hold here for %{m} min", { m = t.minutes }), tr("Hold"), "timer", COLOR.instruction)
+        hold.note = tell(tr("Hold here for %{m} min", { m = t.minutes }), tr("Hold"), "timer", COLOR.instruction, nil, true)
       end
     elseif t.kind == "relief" and (t.name == "" or t.name == stop.name or t.name == (d.previous_stop or {}).name) then
       table.remove(todo, i)
       if hook.end_trip then hook.end_trip("relieved") end
       if fn("duty.finish") then omsi.duty.finish() end
-      toast(tr("Your relief takes over here: your duty ends"), tr("Relief"), "group", COLOR.instruction, 12)
+      tell(tr("Your relief takes over here: your duty ends"), tr("Relief"), "group", COLOR.instruction, 12)
     end
   end
 end
@@ -256,76 +239,6 @@ end
 
 -- --- the inbox ----------------------------------------------------------------------------------
 
-local function choices(list, prefix)
-  local out = {}
-  for _, c in ipairs(list or {}) do
-    out[#out + 1] = { type = "button", id = prefix .. c.key, text = c.label or c.key, icon = c.icon }
-  end
-  return out
-end
-
-local function children()
-  local list = inbox and inbox.messages or {}
-  local out = {
-    { type = "row", align = "between", children = {
-      { type = "icon", name = "forum", color = "#F47F30" },
-      { type = "text", text = tr("Control"), weight = "bold", grow = true, wrap = false },
-      { type = "button", id = "msg_close", text = "×" },
-    } },
-  }
-  if hold then
-    local left = math.max(0, hold.until_ - (clock() or hold.until_))
-    out[#out + 1] = { type = "badge", text = tr("Hold: %{time} left", { time = string.format("%d:%02d", math.floor(left / 60), math.floor(left % 60)) }), color = COLOR.instruction, text_color = "#1A1400" }
-  end
-  if #list == 0 then
-    out[#out + 1] = { type = "text", text = tr("No messages"), size = 13, color = DIM }
-  end
-  for k = 1, math.min(SHOWN, #list) do
-    local m = list[k]
-    out[#out + 1] = { type = "divider" }
-    out[#out + 1] = { type = "row", children = {
-      { type = "icon", name = m.mine and "near_me" or (ICON[m.priority] or "chat"), size = 16, color = COLOR[m.priority] or DIM },
-      { type = "text", text = (m.time or "") .. "  ·  " .. (m.from or ""), size = 12, color = DIM, grow = true, wrap = false },
-      { type = "text", text = answered[m.id] and tr(answered[m.id]) or (m.state_label or ""), size = 12, color = DIM, wrap = false },
-    } }
-    out[#out + 1] = { type = "text", text = m.text or "", size = 14, weight = m.priority == "urgent" and "bold" or "regular" }
-    if m.reply and m.reply ~= "" then out[#out + 1] = { type = "text", text = "↳ " .. m.reply, size = 12, color = DIM } end
-    if m.outcome and m.outcome ~= "" then out[#out + 1] = { type = "text", text = m.outcome, size = 12, color = COLOR.urgent } end
-    if waiting(m) then
-      out[#out + 1] = { type = "row", children = {
-        { type = "button", id = "msg_accept_" .. m.id, text = tr("Accept"), icon = "check" },
-        { type = "button", id = "msg_decline_" .. m.id, text = tr("Decline"), icon = "close" },
-      } }
-    elseif not m.mine and not m.action and m.state ~= "read" and not answered[m.id] and k <= 2 then
-      out[#out + 1] = { type = "row", children = choices(inbox.replies, "msg_reply_" .. m.id .. "_") }
-    end
-  end
-  out[#out + 1] = { type = "divider" }
-  out[#out + 1] = { type = "button", id = "msg_quick", text = quick and tr("Hide") or tr("Report to control"), icon = quick and "expand_less" or "campaign" }
-  if quick then
-    local q = choices(inbox and inbox.quick or {}, "msg_q_")
-    for i = 1, #q, 2 do
-      out[#out + 1] = { type = "row", children = { q[i], q[i + 1] } }
-    end
-  end
-  out[#out + 1] = { type = "text", text = tr("F9: messages · F10: use the panels with the mouse"), size = 11, color = DIM, visible = not navigator.docks() }
-  return out
-end
-
-local function panel()
-  if not fn("ui.set") then return end
-  local want = (open or any_waiting() or hold ~= nil) and inbox ~= nil
-  if not want then
-    navigator.put("messages", nil)
-    if shown and fn("ui.remove") and not navigator.docks() then layout.remove(PANEL) end
-    shown = false
-    return
-  end
-  shown = true
-  if navigator.docks() then return navigator.put("messages", children()) end
-  layout.set(PANEL, { anchor = "bottom_right", x = 16, y = 96, width = 340, accent = "#F47F30", draggable = true, children = children() })
-end
-
 -- the inbox read again (every few seconds): what is new told
 function M.read()
   if not (fn("files.read") and fn("json.decode")) then return end
@@ -340,9 +253,8 @@ function M.read()
     if type(m) == "table" and m.id and not m.mine and not omsi.data.msg_seen[m.id] then
       omsi.data.msg_seen[m.id] = true
       if m.state == "sent" then reply("delivered", m.id) end
-      toast(m.text or "", m.from, ICON[m.priority] or "chat", COLOR[m.priority], m.priority == "urgent" and 20 or 10, m.priority == "urgent")
+      tell(m.text or "", m.from, ICON[m.priority] or "chat", COLOR[m.priority], m.priority == "urgent" and 20 or 10, m.priority == "urgent")
       sound(m.priority)
-      if m.action then open = true end
     end
   end
   -- (what Omsi-Hub's inbox says now wins)
@@ -350,7 +262,6 @@ function M.read()
     local m = find(id)
     if not m or m.state == "accepted" or m.state == "declined" or m.state == "read" then answered[id] = nil end
   end
-  panel()
 end
 
 -- how the duty stands, for the dispatcher (every few seconds)
@@ -380,54 +291,51 @@ function M.tick()
   if hold then
     local now = clock()
     if now and now >= hold.until_ then
+      if hold.note then notes.close(hold.note) end
       hold = nil
-      toast(tr("Hold over: carry on"), tr("Hold"), "play_arrow", COLOR.info)
+      tell(tr("Hold over: carry on"), tr("Hold"), "play_arrow", COLOR.info)
     end
   end
-  if hold or shown then panel() end
 end
 
--- a click of the inbox; whether it was this module's
-function M.click(p, element)
-  local e = element or ""
-  if p ~= PANEL and not (navigator.is(p) and e:sub(1, 4) == "msg_") then return false end
-  if e == "msg_close" then
-    open, quick = false, false
-  elseif e == "msg_quick" then
-    quick = not quick
-  elseif e:sub(1, 6) == "msg_q_" then
-    local key = e:sub(7)
-    reply("quick", 0, key)
-    quick = false
-    toast(tr("Sent to control"), tr("Control"), "campaign", COLOR.info, 5)
-  else
-    local verb, id = e:match("^msg_(%a+)_(%d+)")
-    id = tonumber(id)
-    local m = id and find(id)
-    if m and verb == "accept" and waiting(m) then
-      reply("accept", id)
-      answered[id] = "Accepted"
-      carry(m.action)
-    elseif m and verb == "decline" and waiting(m) then
-      reply("decline", id)
-      answered[id] = "Declined"
-    elseif m and verb == "reply" then
-      local key = e:match("^msg_reply_%d+_(.+)$")
-      reply("reply", id, key)
-      answered[id] = "Read"
-    end
-  end
-  panel()
-  return true
+-- the hold under way, for the on-board computer's board: `until` (the game's clock, s of the
+-- day) and `left` (whole seconds); nil when there is none
+function M.hold()
+  if not hold then return nil end
+  local now = clock() or hold.until_
+  return { ["until"] = math.floor(hold.until_ + 0.5), left = math.max(math.ceil(hold.until_ - now), 0) }
 end
 
--- an answer from the phone (companion.lua), as the panel's buttons give it: `kind` "read",
+-- the answers, one each (the on-board computer's and the phone's commands)
+local function answer_quick(key)
+  reply("quick", 0, key)
+  tell(tr("Sent to control"), tr("Control"), "campaign", COLOR.info, 5)
+end
+
+local function answer_accept(m)
+  reply("accept", m.id)
+  answered[m.id] = "Accepted"
+  carry(m.action)
+end
+
+local function answer_decline(m)
+  reply("decline", m.id)
+  answered[m.id] = "Declined"
+end
+
+local function answer_reply(m, key)
+  reply("reply", m.id, key)
+  answered[m.id] = "Read"
+end
+
+-- an answer from the on-board computer or the phone (companion.lua): `kind` "read",
 -- "accept", "decline", "reply" (a canned reply, `key`) or "quick" (to control, `key`); whether
 -- there was something to answer
 function M.answer(kind, id, key)
   if kind == "quick" then
     if not key or key == "" then return false end
-    return M.click(PANEL, "msg_q_" .. tostring(key))
+    answer_quick(tostring(key))
+    return true
   end
   id = math.tointeger(tonumber(id))
   local m = id and find(id)
@@ -435,23 +343,16 @@ function M.answer(kind, id, key)
   if kind == "read" then
     reply("read", id)
     answered[id] = "Read"
-    panel()
-    return true
+  elseif kind == "accept" and waiting(m) then
+    answer_accept(m)
+  elseif kind == "decline" and waiting(m) then
+    answer_decline(m)
+  elseif kind == "reply" then
+    answer_reply(m, tostring(key or ""))
+  else
+    return false
   end
-  if (kind == "accept" or kind == "decline") and not waiting(m) then return false end
-  if kind == "reply" then return M.click(PANEL, "msg_reply_" .. id .. "_" .. tostring(key or "")) end
-  if kind ~= "accept" and kind ~= "decline" then return false end
-  return M.click(PANEL, "msg_" .. kind .. "_" .. id)
-end
-
--- F9: the inbox shown or put away; whether it was this module's
-function M.key(key, down)
-  if key == "F9" and down and inbox then
-    open = not open
-    panel()
-    return true
-  end
-  return false
+  return true
 end
 
 return M

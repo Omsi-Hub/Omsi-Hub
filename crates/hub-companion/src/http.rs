@@ -250,6 +250,27 @@ pub enum Command {
         key: String,
     },
     PauseEnd,
+    /// The driving parts: the duty's start and end, a part of the on-board computer shown or
+    /// hidden, a note closed, a note put on the strip, the strip's check answered, the trip
+    /// card closed.
+    DutyStart,
+    SignOff,
+    Part {
+        id: String,
+        on: bool,
+    },
+    NoteClose {
+        n: u64,
+    },
+    StripNote {
+        text: String,
+    },
+    StripCheck {
+        ok: bool,
+        items: Vec<String>,
+        text: String,
+    },
+    CardClose,
     /// A tap or key of one of the bus's devices: pressed and let go, or held (`down: true`)
     /// and let go (`down: false`).
     Press {
@@ -283,6 +304,17 @@ impl Command {
             "msg_answer" => Command::MsgAnswer { id: id()?, key: s("key").filter(|k| key_ok(k))?.to_string() },
             "msg_quick" => Command::MsgQuick { key: s("key").filter(|k| key_ok(k))?.to_string() },
             "pause_end" => Command::PauseEnd,
+            "duty_start" => Command::DutyStart,
+            "sign_off" => Command::SignOff,
+            "part" => Command::Part { id: s("id")?.to_string(), on: v.get("on")?.as_bool()? },
+            "note_close" => Command::NoteClose { n: v.get("n")?.as_u64()? },
+            "strip_note" => Command::StripNote { text: s("text")?.to_string() },
+            "strip_check" => Command::StripCheck {
+                ok: v.get("ok")?.as_bool()?,
+                items: v.get("items")?.as_array()?.iter().map(|i| i.as_str().map(str::to_string)).collect::<Option<Vec<_>>>()?,
+                text: s("text")?.to_string(),
+            },
+            "card_close" => Command::CardClose,
             "press" => Command::Press {
                 trigger: s("trigger").filter(|k| key_ok(k))?.to_string(),
                 down: match v.get("down") {
@@ -315,6 +347,13 @@ impl Command {
             },
             Command::MsgQuick { key } => json!({ "do": "msg", "kind": "quick", "key": key }),
             Command::PauseEnd => return None,
+            Command::DutyStart => json!({ "do": "duty_start" }),
+            Command::SignOff => json!({ "do": "sign_off" }),
+            Command::Part { id, on } => json!({ "do": "part", "id": id, "on": on }),
+            Command::NoteClose { n } => json!({ "do": "note_close", "n": n }),
+            Command::StripNote { text } => json!({ "do": "strip_note", "text": text }),
+            Command::StripCheck { ok, items, text } => json!({ "do": "strip_check", "ok": ok, "items": items, "text": text }),
+            Command::CardClose => json!({ "do": "card_close" }),
             Command::Press { trigger, down } => json!({ "do": "press", "key": trigger, "down": down }),
         })
     }
@@ -461,6 +500,7 @@ mod tests {
         assert_eq!(c(r#"{"do":"press","trigger":"almex_riegel","down":true}"#), Some(Command::Press { trigger: "almex_riegel".into(), down: Some(true) }));
         assert_eq!(c(r#"{"do":"press","trigger":"x y"}"#), None);
         assert_eq!(c(r#"{"do":"press","trigger":"IBIS_7","down":"yes"}"#), None);
+        assert_eq!(c(r#"{"do":"duty_start"}"#).unwrap().for_plugin().unwrap(), json!({ "do": "duty_start" }));
         assert_eq!(c(r#"{"do":"format_disk"}"#), None);
         assert_eq!(c(r#"{"number":"1"}"#), None);
     }

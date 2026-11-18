@@ -56,6 +56,13 @@ pub struct Heard {
     /// What the plugin read for the devices' screens (`crate::devices::Screen`): taken whole
     /// once every page of a version is in; `v` is the stands' version.
     pub screen: Paged,
+    /// The driving parts the plugin sends whole (`strip`, `ontime`, `board`, `card`), as the
+    /// latest datagram had them (without `t`), and the trip's notes (`notes`, paged).
+    pub strip: Option<Value>,
+    pub ontime: Option<Value>,
+    pub board: Option<Value>,
+    pub card: Option<Value>,
+    pub notes: Paged,
     /// The commands the plugin has carried out: (seq, ok, error).
     pub acks: Vec<(u64, bool, String)>,
 }
@@ -64,6 +71,12 @@ impl Heard {
     /// One datagram; whether it changed what the devices are shown.
     pub fn hear(&mut self, text: &[u8], now: f64) -> bool {
         let Ok(d) = serde_json::from_slice::<Value>(text) else { return false };
+        // (a game heard again after it was gone is a new drive: the last drive's driving parts
+        // go, or a plugin that has nothing to say for one would leave the old one shown - and
+        // its notes count their versions from 1 again)
+        if !self.fresh(now, crate::state::GAME_FRESH) {
+            self.forget_parts();
+        }
         match d.get("t").and_then(Value::as_str) {
             Some("live") => {
                 let Value::Object(mut m) = d else { return false };
@@ -83,6 +96,23 @@ impl Heard {
             Some("trip") => self.stops.take(&d, "stops"),
             Some("trips") => self.trips.take(&d, "trips"),
             Some("lines") => self.lines.take(&d, "lines"),
+            Some("notes") => self.notes.take(&d, "notes"),
+            Some(k @ ("strip" | "ontime" | "board" | "card")) => {
+                let k = k.to_owned();
+                let Value::Object(mut m) = d else { return false };
+                m.remove("t");
+                // (nothing but `t`: the part is gone, a closed card for one)
+                let part = (!m.is_empty()).then_some(Value::Object(m));
+                let slot = match k.as_str() {
+                    "strip" => &mut self.strip,
+                    "ontime" => &mut self.ontime,
+                    "board" => &mut self.board,
+                    _ => &mut self.card,
+                };
+                let changed = *slot != part;
+                *slot = part;
+                changed
+            }
             // (no change of the state: the screens wait for it on their own)
             Some("scr") => {
                 self.screen.take(&d, "items");
@@ -114,6 +144,12 @@ impl Heard {
             }
             _ => false,
         }
+    }
+
+    /// The driving parts (`strip`, `ontime`, `board`, `card`, `notes`) forgotten.
+    fn forget_parts(&mut self) {
+        (self.strip, self.ontime, self.board, self.card) = (None, None, None, None);
+        self.notes = Paged::default();
     }
 
     /// The game was heard within `secs` seconds of `now`.
@@ -171,6 +207,30 @@ mod tests {
         assert_eq!(h.ack(7), Some((false, "wrong".into())));
         assert_eq!(h.ack(8), None);
         assert!(!h.hear(b"not json", 12.0));
+    }
+
+    #[test]
+    fn a_new_game_forgets_the_last_drives_parts() {
+        let mut h = Heard::default();
+        h.hear(&dg(json!({ "t": "live", "clock": 30240.0 })), 10.0);
+        for k in ["strip", "ontime", "board", "card"] {
+            h.hear(&dg(json!({ "t": k, "x": 1 })), 10.0);
+        }
+        h.hear(&dg(json!({ "t": "notes", "v": 7, "notes": [{ "n": 1 }] })), 10.0);
+        assert!(h.strip.is_some() && h.card.is_some() && h.notes.v == 7);
+        // (while the game is there, nothing goes)
+        h.hear(&dg(json!({ "t": "live", "clock": 30241.0 })), 14.0);
+        assert!(h.strip.is_some() && h.ontime.is_some() && h.board.is_some() && h.card.is_some() && h.notes.items.len() == 1);
+        // the game gone and heard again: a new drive, the old parts gone
+        h.hear(&dg(json!({ "t": "live", "clock": 28800.0 })), 60.0);
+        assert_eq!((&h.strip, &h.ontime, &h.board, &h.card), (&None, &None, &None, &None));
+        assert_eq!(h.notes, Paged::default());
+        // (the new plugin's notes count from 1 again, and are taken)
+        assert!(h.hear(&dg(json!({ "t": "notes", "v": 1, "notes": [{ "n": 9 }] })), 60.5));
+        assert_eq!(h.notes.items, [json!({ "n": 9 })]);
+        // (a part as the first datagram of a new game is kept)
+        h.hear(&dg(json!({ "t": "strip", "y": 2 })), 200.0);
+        assert_eq!(h.strip, Some(json!({ "y": 2 })));
     }
 
     #[test]

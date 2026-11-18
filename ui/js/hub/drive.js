@@ -77,7 +77,11 @@ export function watchGame() {
   });
   // (any drive started - a shift, a tour, a free drive, a company's duty: its live dashboard,
   // hub/dash.js; and one that runs already as the launcher opens)
-  on('game-started', (p) => running(p?.mode));
+  // (what Omsi-Hub told of openOMSI's settings, `drive::prepare_settings`: shown as they come)
+  on('game-started', (p) => {
+    running(p?.mode);
+    for (const n of p?.notes || []) toast(n, 'info', 12000);
+  });
   call('hub_game_state')
     .then((g) => g?.running && !S.game?.running && running())
     .catch(() => {});
