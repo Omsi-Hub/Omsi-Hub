@@ -416,6 +416,26 @@ fn on_time_is_sent() {
     assert_eq!(sent(&h, "ontime").pop().unwrap(), json!({ "t": "ontime" }));
 }
 
+/// The game's delay is a float that changes every frame: on time sends whole seconds, so it is
+/// not a new part every tick.
+#[test]
+fn on_time_is_sent_in_whole_seconds() {
+    let dir = installed("ontime-whole");
+    bridge::write_assignment(&dir, &company_assignment()).unwrap();
+    queue(&dir, 5, json!([]));
+    let mut h = Harness::load(&dir, game()).unwrap();
+    on_duty(&h, 400.4);
+    frames(&mut h, 40);
+    let o = sent(&h, "ontime");
+    assert_eq!(o.last().expect("an ontime datagram")["delay"].as_i64(), Some(400), "{o:?}");
+    let before = sent(&h, "ontime").len();
+    for i in 0..8 {
+        h.state.borrow_mut().duty.as_mut().unwrap().delay = 400.1 + f64::from(i) * 0.04;
+        h.frame().unwrap();
+    }
+    assert_eq!(sent(&h, "ontime").len(), before, "a delay that moves within its second is not sent again");
+}
+
 #[test]
 fn the_board_parts_are_sent() {
     let dir = installed("board");
@@ -515,6 +535,43 @@ fn a_part_is_sent_again_every_five_seconds_and_never_two_in_a_tick() {
     assert_eq!(most, 1, "one part at most in a tick");
     let again = sent(&h, "strip").len() - strips;
     assert!((3..=5).contains(&again), "the strip, unchanged, every 5 s: {again} times in 20 s");
+}
+
+/// A part that changes every tick (on time, the delay a second more each frame) does not keep
+/// the others' repeats from going: they are how the server gets the parts back after it forgot
+/// them (a new game) or started again on another port. The strip and an open card are sent
+/// again within about twice PART_EVERY (5 s).
+#[test]
+fn a_part_that_changes_every_tick_does_not_starve_the_repeats() {
+    let dir = installed("starve");
+    bridge::write_assignment(&dir, &company_assignment()).unwrap();
+    queue(&dir, 5, json!([]));
+    let mut h = Harness::load(&dir, game()).unwrap();
+    on_duty(&h, 0.0);
+    frames(&mut h, 30);
+    // (the card held open while the driver reads it: the harness's frame is a second of the
+    // card's 15 but a quarter of a second of the parts')
+    h.lua.load("local c = require('card'); local f = c.frame; c.frame = function(_, s) return f(0, s) end").exec().unwrap();
+    h.fire("trip_done", &[json!(1), json!("arrived"), json!(95.0), json!(88.0), json!(100.0)]).unwrap();
+    let (mut strips, mut cards) = (Vec::new(), Vec::new());
+    let (mut strip_n, mut card_n) = (sent(&h, "strip").len(), sent(&h, "card").len());
+    for f in 0..64 {
+        h.state.borrow_mut().duty.as_mut().unwrap().delay += 1.0;
+        h.frame().unwrap();
+        let (s, c) = (sent(&h, "strip"), sent(&h, "card"));
+        if s.len() > strip_n {
+            strips.push(f);
+        }
+        if c.len() > card_n && c.last().unwrap()["open"] == true {
+            cards.push(f);
+        }
+        (strip_n, card_n) = (s.len(), c.len());
+    }
+    assert!(sent(&h, "ontime").len() > 15, "on time changed and was sent in most slots: {}", sent(&h, "ontime").len());
+    // (10 s are 40 frames; a slot of the parts within a few frames more)
+    let gaps = |sends: &[i32]| sends.windows(2).map(|w| w[1] - w[0]).max().unwrap_or(i32::MAX);
+    assert!(!strips.is_empty() && strips[0] <= 44, "the strip sent again at frames {strips:?}");
+    assert!(cards.len() >= 2 && gaps(&cards) <= 44, "the open card sent again at frames {cards:?}");
 }
 
 #[test]

@@ -569,9 +569,10 @@ end
 
 -- signing on needs the on-board computer (Omsi-Hub's window, which Omsi-Hub's companion server
 -- says is there: companion.lua's `device`). Where none has been seen for SIGN_ON_WAIT seconds
--- of a smoothly running game at the sign-on - the window cannot show (Wayland, exclusive full
--- screen), or Omsi-Hub is not running - nobody could sign on: the driver is at work, as with
--- sign-on switched off. Only before the driver first got past the sign-on.
+-- of a smoothly running game at the sign-on - the window cannot open (Wayland), or Omsi-Hub is
+-- not running - nobody could sign on: the driver is at work, as with sign-on switched off. (A
+-- window hidden behind a game in exclusive full screen still asks for its screens: that is not
+-- noticed here.) Only before the driver first got past the sign-on.
 local SIGN_ON_WAIT = 20
 local no_device = 0
 omsi.every(1, function()

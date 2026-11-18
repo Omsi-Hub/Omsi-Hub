@@ -377,7 +377,10 @@ end
 -- each part with nothing to show as the drive begins: Omsi-Hub may still have the last drive's,
 -- and an empty `notes` list starts its versions). Each is sent when
 -- its content changed and at least every PART_EVERY seconds while it has something, and in a
--- tick of its own: one part at most each tick.
+-- tick of its own: one part at most each tick. A part that changed goes before one that is only
+-- sent again, except one not sent for twice PART_EVERY: that goes first, so a part that changes
+-- every tick does not keep the others' repeats away for good (they bring the parts back to a
+-- server that forgot them for a new game, or started again on another port).
 local PARTS = { "strip", "ontime", "board", "card", "notes" }
 local PART_EVERY = 5
 -- what each part last sent (its text, false for nothing, and when) and the part to look at next
@@ -471,8 +474,8 @@ end
 local function send_parts()
   if not (on and fn("send") and hook.facts) then return end
   -- (a part that changed goes before one that is only sent again: a card that opens is not kept
-  -- waiting behind the others' repeats)
-  local due, again, texts, got = nil, nil, {}, {}
+  -- waiting behind the others' repeats - unless that repeat is overdue)
+  local overdue, due, again, texts, got = nil, nil, nil, {}, {}
   for step = 0, #PARTS - 1 do
     local i = (part_next - 1 + step) % #PARTS + 1
     local kind = PARTS[i]
@@ -491,9 +494,12 @@ local function send_parts()
       elseif text ~= false and stale and not again then
         again, texts[kind], got[kind] = i, text, f
       end
+      if text ~= false and was and parts_clock - was.at >= 2 * PART_EVERY and not overdue then
+        overdue, texts[kind], got[kind] = i, text, f
+      end
     end
   end
-  due = due or again
+  due = overdue or due or again
   if not due then return end
   local kind = PARTS[due]
   part_next = due % #PARTS + 1

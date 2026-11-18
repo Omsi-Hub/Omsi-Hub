@@ -137,7 +137,10 @@ end
 local function facts_of(d, b)
   b = b or {}
   local early_from, late_from = tonumber(b.early_from) or 60, tonumber(b.late_from) or 360
-  local delay = d.delay or 0
+  -- (whole seconds: the game's delay is a float that moves every frame, and a part that changes
+  -- every tick would be sent in every slot of the parts)
+  local delay = tonumber(d.delay) or 0
+  if delay == delay and delay ~= math.huge and delay ~= -math.huge then delay = math.tointeger(math.floor(delay + 0.5)) or delay end
   local out = { delay = delay, tone = M.tone(delay, early_from, late_from), early_from = early_from, late_from = late_from }
   -- the headway, where the line is frequent
   local h = b.headway
