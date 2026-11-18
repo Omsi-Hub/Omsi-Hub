@@ -12,8 +12,9 @@ merged but in no build yet is under Unreleased.
   are on one screen that looks like a real on-board computer. It is a window of Omsi-Hub over
   the game, in a corner of the monitor the game is on, in three sizes (S, M and L), and you
   drag it to any corner of the screen. It does not take the keyboard from the game, and on
-  Windows it hides when you leave the game, so it is not in your way in other programs (on Linux
-  and macOS it is an ordinary window while the game runs). It speaks Omsi-Hub's language, and
+  Windows it hides when you leave the game, so it is not in your way in other programs. Only on
+  Windows: on Linux and macOS it stays on top of every program while the game runs, and you find
+  it in the task bar. It speaks Omsi-Hub's language, and
   Omsi-Hub remembers its corner and size.
 
 - **Signing on is back, on the on-board computer**: with the number pad of the device you type

@@ -353,7 +353,9 @@ openOMSI ── plugin (Lua) ──UDP 127.0.0.1──▶ hub-companion's server
   `/device` screen, opened when a drive's game starts and closed when it ends. It has no frame, stays
   on top, is not in the task bar and does not take the keyboard from the game (Windows:
   `WS_EX_NOACTIVATE`, `WS_EX_TOOLWINDOW`). A thread follows the game and shows the device only
-  while the game is in front, on the game's monitor. It sits in a corner of the work area (dragged
+  while the game is in front, on the game's monitor. Only on Windows: on Linux (X11) and macOS
+  what is in front is not known, so the device stays on top of every program while the game runs
+  and is in the task bar (behind the game it could not be raised). It sits in a corner of the work area (dragged
   and snapped), in size S, M or L; corner, offset and width are kept in the settings.
 
 ## How a feature port plugs in

@@ -4,12 +4,12 @@
 //!
 //! * Opened when a drive's game starts (`game-started`), closed when it ends (`game-ended`). On
 //!   Linux under Wayland it is not opened: a window cannot stay over the game there.
-//! * No frame, transparent around the device, always on top (on Windows only), not in the task
-//!   bar and **not activating**: a click in it leaves the keyboard with the game (on Windows
+//! * No frame, transparent around the device, always on top, not in the task bar (on Windows;
+//!   elsewhere it is, [`kind`]) and **not activating**: a click in it leaves the keyboard with the game (on Windows
 //!   `WS_EX_NOACTIVATE`, and `WS_EX_TOOLWINDOW` to keep it out of alt-tab).
 //! * A thread follows the game every [`TICK`]: the device is shown only while the game is the
 //!   window in front and not minimised ([`visible`]; elsewhere than on Windows, as best it can
-//!   be: while the game runs, a window that is not on top), on the game's monitor. The device in
+//!   be: while the game runs, over every program then), on the game's monitor. The device in
 //!   front with no game window found is hidden.
 //! * When Omsi-Hub's companion server starts again on another port (Phone & tablet switched),
 //!   the window is pointed at the new address ([`hub_api::companion::device_url`], looked at
@@ -139,6 +139,26 @@ pub fn snap(monitor: Rect, at: Rect) -> (Corner, (i32, i32)) {
 /// Whether the device is shown: only while the game is the program in front and not minimised.
 pub fn visible(foreground_pid: Option<u32>, game_pid: Option<u32>, game_minimised: bool) -> bool {
     game_pid.is_some() && foreground_pid == game_pid && !game_minimised
+}
+
+/// How the device's window is made where the program in front is (`windows`) or is not known.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Kind {
+    /// Always on top.
+    pub on_top: bool,
+    /// Shown in the task bar.
+    pub in_taskbar: bool,
+}
+
+/// How the device's window is made on Windows (`windows`) and elsewhere. On Windows it is on top
+/// and out of the task bar, as it hides as soon as the game is not in front ([`visible`]).
+/// Elsewhere what is in front is not known and it is shown while the game runs: a window not on
+/// top there goes behind the game's window, which comes after it, and could not be raised (out
+/// of the task bar, not focusable) - while its page still asks for the driver's screens, so the
+/// sign-on would wait for a device nobody sees. So it is on top there too, and in the task bar,
+/// where the player finds it; it stays over other programs while the game runs.
+pub fn kind(windows: bool) -> Kind {
+    Kind { on_top: true, in_taskbar: !windows }
 }
 
 /// Whether the device is put at `wanted` (now `tries` times again since it was first put there):
@@ -293,16 +313,14 @@ pub fn close(app: &AppHandle) {
 fn build(app: &AppHandle, url: &str) -> Result<WebviewWindow, String> {
     let url = url.parse::<tauri::Url>().map_err(|e| e.to_string())?;
     let d = Spot::DEFAULT;
+    let kind = kind(cfg!(windows));
     let win = WebviewWindowBuilder::new(app, LABEL, WebviewUrl::External(url))
         .title("Omsi-Hub")
         .inner_size(f64::from(d.width), (f64::from(d.width) * ASPECT).round())
         .decorations(false)
         .transparent(true)
-        // (on top only where it hides as soon as the game is not in front: on Windows. Elsewhere
-        // it is not known what is in front, and a window on top of every program after alt-tab
-        // is what the device must never be)
-        .always_on_top(cfg!(windows))
-        .skip_taskbar(true)
+        .always_on_top(kind.on_top)
+        .skip_taskbar(!kind.in_taskbar)
         .focused(false)
         .focusable(false)
         .shadow(false)
@@ -412,8 +430,8 @@ fn look(win: &WebviewWindow, pid: u32) -> Look {
     Look { show, screen }
 }
 
-/// Elsewhere the program in front is not asked: shown while the game runs (best effort: a
-/// normal window there, not always on top - [`build`]), on the monitor the device is on.
+/// Elsewhere the program in front is not asked: shown while the game runs (best effort: on top
+/// of every program then, and in the task bar - [`kind`]), on the monitor the device is on.
 #[cfg(not(windows))]
 fn look(win: &WebviewWindow, pid: u32) -> Look {
     Look { show: Some(visible(Some(pid), Some(pid), false)), screen: screen_of(win) }
@@ -734,6 +752,16 @@ mod tests {
         assert!(!visible(Some(7), Some(7), true), "the game minimised");
         assert!(!visible(None, Some(7), false), "nothing in front");
         assert!(!visible(Some(7), None, false), "no game");
+    }
+
+    /// On Windows the device is on top and out of the task bar: it hides as soon as the game is
+    /// not in front. Elsewhere that is not known, so it is on top while the game runs (behind
+    /// the game it could not be raised: the driver stuck at the sign-on) and in the task bar,
+    /// where the player finds it.
+    #[test]
+    fn the_device_stays_over_the_game_and_can_be_found_off_windows() {
+        assert_eq!(kind(true), Kind { on_top: true, in_taskbar: false }, "Windows");
+        assert_eq!(kind(false), Kind { on_top: true, in_taskbar: true }, "Linux (X11) and macOS");
     }
 
     /// Where it was kept is read back from the settings; a wrong value is the default.

@@ -165,8 +165,10 @@ the version that removes the plugin's panels ships: one release, not a first par
 
 Linux x64 is a release target. A window that stays over the game without taking the keyboard
 works on X11 (best effort) and not at all on Wayland. On X11 (and macOS) Omsi-Hub cannot tell
-which program is in front, so the device is an ordinary window, not on top, shown while the game
-runs (a window on top of every program after alt-tab is what it must never be); on Wayland
+which program is in front, so the device is shown while the game runs, on top and in the task bar
+(*fix after review*: as an ordinary window it went behind the game's window, which opens after
+it, and could not be raised, while its page kept the sign-on waiting for it; on top of every
+program after alt-tab is the lesser harm there, and only while the game runs); on Wayland
 Omsi-Hub says the device cannot be shown over the game there and points the player to the
 Companion on a phone or tablet, which shows the same screens, and leaves openOMSI's own navigator
 and corner notes on.
